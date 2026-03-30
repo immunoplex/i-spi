@@ -956,7 +956,9 @@ server <- function(input, output, session) {
         upload_time = NULL,
         user = NULL
       ))
+      
       config_preview <- reactiveVal(NULL)
+      config_preview_antigen <- reactiveVal(NULL)
    
 
       # layout_template_sheets <- reactiveValues(

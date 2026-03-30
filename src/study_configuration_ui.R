@@ -2206,8 +2206,18 @@ observeEvent(input$import_parameters, {
   )
   df <- df[, !(names(df) %in% "param_user")]
   
-  # store preview
+  antigen_df <- tryCatch(
+    readxl::read_excel(
+      input$import_parameters$datapath,
+      sheet = "Antigen_Parameters"
+    ),
+    error = function(e) NULL
+  )
+  
+  # store previews
   config_preview(df)
+  config_preview_antigen(antigen_df)
+  
   config_upload_state(list(
     is_uploaded = FALSE,
     upload_time = NULL,
@@ -2259,10 +2269,24 @@ valid_study_config <- reactive({
   )
 })
 
+valid_antigen_config <- reactive({
+  req(config_preview_antigen())
+  
+  df <- config_preview_antigen()
+  
+  expected_study   <- input$readxMap_study_accession
+  expected_project <- userWorkSpaceID()
+  
+  all(
+    df$study_accession == expected_study,
+    df$project_id == expected_project
+  )
+})
+
 observe({
   toggleState(
     "load_parameters",
-    condition = !is.null(input$import_parameters) && isTRUE(valid_study_config())
+    condition = !is.null(input$import_parameters) && isTRUE(valid_study_config() && isTRUE(valid_antigen_config()))
   )
 })
 
@@ -2301,6 +2325,38 @@ output$config_validation_msg <- renderUI({
   )
 })
 
+output$config_validation_msg_antigen <- renderUI({
+  req(config_preview_antigen())
+  
+  df <- config_preview_antigen()
+  
+  expected_study   <- input$readxMap_study_accession
+  expected_project <- userWorkSpaceID()
+  
+  if (!all(df$study_accession == expected_study)) {
+    return(
+      div(class = "text-warning",
+          icon("exclamation-circle"),
+          paste("Antigen study mismatch:", unique(df$study_accession))
+      )
+    )
+  }
+  
+  if (!all(df$project_id == expected_project)) {
+    return(
+      div(class = "text-warning",
+          icon("exclamation-circle"),
+          paste("Antigen project mismatch:", unique(df$project_id))
+      )
+    )
+  }
+  
+  div(class = "text-muted",
+      icon("check"),
+      "Antigen configuration matches study and project"
+  )
+})
+
 observeEvent(input$load_parameters, {
   req(input$import_parameters)   # safety
   
@@ -2327,6 +2383,19 @@ observeEvent(input$load_parameters, {
       project_id = as.integer(project_id)   
     )
   
+  imported_antigen_config <- switch(
+    tolower(ext),
+    xlsx = read_excel(input$import_parameters$datapath, sheet = "Antigen_Parameters"),
+    xls  = read_excel(input$import_parameters$datapath, sheet = "Antigen_Parameters"),
+    csv  = read.csv(input$import_parameters$datapath,
+                    stringsAsFactors = FALSE,
+                    na.strings = c("", "NA")),
+    {
+      showNotification("Unsupported file type.", type = "error")
+      return(NULL)
+    }
+  )
+  
   # preview_df <- imported_clean[, !(names(imported_clean) %in% "param_user")]
   # 
   # config_preview(preview_df)
@@ -2340,6 +2409,8 @@ observeEvent(input$load_parameters, {
   # update the db 
   update_study_config(final_config, conn)
   
+  update_antigen_family_config(imported_antigen_config, conn)
+  
   config_upload_state(list(
     is_uploaded = TRUE,
     upload_time = Sys.time(),
@@ -2348,12 +2419,32 @@ observeEvent(input$load_parameters, {
   
 })
 
+# output$config_preview_ui <- renderUI({
+#   req(config_preview())
+#   
+#   tagList(
+#     strong("Preview of uploaded configuration:"),
+#     DT::dataTableOutput("config_preview_table")
+#   )
+# })
 output$config_preview_ui <- renderUI({
   req(config_preview())
   
   tagList(
+    
+    # ---- PARAMETERS ----
     strong("Preview of uploaded configuration:"),
-    DT::dataTableOutput("config_preview_table")
+    DT::dataTableOutput("config_preview_table"),
+    uiOutput("config_validation_msg"),
+    
+    br(),
+    
+    # ---- ANTIGEN ----
+    if (!is.null(config_preview_antigen())) tagList(
+      strong("Preview of antigen configuration:"),
+      DT::dataTableOutput("config_preview_table_antigen"),
+      uiOutput("config_validation_msg_antigen")
+    )
   )
 })
 
@@ -2366,6 +2457,13 @@ output$config_preview_table <- DT::renderDataTable({
   scrollX = TRUE
 ))
 
+output$config_preview_table_antigen <- DT::renderDataTable({
+  req(config_preview_antigen())
+  config_preview_antigen()
+}, options = list(
+  pageLength = 5,
+  scrollX = TRUE
+))
 
 output$config_upload_status <- renderUI({
   state <- config_upload_state()
@@ -2464,6 +2562,33 @@ create_parameter_template <- function(conn,
      AND study_accession = '{study_accession}';
   ")
   
+  # ── 1b. Antigen family query ─────────────────────────────────────
+  sql_antigen <- glue::glue("
+          SELECT
+              xmap_antigen_family_id,
+              study_accession,
+              project_id,
+              experiment_accession,
+              antigen,
+              feature,
+              antigen_family,
+              standard_curve_concentration,
+              antigen_name,
+              virus_bacterial_strain,
+              antigen_source,
+              catalog_number,
+              l_asy_min_constraint,
+              l_asy_max_constraint,
+              l_asy_constraint_method,
+              model_form_list,
+              pcov_threshold
+          FROM madi_results.xmap_antigen_family
+          WHERE study_accession = '{study_accession}'
+            AND project_id = {project_id}
+            AND l_asy_constraint_method IS NOT NULL;
+          ")
+  
+  antigen_df <- DBI::dbGetQuery(conn, sql_antigen)
   params_df <- DBI::dbGetQuery(conn, sql)
   
   if (nrow(params_df) == 0) {
@@ -2588,7 +2713,17 @@ create_parameter_template <- function(conn,
   # Parameters sheet
   openxlsx::addWorksheet(wb, "Parameters")
   openxlsx::writeData(wb, "Parameters", export_df, headerStyle = header_style)
+  # Antigen paramters
+  openxlsx::addWorksheet(wb, "Antigen_Parameters")
   
+  if (nrow(antigen_df) > 0) {
+    openxlsx::writeData(
+      wb,
+      "Antigen_Parameters",
+      antigen_df,
+      headerStyle = header_style
+    )
+  }
   # Choices sheet
   openxlsx::addWorksheet(wb, "Choices")
   if (nrow(choices_wide) > 0) {
@@ -2785,6 +2920,76 @@ update_study_config <- function(df, conn) {
     FROM temp_config AS tmp
     WHERE t.xmap_study_config_id = tmp.xmap_study_config_id
   ")
+}
+
+update_antigen_family_config <- function(df, conn) {
+  num_cols <- c(
+    "xmap_antigen_family_id",
+    "project_id",
+    "standard_curve_concentration",
+    "l_asy_min_constraint",
+    "l_asy_max_constraint",
+    "pcov_threshold"
+  )
+  
+  char_cols <- c(
+    "study_accession", "experiment_accession", "antigen", "feature",
+    "antigen_family", "antigen_name", "virus_bacterial_strain",
+    "antigen_source", "catalog_number",
+    "l_asy_constraint_method", "model_form_list"
+  )
+  
+  # only mutate columns that exist
+  num_cols  <- intersect(num_cols, names(df))
+  char_cols <- intersect(char_cols, names(df))
+  
+  df[num_cols]  <- lapply(df[num_cols], as.numeric)
+  df[char_cols] <- lapply(df[char_cols], as.character)
+  
+  # special case: integer
+  if ("project_id" %in% names(df)) {
+    df$project_id <- as.integer(df$project_id)
+  }
+  
+  # --- 1. Write to temp table ---
+  temp_table <- paste0("tmp_antigen_", as.integer(Sys.time()))
+  
+  DBI::dbWriteTable(
+    conn,
+    name = temp_table,
+    value = df,
+    temporary = TRUE,
+    overwrite = TRUE
+  )
+  
+  # --- 2. Single UPDATE using join ---
+  sql <- glue::glue("
+    UPDATE madi_results.xmap_antigen_family AS target
+    SET
+      experiment_accession        = src.experiment_accession,
+      antigen                    = src.antigen,
+      feature                    = src.feature,
+      antigen_family             = src.antigen_family,
+      standard_curve_concentration = src.standard_curve_concentration,
+      antigen_name               = src.antigen_name,
+      virus_bacterial_strain     = src.virus_bacterial_strain,
+      antigen_source             = src.antigen_source,
+      catalog_number             = src.catalog_number,
+      l_asy_min_constraint       = src.l_asy_min_constraint,
+      l_asy_max_constraint       = src.l_asy_max_constraint,
+      l_asy_constraint_method    = src.l_asy_constraint_method,
+      model_form_list            = src.model_form_list,
+      pcov_threshold             = src.pcov_threshold
+    FROM {temp_table} AS src
+    WHERE
+      target.xmap_antigen_family_id = src.xmap_antigen_family_id
+      AND target.study_accession    = src.study_accession
+      AND target.project_id         = src.project_id;
+  ")
+  
+  DBI::dbExecute(conn, sql)
+  
+  message("Updated antigen family table (set-based).")
 }
 
 ## Clear Study Configuration
