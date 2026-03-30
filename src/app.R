@@ -949,6 +949,15 @@ server <- function(input, output, session) {
       layout_processing_lock <- reactiveVal(FALSE)
 
       delete_confirmed <- reactiveVal(FALSE)
+      
+      # study_configuration import 
+      config_upload_state <- reactiveVal(list(
+        is_uploaded = FALSE,
+        upload_time = NULL,
+        user = NULL
+      ))
+      config_preview <- reactiveVal(NULL)
+   
 
       # layout_template_sheets <- reactiveValues(
       #   plate_id = NULL,
