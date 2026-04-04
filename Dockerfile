@@ -103,6 +103,11 @@ RUN R -e "install.packages('bit64')"
 RUN R -e "install.packages('shinycssloaders')"
 
 
+# Install stanassay Bayesian ensemble package from bundled tarball
+COPY stanassay_0.0.0.9000.tar.gz /tmp/stanassay_0.0.0.9000.tar.gz
+RUN R -e "install.packages('/tmp/stanassay_0.0.0.9000.tar.gz', repos = NULL, type = 'source')" \
+    && rm /tmp/stanassay_0.0.0.9000.tar.gz
+
 RUN rm -rf /srv/shiny-server/*
 
 # Copy the app directory into the image

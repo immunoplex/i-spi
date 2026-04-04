@@ -194,8 +194,15 @@ pull_data <- function(study_accession, experiment_accession, project_id, conn = 
 
   samples$plate_nom <- paste(samples$plate, samples$nominal_sample_dilution, sep = "-")
 
-  response_var = unique(plates$assay_response_variable)
-  indep_var = unique(plates$assay_independent_variable)
+  response_var <- unique(plates$assay_response_variable)
+  response_var <- response_var[!is.na(response_var) & nzchar(response_var)]
+  if (length(response_var) == 0L) response_var <- "mfi"
+  if (length(response_var)  > 1L) response_var <- response_var[[1L]]
+
+  indep_var <- unique(plates$assay_independent_variable)
+  indep_var <- indep_var[!is.na(indep_var) & nzchar(indep_var)]
+  if (length(indep_var) == 0L) indep_var <- "concentration"
+  if (length(indep_var)  > 1L) indep_var <- indep_var[[1L]]
 
   # ====================================================================
   # RESPONSE VARIABLE COLUMN ALIGNMENT
