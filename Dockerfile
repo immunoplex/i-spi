@@ -33,10 +33,8 @@ RUN R -e "install.packages(c('grid', 'gridExtra', 'gtable', 'gtools', 'httr2', '
 
 RUN apt-get install libgmp-dev -y
 
-RUN R -e "library(devtools)"
-
-
-RUN R -e "devtools::install_github('biolabntua/moach')" - y
+RUN R -e "install.packages('remotes')"
+RUN R -e "remotes::install_github('biolabntua/moach')"
 
 
 RUN R -e "install.packages(c('ks', 'scales', 'sp'))"
@@ -52,8 +50,8 @@ RUN apt-get update && apt-get install -y \
 RUN R -e "install.packages('aplpack')"
 
 # Install R packages from GitHub
-RUN R -e "devtools::install_github('hardikguptadartmouth/weird-package')"
-RUN R -e "devtools::install_github('Sayani07/gghdr')"
+RUN R -e "remotes::install_github('hardikguptadartmouth/weird-package')"
+RUN R -e "remotes::install_github('Sayani07/gghdr')"
 
 RUN R -e "install.packages('cgam')"
 RUN R -e "install.packages('mgcv')"
@@ -63,7 +61,7 @@ RUN R -e "install.packages('Polychrome')"
 RUN R -e "install.packages(c('socviz', 'magrittr', 'car', 'nlraa', 'nlstools', 'shinyWidgets', 'formattable', 'drda', 'future', 'promises'), repos='http://cran.rstudio.com/')"
 
 
-RUN R -e "devtools::install_github('hardikguptadartmouth/shinyjqui')"
+RUN R -e "remotes::install_github('hardikguptadartmouth/shinyjqui')"
 
 RUN apt-get install rustc -y
 RUN apt-get install cargo -y
@@ -78,7 +76,7 @@ RUN R -e "install.packages('heatmaply')"
 
 RUN R -e "install.packages(c('data.tree', 'DiagrammeR', 'tidyr'))"
 
-RUN R -e "devtools::install_github('dreamRs/datamods')"
+RUN R -e "remotes::install_github('dreamRs/datamods')"
 
 
 RUN R -e "install.packages('https://cran.r-project.org/src/contrib/Archive/b64/b64_0.1.3.tar.gz', repos = NULL, type = 'source')"
