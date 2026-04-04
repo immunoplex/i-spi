@@ -116,6 +116,15 @@ observeEvent(list(
                      tags$h4("Current Standard Curve Summary Context", style = "margin-top: 0; color: #2c5aa0;"),
                      uiOutput("current_sc_summary_context")
                    )
+            ),
+            column(3,
+                   radioButtons(
+                     "summary_curve_method",
+                     label    = "Curve Method",
+                     choices  = c("Frequentist", "Bayesian"),
+                     selected = "Frequentist",
+                     inline   = TRUE
+                   )
             )
           ),
           fluidRow(
@@ -123,9 +132,27 @@ observeEvent(list(
             column(4, uiOutput("best_std_antigen_ui")),
             column(4, uiOutput("best_std_antigen_source_ui"))
           ),
-          plotlyOutput("std_curve_summary_plot"),
-          uiOutput("download_standard_curve_fits_data_button_ui"),
-          uiOutput("save_norm_btn_ui")
+
+          # ── Frequentist summary plot ──
+          conditionalPanel(
+            condition = "input.summary_curve_method == 'Frequentist'",
+            plotlyOutput("std_curve_summary_plot"),
+            uiOutput("download_standard_curve_fits_data_button_ui"),
+            uiOutput("save_norm_btn_ui")
+          ),
+
+          # ── Bayesian summary plot ──
+          conditionalPanel(
+            condition = "input.summary_curve_method == 'Bayesian'",
+            shinycssloaders::withSpinner(
+              plotlyOutput("bayes_curve_summary_plot", width = "100%", height = "700px"),
+              type = 6, color = "#27ae60",
+              caption = "Loading Bayesian curves from database..."
+            ),
+            br(),
+            div(class = "table-container", style = "overflow-x:auto;",
+                tableOutput("bayes_summary_table"))
+          )
 
         ) # end tagList
       })
@@ -366,6 +393,246 @@ observeEvent(list(
 
 
 
+
+
+      # ================================================================
+      # Bayesian Summary — overlay all plates' curves from DB
+      # ================================================================
+      output$bayes_curve_summary_plot <- renderPlotly({
+        req(identical(input$summary_curve_method, "Bayesian"))
+        req(input$best_std_antigen, input$best_std_source)
+
+        antigen_val <- input$best_std_antigen
+        source_val  <- input$best_std_source
+        proj_id     <- userWorkSpaceID()
+
+        # Fetch all plates' curve data for this antigen+source
+        curves <- tryCatch(DBI::dbGetQuery(conn, sprintf(
+          "SELECT * FROM madi_results.bayes_curves
+           WHERE project_id = %s AND study_accession = '%s'
+             AND experiment_accession = '%s' AND antigen = '%s' AND source = '%s'
+           ORDER BY plateid",
+          proj_id, selected_study, selected_experiment, antigen_val, source_val)),
+          error = function(e) { message("[bayes_summary] curves error: ", e$message); data.frame() })
+
+        if (nrow(curves) == 0) {
+          return(plotly::plot_ly() |>
+            plotly::layout(
+              title = list(
+                text = paste0("No Bayesian curves found for ", antigen_val,
+                              "<br><sup>Run Bayesian batch calculation first</sup>"),
+                font = list(size = 14)),
+              xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)))
+        }
+
+        curve_ids <- paste(curves$bayes_curves_id, collapse = ",")
+
+        grids <- tryCatch(DBI::dbGetQuery(conn, sprintf(
+          "SELECT cg.log10_conc, cg.mfi_median, cg.mfi_lower_95, cg.mfi_upper_95,
+                  bc.plateid, bc.curve_family
+           FROM madi_results.bayes_curve_grid cg
+           JOIN madi_results.bayes_curves bc ON cg.bayes_curves_id = bc.bayes_curves_id
+           WHERE cg.bayes_curves_id IN (%s) ORDER BY bc.plateid, cg.log10_conc", curve_ids)),
+          error = function(e) data.frame())
+
+        cdan_grids <- tryCatch(DBI::dbGetQuery(conn, sprintf(
+          "SELECT cg.log10_conc, cg.smoothed_cv, bc.plateid
+           FROM madi_results.bayes_cdan_grid cg
+           JOIN madi_results.bayes_curves bc ON cg.bayes_curves_id = bc.bayes_curves_id
+           WHERE cg.bayes_curves_id IN (%s)
+             AND cg.smoothed_cv IS NOT NULL AND cg.smoothed_cv < 60
+           ORDER BY bc.plateid, cg.log10_conc", curve_ids)),
+          error = function(e) data.frame())
+
+        # Also fetch standards for overlay
+        nom_row <- tryCatch(DBI::dbGetQuery(conn, sprintf(
+          "SELECT DISTINCT standard_curve_concentration FROM madi_results.xmap_antigen_family
+           WHERE study_accession = '%s' AND experiment_accession = '%s' AND antigen = '%s'
+             AND standard_curve_concentration IS NOT NULL LIMIT 1",
+          selected_study, selected_experiment, antigen_val)),
+          error = function(e) data.frame())
+        nom <- if (nrow(nom_row) > 0) as.numeric(nom_row$standard_curve_concentration[1]) else {
+          as.numeric(curves$nominal_sample_dilution[1])
+        }
+
+        stds <- tryCatch(DBI::dbGetQuery(conn, sprintf(
+          "SELECT plateid, dilution as dilution_factor, antibody_mfi as mfi
+           FROM madi_results.xmap_standard
+           WHERE study_accession = '%s' AND experiment_accession = '%s'
+             AND antigen = '%s' AND source = '%s'
+             AND antibody_mfi > 0 AND dilution > 0",
+          selected_study, selected_experiment, antigen_val, source_val)),
+          error = function(e) data.frame())
+        if (nrow(stds) > 0) stds$concentration <- nom / stds$dilution_factor
+
+        # Build overlay plot — one trace per plate
+        plate_colors <- c("#0072B2", "#D55E00", "#009E73", "#CC79A7",
+                          "#E69F00", "#56B4E9", "#F0E442", "#999999")
+        plates <- unique(grids$plateid)
+
+        p <- plotly::plot_ly()
+
+        # Standards per plate (small dots, faded)
+        if (nrow(stds) > 0) {
+          for (i in seq_along(plates)) {
+            pid <- plates[i]
+            sp <- stds[stds$plateid == pid, , drop = FALSE]
+            if (nrow(sp) > 0) {
+              sp_agg <- sp |>
+                dplyr::group_by(concentration) |>
+                dplyr::summarise(mfi = median(mfi, na.rm = TRUE), .groups = "drop")
+              col <- plate_colors[((i - 1) %% length(plate_colors)) + 1]
+              p <- p |> plotly::add_markers(
+                data = sp_agg, x = ~log10(concentration), y = ~log10(mfi),
+                name = paste0(pid, " (std)"),
+                legendgroup = pid,
+                marker = list(color = col, size = 5, opacity = 0.4),
+                showlegend = FALSE, hoverinfo = "skip")
+            }
+          }
+        }
+
+        # Fitted curves per plate
+        for (i in seq_along(plates)) {
+          pid <- plates[i]
+          pg <- grids[grids$plateid == pid, , drop = FALSE]
+          if (nrow(pg) == 0) next
+          col <- plate_colors[((i - 1) %% length(plate_colors)) + 1]
+          fam <- unique(pg$curve_family)
+          fam_lbl <- switch(as.character(fam[1]),
+                            "4pl" = "4PL", "5pl" = "5PL", "gompertz" = "Gomp", fam[1])
+
+          # CI ribbon (faded)
+          p <- p |> plotly::add_ribbons(
+            data = pg,
+            x = ~log10_conc,
+            ymin = ~log10(pmax(mfi_lower_95, 1e-9)),
+            ymax = ~log10(pmax(mfi_upper_95, 1e-9)),
+            name = paste0(pid, " CI"),
+            legendgroup = pid,
+            fillcolor = paste0(col, "22"),
+            line = list(color = "transparent"),
+            showlegend = FALSE, hoverinfo = "skip")
+
+          # Fitted line
+          p <- p |> plotly::add_lines(
+            data = pg,
+            x = ~log10_conc,
+            y = ~log10(pmax(mfi_median, 1e-9)),
+            name = paste0(pid, ".", fam_lbl),
+            legendgroup = pid,
+            line = list(color = col, width = 2))
+        }
+
+        # CDAN precision profiles on secondary y-axis
+        if (nrow(cdan_grids) > 0) {
+          for (i in seq_along(plates)) {
+            pid <- plates[i]
+            cg <- cdan_grids[cdan_grids$plateid == pid, , drop = FALSE]
+            if (nrow(cg) == 0) next
+            col <- plate_colors[((i - 1) %% length(plate_colors)) + 1]
+            p <- p |> plotly::add_lines(
+              data = cg, x = ~log10_conc, y = ~smoothed_cv,
+              name = paste0(pid, " CV%"),
+              legendgroup = pid,
+              yaxis = "y2",
+              line = list(color = col, width = 1.5, dash = "dot"),
+              showlegend = FALSE,
+              hovertemplate = paste0(pid, "<br>Log10 Conc: %{x:.2f}<br>CV%: %{y:.1f}%<extra></extra>"))
+          }
+          # Threshold lines
+          x_range <- range(cdan_grids$log10_conc, na.rm = TRUE)
+          p <- p |>
+            plotly::add_lines(x = x_range, y = c(20, 20),
+              name = "20% CV threshold", yaxis = "y2",
+              line = list(color = "#e68fac", dash = "dash", width = 1.5),
+              hoverinfo = "skip") |>
+            plotly::add_lines(x = x_range, y = c(15, 15),
+              name = "15% CV threshold", yaxis = "y2",
+              line = list(color = "#4CAF50", dash = "dash", width = 1.5),
+              hoverinfo = "skip")
+        }
+
+        # Global best family label
+        gbf <- unique(curves$global_best_family)
+        gbf_lbl <- switch(as.character(gbf[1]),
+                          "4pl" = "4PL", "5pl" = "5PL", "gompertz" = "Gompertz", gbf[1])
+
+        layout_args <- list(
+          title = list(
+            text = paste0("Bayesian Standard Curves for ", antigen_val,
+                          " by Plate (Global Best: ", gbf_lbl, ")"),
+            font = list(size = 14)),
+          xaxis = list(title = "log\u2081\u2080 Concentration",
+            gridcolor = "#E5E5E5", showline = TRUE, linecolor = "#CCCCCC"),
+          yaxis = list(title = "log\u2081\u2080 MFI",
+            gridcolor = "#E5E5E5", showline = TRUE, linecolor = "#CCCCCC"),
+          plot_bgcolor = "white", paper_bgcolor = "white",
+          hovermode = "closest",
+          legend = list(orientation = "h", x = 0, y = -0.15,
+            bgcolor = "rgba(255,255,255,0.85)", bordercolor = "#CCCCCC", borderwidth = 1))
+
+        if (nrow(cdan_grids) > 0) {
+          layout_args$yaxis2 <- list(
+            overlaying = "y", side = "right",
+            title = "Coefficient of Variation (%)",
+            range = c(0, 55), showgrid = FALSE, zeroline = FALSE,
+            tickfont = list(color = "#1565C0"),
+            titlefont = list(color = "#1565C0"))
+          layout_args$margin <- list(r = 100)
+        }
+
+        do.call(plotly::layout, c(list(p), layout_args))
+      })
+
+      # ── Bayesian summary table — per-plate metrics ──
+      output$bayes_summary_table <- renderTable({
+        req(identical(input$summary_curve_method, "Bayesian"))
+        req(input$best_std_antigen, input$best_std_source)
+
+        proj_id <- userWorkSpaceID()
+        curves <- tryCatch(DBI::dbGetQuery(conn, sprintf(
+          "SELECT plateid, curve_family, plate_best_family,
+                  lloq, uloq, lloq_15, uloq_15,
+                  lod, lrdl, uod, urdl,
+                  inflect_x, lo2d, uo2d,
+                  plate_elpd_4pl, plate_elpd_5pl, plate_elpd_gompertz,
+                  global_stacking_4pl, global_stacking_5pl, global_stacking_gompertz
+           FROM madi_results.bayes_curves
+           WHERE project_id = %s AND study_accession = '%s'
+             AND experiment_accession = '%s' AND antigen = '%s' AND source = '%s'
+           ORDER BY plateid",
+          proj_id, selected_study, selected_experiment,
+          input$best_std_antigen, input$best_std_source)),
+          error = function(e) data.frame())
+
+        if (nrow(curves) == 0) return(NULL)
+
+        fmt <- function(x, d = 3) ifelse(is.na(x), "\u2014", sprintf(paste0("%.", d, "f"), x))
+
+        data.frame(
+          Plate   = curves$plateid,
+          Model   = vapply(curves$curve_family, function(f)
+            switch(f, "4pl"="4PL", "5pl"="5PL", gompertz="Gompertz", f), character(1)),
+          LLOQ    = fmt(curves$lloq),
+          ULOQ    = fmt(curves$uloq),
+          LOD     = fmt(curves$lod, 4),
+          LRDL    = fmt(curves$lrdl, 4),
+          UOD     = fmt(curves$uod, 4),
+          URDL    = fmt(curves$urdl, 4),
+          Inflection = fmt(curves$inflect_x, 4),
+          LO2D    = fmt(curves$lo2d, 4),
+          UO2D    = fmt(curves$uo2d, 4),
+          ELPD    = fmt(ifelse(
+            curves$curve_family == "4pl", curves$plate_elpd_4pl,
+            ifelse(curves$curve_family == "5pl", curves$plate_elpd_5pl,
+                   curves$plate_elpd_gompertz)), 1),
+          stringsAsFactors = FALSE, check.names = FALSE
+        )
+      },
+      caption           = "Bayesian Per-Plate Summary",
+      caption.placement = "top",
+      striped = TRUE, hover = TRUE, bordered = TRUE, spacing = "s")
 
 
     } # end inside standard curver summary tab

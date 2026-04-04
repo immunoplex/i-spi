@@ -1104,15 +1104,90 @@ get_existing_concentration_calc <- function(conn,
 createStatusBadge <- function(method,
                               existing_concentration_calc,
                               scope,
-                              progress_msg = NULL) {  # kept for API compat; no longer used
-  
+                              progress_msg = NULL,
+                              bayes_status = NULL) {
+
+  # ── Bayesian method: use bayes_status list instead of DB calc table ──
+  if (method == "bayesian") {
+    # bayes_status is a list with $status, $progress, $percentage, $eta_display,
+    # $timestamp, $error, $job_id — from get_bayes_calc_status() or NULL
+    if (is.null(bayes_status)) {
+      type_status <- "not begun"
+    } else {
+      type_status <- bayes_status$status %||% "not begun"
+    }
+
+    bg_color <- switch(type_status,
+      "pending"   = "#FFA500",
+      "completed" = "#28a745",
+      "failed"    = "#dc3545",
+      "not begun" = "#dc3545",
+      "#999999"
+    )
+
+    badge_label <- switch(type_status,
+      "pending" = {
+        prog <- bayes_status$progress %||% ""
+        eta  <- bayes_status$eta_display %||% ""
+        lbl  <- if (nzchar(prog)) paste0("Running (", prog, ")") else "Running..."
+        if (nzchar(eta)) lbl <- paste0(lbl, " \u2014 ", eta)
+        tagList(tags$i(class = "fa fa-spinner fa-spin"), " ", lbl)
+      },
+      "completed" = {
+        ts <- bayes_status$timestamp
+        ts_label <- if (!is.null(ts) && !is.na(ts)) {
+          format(as.POSIXct(ts, tz = "UTC"), "%b %d at %I:%M %p")
+        } else { NULL }
+        tagList(
+          tags$i(class = "fa fa-check"), " Completed",
+          if (!is.null(ts_label)) tags$br(),
+          if (!is.null(ts_label)) tags$small(style = "font-weight:normal; opacity:0.85;",
+                                              paste0("Last: ", ts_label))
+        )
+      },
+      "failed" = {
+        ts <- bayes_status$timestamp
+        ts_label <- if (!is.null(ts) && !is.na(ts)) {
+          format(as.POSIXct(ts, tz = "UTC"), "%b %d at %I:%M %p")
+        } else { NULL }
+        err_msg <- bayes_status$error %||% ""
+        tagList(
+          tags$i(class = "fa fa-exclamation-triangle"), " Failed",
+          if (!is.null(ts_label)) tags$br(),
+          if (!is.null(ts_label)) tags$small(style = "font-weight:normal; opacity:0.85;",
+                                              paste0("Last: ", ts_label)),
+          if (nzchar(err_msg)) tags$br(),
+          if (nzchar(err_msg)) tags$small(style = "font-weight:normal; opacity:0.85;",
+                                           substr(err_msg, 1, 80))
+        )
+      },
+      "not begun" = tagList(tags$i(class = "fa fa-times"), " Not Begun"),
+      NULL
+    )
+
+    if (is.null(badge_label)) return(NULL)
+
+    return(tagList(
+      tags$span(
+        class = "badge",
+        style = paste0(
+          "display:inline-block; position:relative; ",
+          "padding:4px 10px; border-radius:10px; font-size:12px; ",
+          "background-color:", bg_color, "; color:white; white-space:nowrap;"
+        ),
+        badge_label
+      )
+    ))
+  }
+
+  # ── Frequentist method: existing logic from get_job_status2 DB function ──
   row <- existing_concentration_calc[
     existing_concentration_calc$concentration_calc_method == method &
       existing_concentration_calc$scope == scope,
   ]
-  
+
   if (nrow(row) == 0) return(NULL)
-  
+
   type_status <- row$job_status[1]
   
   incomplete <- if (
@@ -1326,56 +1401,84 @@ get_status <- function(existing_concentration_calc, scope, method) {
 # 4. Build the status grid + conditional buttons
 # -----------------------------------------------------------------
 createStandardCurveConcentrationTypeUI <- function(existing_concentration_calc, progress_msg = NULL,
-                                                   interp_progress_msg = NULL) {
+                                                   interp_progress_msg = NULL,
+                                                   bayes_status_list = NULL) {
   concentrationUIRefresher()
   
   ## Method display labels
   method_labels <- c(
-    "interpolated" = "Interpolated",
-    "mcmc_robust"  = "MCMC Robust"
+    "interpolated" = "Frequentist",
+    "bayesian"     = "Bayesian"
   )
-  
+
+  ## Frequentist uses plate/experiment/study; Bayesian uses antigen/experiment/study
+  freq_scopes <- c("study", "experiment", "plate")
+  bayes_scopes <- c("study", "experiment", "antigen")
+
   scope_labels <- c(
     "study"      = "Study (All Experiments)",
     "experiment" = "Experiment (Current)",
-    "plate"      = "Plate (Current)"
+    "plate"      = "Plate (Current)",
+    "antigen"    = "Antigen (Current)"
   )
-  
+
   scope_icons <- c(
     "study"      = "fa-flask",
     "experiment" = "fa-vial",
-    "plate"      = "fa-th"
+    "plate"      = "fa-th",
+    "antigen"    = "fa-dna"
   )
-  
-  all_methods <- c("interpolated", "mcmc_robust")
+
+  all_methods <- c("interpolated", "bayesian")
+  # Display columns: Study, Experiment, Plate/Antigen
   all_scopes  <- c("study", "experiment", "plate")
   
   ## ── Build the status grid as an HTML table ──
-  header_cells <- lapply(all_scopes, function(s) {
+  ## Column headers: Study | Experiment | Plate/Antigen
+  header_cells <- list(
     tags$th(
       style = "text-align:center; padding:10px 15px; font-size:14px;",
-      tags$i(class = paste("fa", scope_icons[s]), style = "margin-right:5px;"),
-      scope_labels[s]
+      tags$i(class = "fa fa-flask", style = "margin-right:5px;"),
+      "Study (All Experiments)"
+    ),
+    tags$th(
+      style = "text-align:center; padding:10px 15px; font-size:14px;",
+      tags$i(class = "fa fa-vial", style = "margin-right:5px;"),
+      "Experiment (Current)"
+    ),
+    tags$th(
+      style = "text-align:center; padding:10px 15px; font-size:14px;",
+      tags$i(class = "fa fa-th", style = "margin-right:5px;"),
+      "Plate / Antigen"
     )
-  })
-  
+  )
+
   body_rows <- lapply(all_methods, function(m) {
-    cells <- lapply(all_scopes, function(s) {
+    if (m == "interpolated") {
+      # Frequentist: study, experiment, plate
+      scopes_for_method <- c("study", "experiment", "plate")
+    } else {
+      # Bayesian: study, experiment, antigen
+      scopes_for_method <- c("study", "experiment", "antigen")
+    }
+
+    cells <- lapply(scopes_for_method, function(s) {
+      # For Bayesian, pass the scope-specific status from bayes_status_list
+      bayes_st <- if (m == "bayesian" && !is.null(bayes_status_list)) {
+        bayes_status_list[[s]]
+      } else { NULL }
+
       tags$td(
         style = "text-align:center; padding:10px 15px; vertical-align:middle;",
-        # createStatusBadge(m, existing_concentration_calc, s)
-        # ── Pass progress_msg only for the mcmc_robust method ──
         createStatusBadge(
-          method                    = m,
+          method                     = m,
           existing_concentration_calc = existing_concentration_calc,
-          scope                     = s,
-          progress_msg              =  switch(m,
-                                              "mcmc_robust"  = progress_msg,
+          scope                      = s,
+          progress_msg               = switch(m,
                                               "interpolated" = interp_progress_msg,
-                                              NULL)
-          # if (m == "mcmc_robust") progress_msg else NULL
+                                              NULL),
+          bayes_status               = bayes_st
         )
-        
       )
     })
     tags$tr(
@@ -1399,19 +1502,9 @@ createStandardCurveConcentrationTypeUI <- function(existing_concentration_calc, 
     tags$tbody(body_rows)
   )
   
-  ## ── Scope selector ──
-  scope_selector <- radioButtons(
-    inputId  = "save_scope",
-    label    = "Calculation scope:",
-    choices  = c(
-      "Current Plate"      = "plate",
-      "Current Experiment" = "experiment",
-      "All Experiments"    = "study"
-    ),
-    selected = "plate",
-    inline   = TRUE
-  )
-  
+  ## ── Scope selectors (separate for Frequentist and Bayesian) ──
+  scope_selector <- uiOutput("calculation_scope_ui")
+
   ## ── Buttons section (rendered server-side for conditional logic) ──
   buttons_section <- uiOutput("concentration_buttons_ui")
   

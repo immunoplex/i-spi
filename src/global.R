@@ -1,5 +1,27 @@
 # Description: This file contains the global variables and libraries that are used in the app.
 
+# Load the stanassay Bayesian ensemble package (R6-based; provides StanAssay class)
+# The package provides hierarchical Bayesian standard curve fitting (4PL, 5PL, Gompertz
+# ensemble with LOO-stacking model selection) via Stan MCMC.
+#
+# Installation:
+#   - Docker/CI: installed from stanassay_0.0.0.9000.tar.gz bundled in this repo
+#   - Local dev: R CMD INSTALL /path/to/stanassay
+#
+# NOTE: stanassay must be installed via R CMD INSTALL (not devtools::load_all())
+# because it uses Stan + TBB within-chain threading compiled with -DSTAN_THREADS
+# which is baked in at build time via src/Makevars.
+tryCatch(
+  library(stanassay),
+  error = function(e) {
+    warning(paste0(
+      "[global.R] Could not load stanassay package: ", e$message,
+      "\nBayesian ensemble features will be disabled at runtime.",
+      "\nFor Docker builds, ensure stanassay tarball is in the repo and Dockerfile installs it."
+    ))
+  }
+)
+
 # Load necessary libraries
 library(plotly);
 library(shiny);
@@ -194,7 +216,7 @@ get_db_connection <- function() {
             port = Sys.getenv("db_port"),
             user = Sys.getenv("db_userid_x"),
             password = Sys.getenv("db_pwd_x"),
-            sslmode = 'require',
+            sslmode = 'enable',
             options = "-c search_path=madi_results"
   )
 }
@@ -219,7 +241,7 @@ get_db_connection_from_args <- function(host, port, dbname, user, pass) {
     dbname   = dbname,
     user     = user,
     password = pass,
-    sslmode = 'require',
+    sslmode = 'enable',
     options = "-c search_path=madi_results"
   )
   
