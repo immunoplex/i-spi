@@ -259,6 +259,17 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
         name = "Samples", text = ~hover, hoverinfo = "text",
         marker = list(color = COL_SAMP, size = 7, symbol = "diamond-open",
                       line = list(width = 2, color = COL_SAMP)))
+
+      # Second trace: sample pCoV on CDAN precision profile (yaxis2)
+      vs_pcov <- vs[!is.na(vs$pcov), , drop = FALSE]
+      if (nrow(vs_pcov) > 0) {
+        p <- p |> plotly::add_markers(
+          data = vs_pcov, x = ~log10(raw_predicted_concentration), y = ~pcov,
+          yaxis = "y2", name = "Sample pCoV", text = ~hover, hoverinfo = "text",
+          showlegend = FALSE,
+          marker = list(color = COL_CDAN, size = 6, symbol = "diamond",
+                        line = list(width = 1, color = "#000000")))
+      }
     }
   }
 
