@@ -247,12 +247,13 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
                      samples_df$raw_predicted_concentration > 0 &
                      !is.na(samples_df$mfi) & samples_df$mfi > 0, , drop = FALSE]
     if (nrow(vs) > 0) {
+      vs$pcov_pct <- vs$pcov * 100
       vs$hover <- paste0(
         "<b>ID:</b> ", vs$sampleid,
         "<br><b>MFI:</b> ", round(vs$mfi, 1),
         "<br><b>Conc:</b> ", signif(vs$raw_predicted_concentration, 4),
         "<br><b>95%CI:</b> [", signif(vs$conc_lower, 3), ", ", signif(vs$conc_upper, 3), "]",
-        "<br><b>pCoV:</b> ", ifelse(!is.na(vs$pcov), paste0(round(vs$pcov, 1), "%"), "N/A"),
+        "<br><b>pCoV:</b> ", ifelse(!is.na(vs$pcov_pct), paste0(round(vs$pcov_pct, 1), "%"), "N/A"),
         "<br><b>Gate:</b> ", vs$gate_class)
       p <- p |> plotly::add_markers(
         data = vs, x = ~log10(raw_predicted_concentration), y = ~log10(mfi),
@@ -261,10 +262,11 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
                       line = list(width = 2, color = COL_SAMP)))
 
       # Second trace: sample pCoV on CDAN precision profile (yaxis2)
-      vs_pcov <- vs[!is.na(vs$pcov), , drop = FALSE]
+      # pcov from DB is a fraction (0-1); multiply by 100 to match the CDAN profile scale
+      vs_pcov <- vs[!is.na(vs$pcov_pct), , drop = FALSE]
       if (nrow(vs_pcov) > 0) {
         p <- p |> plotly::add_markers(
-          data = vs_pcov, x = ~log10(raw_predicted_concentration), y = ~pcov,
+          data = vs_pcov, x = ~log10(raw_predicted_concentration), y = ~pcov_pct,
           yaxis = "y2", name = "Sample pCoV", text = ~hover, hoverinfo = "text",
           showlegend = FALSE,
           marker = list(color = COL_CDAN, size = 6, symbol = "diamond",
