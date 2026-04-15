@@ -320,6 +320,10 @@ render_study_parameters <- reactive({
             condition = "input.advanced_qc_params == 'Subgroup Parameters'",
             uiOutput("subgroup_config"))
 
+          ),
+          tabPanel(
+            "Export/Import Study Parameters",
+             uiOutput("export_import_parameters")
           )
         ),
         #)
@@ -339,7 +343,8 @@ render_study_parameters <- reactive({
       #   style = "primary")
       # ),
       conditionalPanel(
-        condition = "!(input.basic_qc_params == 'Plate Label Editor' && input.study_params_section_tab == 'QC Basic Parameters')",
+        condition = "!(input.basic_qc_params == 'Plate Label Editor' && input.study_params_section_tab == 'QC Basic Parameters') 
+        && input.study_params_section_tab !== 'Export/Import Study Parameters'",
         actionButton(inputId = "reset_user_config", label = "Reset Study Parameters"),
         uiOutput("user_parameter_download")
       ),
@@ -2127,6 +2132,865 @@ observeEvent(input$reset_user_config, {
 
 })
 
+
+output$export_import_parameters <- renderUI({
+  
+  div(class = "card p-3",
+      
+      div(class = "mb-3",
+          p(
+            "Researchers can export study configuration settings to share with collaborators.",
+            "You can import their study configuration file to apply the same study settings to your profile."
+          )
+      ),
+      # Export
+      div(class = "mb-3",
+          br(),
+          downloadButton(
+            "download_parameters",
+            "Export Study Configuration",
+            class = "btn-success",
+            icon = icon("file-export")
+          )
+      ),
+      
+      hr(),
+      
+      strong("Select a study configuration file to import"),
+      
+      fluidRow(
+        column(
+          width = 8,
+          fileInput(
+            "import_parameters",
+            NULL,
+            accept = c(".xlsx", ".xls")
+          )
+        )),
+        fluidRow(
+          column(
+            width = 12,
+            div(class = "mt-3",
+                uiOutput("config_preview_ui")
+            )
+          )
+        ), 
+        fluidRow(
+          column(width = 4,
+                 uiOutput("config_validation_msg"))
+        ), 
+        fluidRow(
+        column(
+          width = 4,
+          actionButton(
+            "load_parameters",
+            "Load Study Configuration",
+            icon = icon("upload"),
+            class = "btn-primary w-100",
+            disabled = TRUE
+          )
+        )
+      ),
+      br(),
+      div(class = "mt-3",
+          uiOutput("config_upload_status")
+      )
+  )
+})
+
+# reset message
+observeEvent(input$import_parameters, {
+  df <- readxl::read_excel(
+    input$import_parameters$datapath,
+    sheet = 1,
+  )
+  df <- df[, !(names(df) %in% "param_user")]
+  
+  antigen_df <- tryCatch(
+    readxl::read_excel(
+      input$import_parameters$datapath,
+      sheet = "Antigen_Parameters"
+    ),
+    error = function(e) NULL
+  )
+  
+  # store previews
+  config_preview(df)
+  config_preview_antigen(antigen_df)
+  
+  config_upload_state(list(
+    is_uploaded = FALSE,
+    upload_time = NULL,
+    user = NULL
+  ))
+  
+})
+
+# output$export_import_parameters <- renderUI({
+#   tagList(
+#     # ---- Export button ------------------------------------------------
+#     downloadButton(
+#       outputId = "download_parameters",
+#       label    = "Export parameters to Excel",
+#       class    = "btn-success",
+#       icon     = icon("file-export")
+#     ),
+#     
+#     # ---- File chooser -------------------------------------------------
+#     fileInput(
+#       inputId = "import_parameters",
+#       label   = "Select parameter file to import",
+#       accept  = c(".xlsx", ".xls", ".csv")
+#     ),
+#     
+#     actionButton(
+#       inputId = "load_parameters",
+#       label   = "Load selected file",
+#       icon    = icon("upload"),
+#       class   = "btn-primary",
+#       disabled = TRUE            # start disabled – we enable it when a file is chosen
+#     ),
+#     uiOutput("config_upload_status")
+#   )
+#     
+# })
+
+valid_study_config <- reactive({
+  req(config_preview())
+  
+  df <- config_preview()
+  
+  expected_study <- input$readxMap_study_accession
+  expected_project  <- userWorkSpaceID()
+  
+  all(
+    df$study_accession == expected_study,
+    df$project_id == expected_project
+  )
+})
+
+valid_antigen_config <- reactive({
+  req(config_preview_antigen())
+  
+  df <- config_preview_antigen()
+  
+  expected_study   <- input$readxMap_study_accession
+  expected_project <- userWorkSpaceID()
+  
+  all(
+    df$study_accession == expected_study,
+    df$project_id == expected_project
+  )
+})
+
+observe({
+  toggleState(
+    "load_parameters",
+    condition = !is.null(input$import_parameters) && isTRUE(valid_study_config() && isTRUE(valid_antigen_config()))
+  )
+})
+
+output$config_validation_msg <- renderUI({
+  req(config_preview())
+  
+  df <- config_preview()
+  
+  expected_study   <- input$readxMap_study_accession
+  expected_project <- userWorkSpaceID()
+  
+  # study mismatch
+  if (!all(df$study_accession == expected_study)) {
+    return(
+      div(class = "text-warning",
+          icon("exclamation-circle"),
+          paste("Study mismatch:", unique(df$study_accession))
+      )
+    )
+  }
+  
+  # Project mismatch
+  if (!all(df$project_id == expected_project)) {
+    return(
+      div(class = "text-warning",
+          icon("exclamation-circle"),
+          paste("Project mismatch:", unique(df$project_id))
+      )
+    )
+  }
+  
+  # Match
+  div(class = "text-muted",
+      icon("check"),
+      "Configuration matches the current study and project"
+  )
+})
+
+output$config_validation_msg_antigen <- renderUI({
+  req(config_preview_antigen())
+  
+  df <- config_preview_antigen()
+  
+  expected_study   <- input$readxMap_study_accession
+  expected_project <- userWorkSpaceID()
+  
+  if (!all(df$study_accession == expected_study)) {
+    return(
+      div(class = "text-warning",
+          icon("exclamation-circle"),
+          paste("Antigen study mismatch:", unique(df$study_accession))
+      )
+    )
+  }
+  
+  if (!all(df$project_id == expected_project)) {
+    return(
+      div(class = "text-warning",
+          icon("exclamation-circle"),
+          paste("Antigen project mismatch:", unique(df$project_id))
+      )
+    )
+  }
+  
+  div(class = "text-muted",
+      icon("check"),
+      "Antigen configuration matches study and project"
+  )
+})
+
+observeEvent(input$load_parameters, {
+  req(input$import_parameters)   # safety
+  
+  # Determine file type by extension
+  ext <- tools::file_ext(input$import_parameters$name)
+  
+  imported <- switch(
+    tolower(ext),
+    xlsx = read_excel(input$import_parameters$datapath, sheet = 1),
+    xls  = read_excel(input$import_parameters$datapath, sheet = 1),
+    csv  = read.csv(input$import_parameters$datapath,
+                    stringsAsFactors = FALSE,
+                    na.strings = c("", "NA")),
+    {
+      showNotification("Unsupported file type.", type = "error")
+      return(NULL)
+    }
+  )
+  
+  imported_clean <- imported %>%
+    mutate(
+      parameter = stringr::str_trim(parameter),
+      parameter = stringr::str_remove(parameter, ":$"),
+      project_id = as.integer(project_id)   
+    )
+  
+  imported_antigen_config <- switch(
+    tolower(ext),
+    xlsx = read_excel(input$import_parameters$datapath, sheet = "Antigen_Parameters"),
+    xls  = read_excel(input$import_parameters$datapath, sheet = "Antigen_Parameters"),
+    csv  = read.csv(input$import_parameters$datapath,
+                    stringsAsFactors = FALSE,
+                    na.strings = c("", "NA")),
+    {
+      showNotification("Unsupported file type.", type = "error")
+      return(NULL)
+    }
+  )
+  
+  # preview_df <- imported_clean[, !(names(imported_clean) %in% "param_user")]
+  # 
+  # config_preview(preview_df)
+  # 
+  final_config <- write_back_config(imported_clean, conn)
+  
+  # update the user to be the current user
+  final_config$param_user <- currentuser()
+  
+
+  # update the db 
+  update_study_config(final_config, conn)
+  
+  update_antigen_family_config(imported_antigen_config, conn)
+  
+  config_upload_state(list(
+    is_uploaded = TRUE,
+    upload_time = Sys.time(),
+    user = currentuser()
+  ))
+  
+})
+
+# output$config_preview_ui <- renderUI({
+#   req(config_preview())
+#   
+#   tagList(
+#     strong("Preview of uploaded configuration:"),
+#     DT::dataTableOutput("config_preview_table")
+#   )
+# })
+output$config_preview_ui <- renderUI({
+  req(config_preview())
+  
+  tagList(
+    
+    # ---- PARAMETERS ----
+    strong("Preview of uploaded configuration:"),
+    DT::dataTableOutput("config_preview_table"),
+    uiOutput("config_validation_msg"),
+    
+    br(),
+    
+    # ---- ANTIGEN ----
+    if (!is.null(config_preview_antigen())) tagList(
+      strong("Preview of antigen configuration:"),
+      DT::dataTableOutput("config_preview_table_antigen"),
+      uiOutput("config_validation_msg_antigen")
+    )
+  )
+})
+
+output$config_preview_table <- DT::renderDataTable({
+  req(config_preview())
+  
+  config_preview()
+}, options = list(
+  pageLength = 5,
+  scrollX = TRUE
+))
+
+output$config_preview_table_antigen <- DT::renderDataTable({
+  req(config_preview_antigen())
+  config_preview_antigen()
+}, options = list(
+  pageLength = 5,
+  scrollX = TRUE
+))
+
+output$config_upload_status <- renderUI({
+  state <- config_upload_state()
+  if (state$is_uploaded) {
+    div(
+      class = "alert alert-success",
+      icon("check-circle"),
+      paste("Study Configuration uploaded by", state$user, "at",
+            format(state$upload_time, "%Y-%m-%d %H:%M:%S"))
+    )
+  }
+})
+  
+
+
+
+output$download_parameters <- downloadHandler(
+  filename = function() {
+    paste0(input$readxMap_study_accession, "_", "_config_template.xlsx")
+  },
+  content = function(file) {
+    create_parameter_template(
+      conn            = conn,
+      param_user      = currentuser(),   # ← adjust if you want a reactive input
+      project_id     = userWorkSpaceID(),
+      study_accession =  input$readxMap_study_accession,
+      output_file     = file
+    )
+    
+  }
+)
+# --------------------------------------------------------------
+#  create_parameter_template()
+# --------------------------------------------------------------
+#' Export MADI study parameters to an Excel workbook
+#'
+#' @param con            A DBI connection object.  If NULL the function
+#'                       will open a new ODBC connection using the
+#'                       arguments supplied in `dsn`, `uid`, `pwd`,
+#'                       `database`.  The connection is closed automatically.
+#' @param dsn            ODBC DSN name (used only if `con == NULL`).
+#' @param uid            Database user name (used only if `con == NULL`).
+#' @param pwd            Database password (used only if `con == NULL`).
+#' @param database       Database name (optional, depends on driver).
+#' @param param_user     Email address of the user whose parameters you want.
+#' @param study_accession Study accession (e.g. "MADI_01").
+#' @param output_file    Full path (including .xlsx) where the workbook will be saved.
+#' @param delimiter      Character that separates items in `param_choices_list`
+#'                       (default = comma).  Only needed for the **Choices**
+#'                       sheet.
+#' @return invisible(path to the written file) – also prints a short summary.
+#' @examples
+#' ## Use an existing DBI connection
+#' con <- DBI::dbConnect(odbc::odbc(), dsn = "MyDSN")
+#' create_parameter_template(
+#'   con = con,
+#'   param_user = "seamus.owen.stein@dartmouth.edu",
+#'   study_accession = "MADI_01",
+#'   output_file = "MADI_01_parameters.xlsx"
+#' )
+#' DBI::dbDisconnect(con)
+#' --------------------------------------------------------------
+
+create_parameter_template <- function(conn,
+                                      param_user,
+                                      project_id,
+                                      study_accession,
+                                      output_file,
+                                      delimiter = ",") {
+  
+  # ── 1. Query ────────────────────────────────────────────────────
+  sql <- glue::glue("
+  SELECT
+      param_user,
+      project_id,
+      study_accession,
+      param_name,
+      param_label           AS parameter,
+      param_group,
+      param_data_type,
+      param_choices_list,
+      CASE
+          WHEN UPPER(TRIM(param_data_type)) = 'BOOLEAN'
+               THEN CAST(param_boolean_value AS VARCHAR)
+          WHEN UPPER(TRIM(param_data_type)) IN
+               ('INTEGER','NUMERIC','FLOAT','DOUBLE','DECIMAL')
+               THEN CAST(param_integer_value AS VARCHAR)
+          WHEN UPPER(TRIM(param_data_type)) IN
+               ('STRING','CHAR','TEXT','CATEGORICAL')
+               THEN param_character_value
+          ELSE NULL
+      END AS param_value
+  FROM   madi_results.xmap_study_config
+  WHERE  project_id = {project_id}
+     AND param_user = '{param_user}'
+     AND study_accession = '{study_accession}';
+  ")
+  
+  # ── 1b. Antigen family query ─────────────────────────────────────
+  sql_antigen <- glue::glue("
+          SELECT
+              xmap_antigen_family_id,
+              study_accession,
+              project_id,
+              experiment_accession,
+              antigen,
+              feature,
+              antigen_family,
+              standard_curve_concentration,
+              antigen_name,
+              virus_bacterial_strain,
+              antigen_source,
+              catalog_number,
+              l_asy_min_constraint,
+              l_asy_max_constraint,
+              l_asy_constraint_method,
+              model_form_list,
+              pcov_threshold
+          FROM madi_results.xmap_antigen_family
+          WHERE study_accession = '{study_accession}'
+            AND project_id = {project_id}
+            AND l_asy_constraint_method IS NOT NULL;
+          ")
+  
+  antigen_df <- DBI::dbGetQuery(conn, sql_antigen)
+  params_df <- DBI::dbGetQuery(conn, sql)
+  
+  if (nrow(params_df) == 0) {
+    stop("No parameters returned from database.")
+  }
+  
+  # ── 2. Classify ─────────────────────────────────────────────────
+  params_df <- params_df %>%
+    dplyr::mutate(
+      data_type_upper = toupper(trimws(param_data_type)),
+      is_numeric      = data_type_upper %in% c("INTEGER","NUMERIC","FLOAT","DOUBLE","DECIMAL"),
+      is_boolean      = data_type_upper == "BOOLEAN"
+    )
+  
+  # ── 3. Safe value parsing ───────────────────────────────────────
+  bad_tokens <- c("NULL","NA","INF","-INF","NAN","INFINITY","-INFINITY","")
+  
+  params_df <- params_df %>%
+    dplyr::mutate(
+      param_value_clean = trimws(param_value),
+      param_value_clean = ifelse(
+        toupper(param_value_clean) %in% bad_tokens,
+        NA,
+        param_value_clean
+      ),
+      param_value_num = suppressWarnings(as.numeric(param_value_clean))
+    )
+  
+  # Safe assignment (no type conflicts)
+  params_df$param_value_final <- params_df$param_value_clean
+  idx <- params_df$is_numeric & !is.na(params_df$param_value_num)
+  params_df$param_value_final[idx] <- params_df$param_value_num[idx]
+  
+  # ── 4. Clean choices (STRICT) ───────────────────────────────────
+  params_df <- params_df %>%
+    dplyr::mutate(
+      choices_clean = trimws(param_choices_list),
+      choices_clean = ifelse(
+        toupper(choices_clean) %in% c("", "NA", "NULL"),
+        NA,
+        choices_clean
+      )
+    )
+  
+  dropdown_df <- params_df %>%
+    dplyr::filter(
+      !is_numeric,
+      !is.na(choices_clean)
+    ) %>%
+    dplyr::mutate(
+      resolved_choices = dplyr::case_when(
+        is_boolean & !is.na(choices_clean) ~ choices_clean,
+        is_boolean ~ "TRUE,FALSE",
+        TRUE ~ choices_clean
+      )
+    )
+  
+  choices_long <- dropdown_df %>%
+    dplyr::select(parameter, resolved_choices) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(choice = strsplit(resolved_choices, delimiter, fixed = TRUE)) %>%
+    tidyr::unnest(choice) %>%
+    dplyr::mutate(
+      choice = trimws(choice),
+      choice_upper = toupper(choice)
+    ) %>%
+    dplyr::filter(
+      !is.na(choice),
+      nchar(choice) > 0,
+      !(choice_upper %in% c("NA","NULL","INF","-INF","NAN","INFINITY","-INFINITY"))
+    ) %>%
+    dplyr::select(parameter, choice)
+  
+  # OPTIONAL: require at least 2 valid choices
+  choices_long <- choices_long %>%
+    dplyr::group_by(parameter) %>%
+    dplyr::filter(dplyr::n_distinct(choice) >= 2) %>%
+    dplyr::ungroup()
+  
+  if (nrow(choices_long) > 0) {
+    choices_wide <- choices_long %>%
+      dplyr::group_by(parameter) %>%
+      dplyr::mutate(row = dplyr::row_number()) %>%
+      dplyr::ungroup() %>%
+      tidyr::pivot_wider(names_from = parameter, values_from = choice) %>%
+      dplyr::select(-row)
+  } else {
+    choices_wide <- data.frame()
+  }
+  
+  params_with_dropdowns <- params_df %>%
+    dplyr::group_by(parameter) %>%
+    dplyr::summarise(
+      is_numeric_any = any(is_numeric),
+      has_choices = any(!is.na(choices_clean))
+    ) %>%
+    dplyr::filter(
+      !is_numeric_any,   #  NEVER allow numeric params
+      has_choices
+    ) %>%
+    dplyr::pull(parameter)
+  
+  
+  # ── 5. Prepare export ───────────────────────────────────────────
+  export_cols <- c("param_user","project_id","study_accession",
+                   "parameter")
+  
+  export_df <- params_df %>%
+    dplyr::select(dplyr::all_of(export_cols)) %>%
+    dplyr::mutate(dplyr::across(everything(), as.character))
+  
+  export_df$param_value <- params_df$param_value_final
+  
+  # ── 6. Workbook ─────────────────────────────────────────────────
+  wb <- openxlsx::createWorkbook()
+  
+  header_style <- openxlsx::createStyle(
+    textDecoration = "bold", border = "Bottom", fgFill = "#DCE6F1"
+  )
+  
+  
+  # Parameters sheet
+  openxlsx::addWorksheet(wb, "Parameters")
+  openxlsx::writeData(wb, "Parameters", export_df, headerStyle = header_style)
+  # Antigen paramters
+  openxlsx::addWorksheet(wb, "Antigen_Parameters")
+  
+  if (nrow(antigen_df) > 0) {
+    openxlsx::writeData(
+      wb,
+      "Antigen_Parameters",
+      antigen_df,
+      headerStyle = header_style
+    )
+  }
+  # Choices sheet
+  openxlsx::addWorksheet(wb, "Choices")
+  if (nrow(choices_wide) > 0) {
+    openxlsx::writeData(wb, "Choices", choices_wide, headerStyle = header_style)
+  }
+  
+  param_value_col <- ncol(export_df)
+  
+  # ── 7. Dropdown validation ONLY ─────────────────────────────────
+  for (i in seq_len(nrow(params_df))) {
+    row_idx <- i + 1
+    p_label <- params_df$parameter[i]
+    
+    if (p_label %in% params_with_dropdowns && nrow(choices_wide) > 0) {
+      cidx <- which(colnames(choices_wide) == p_label)
+      
+      if (length(cidx) == 1) {
+        n <- sum(!is.na(choices_wide[[cidx]]))
+        
+        if (n >= 2) {
+          cl <- openxlsx::int2col(cidx)
+          
+          openxlsx::dataValidation(
+            wb,
+            sheet = "Parameters",
+            cols  = param_value_col,
+            rows  = row_idx,
+            type  = "list",
+            value = paste0("Choices!$", cl, "$2:$", cl, "$", n + 1),
+            allowBlank = TRUE
+          )
+        }
+      }
+    }
+  }
+  
+  # ── 8. Save ─────────────────────────────────────────────────────
+  openxlsx::saveWorkbook(wb, file = output_file, overwrite = TRUE)
+  
+  message("Wrote ", nrow(params_df), " parameters to: ", output_file)
+  invisible(output_file)
+}
+
+
+
+write_back_config <- function(imported, conn) {
+  
+  # -------------------------------
+  # 1. Pull metadata from DB
+  # -------------------------------
+  config_tbl <- dbGetQuery(conn, "
+    SELECT xmap_study_config_id, study_accession, param_group,
+           param_name, param_label, param_data_type, param_char_len,
+           param_control_type, param_choices_list,
+           param_user, project_id
+    FROM madi_results.xmap_study_config
+  ")
+  
+  # -------------------------------
+  # 2. Clean labels + enforce types
+  # -------------------------------
+  imported_clean <- imported %>%
+    mutate(
+      parameter  = str_trim(parameter),
+      parameter  = str_remove(parameter, ":$"),
+      project_id = as.integer(project_id)
+    )
+  
+  if (any(is.na(imported_clean$project_id))) {
+    stop("project_id contains non-numeric values after coercion")
+  }
+  
+  config_tbl <- config_tbl %>%
+    mutate(
+      param_label = str_trim(param_label),
+      param_label = str_remove(param_label, ":$")
+    )
+  
+  # -------------------------------
+  # 3. Join
+  # -------------------------------
+  joined <- imported_clean %>%
+    left_join(
+      config_tbl,
+      by = c(
+        "parameter" = "param_label",
+        "study_accession",
+        "param_user",
+        "project_id"
+      )
+    )
+  
+  if (any(is.na(joined$param_name))) {
+    bad <- joined %>% filter(is.na(param_name))
+    stop(paste0(
+      "Some parameters did not match DB config:\n",
+      paste(bad$parameter, collapse = "\n")
+    ))
+  }
+  
+  # -------------------------------
+  # 4. TYPE VALIDATION ONLY
+  # -------------------------------
+  joined <- joined %>%
+    mutate(
+      # integer check
+      param_integer_value = case_when(
+        param_data_type == "numeric" ~ suppressWarnings(as.numeric(param_value)),
+        TRUE ~ NA_integer_
+      ),
+      
+      # boolean check
+      param_boolean_value = case_when(
+        param_data_type == "boolean" ~ case_when(
+          tolower(param_value) %in% c("true", "false") ~ tolower(param_value) == "true",
+          TRUE ~ NA
+        ),
+        TRUE ~ NA
+      ),
+      
+      # character fallback
+      param_character_value = case_when(
+        param_data_type %in% c("string", "categorical","character") ~ param_value,
+        TRUE ~ NA_character_
+      )
+    )
+  
+
+  #  strict integer validation
+  if (any(joined$param_data_type == "numeric" & is.na(joined$param_integer_value))) {
+    bad <- joined %>%
+      filter(param_data_type == "numeric" & is.na(param_integer_value))
+    
+    stop(paste0(
+      "Invalid integer values:\n",
+      paste(bad$parameter, bad$param_value, collapse = "\n")
+    ))
+  }
+  
+  #  strict boolean validation
+  if (any(joined$param_data_type == "boolean" & is.na(joined$param_boolean_value))) {
+    bad <- joined %>%
+      filter(param_data_type == "boolean" & is.na(param_boolean_value))
+    
+    stop(paste0(
+      "Invalid boolean values (must be true/false):\n",
+      paste(bad$param_label, bad$param_value, collapse = "\n")
+    ))
+  }
+  
+  # -------------------------------
+  # 5. Final structure
+  # -------------------------------
+  names(joined)[names(joined) == "parameter"] <- "param_label"
+  
+  final <- joined %>%
+    select(
+      xmap_study_config_id,
+      study_accession,
+      param_group,
+      param_name,
+      param_label,
+      param_data_type,
+      param_char_len,
+      param_control_type,
+      param_choices_list,
+      param_integer_value,
+      param_boolean_value,
+      param_character_value,
+      param_user,
+      project_id
+    )
+  
+  return(final)
+}
+
+update_study_config <- function(df, conn) {
+  
+  DBI::dbWriteTable(
+    conn,
+    "temp_config",
+    df,
+    temporary = TRUE,
+    overwrite = TRUE
+  )
+  
+  DBI::dbExecute(conn, "
+    UPDATE madi_results.xmap_study_config AS t
+    SET
+      param_integer_value   = tmp.param_integer_value,
+      param_boolean_value   = tmp.param_boolean_value,
+      param_character_value = tmp.param_character_value,
+      param_user            = tmp.param_user
+    FROM temp_config AS tmp
+    WHERE t.xmap_study_config_id = tmp.xmap_study_config_id
+  ")
+}
+
+update_antigen_family_config <- function(df, conn) {
+  num_cols <- c(
+    "xmap_antigen_family_id",
+    "project_id",
+    "standard_curve_concentration",
+    "l_asy_min_constraint",
+    "l_asy_max_constraint",
+    "pcov_threshold"
+  )
+  
+  char_cols <- c(
+    "study_accession", "experiment_accession", "antigen", "feature",
+    "antigen_family", "antigen_name", "virus_bacterial_strain",
+    "antigen_source", "catalog_number",
+    "l_asy_constraint_method", "model_form_list"
+  )
+  
+  # only mutate columns that exist
+  num_cols  <- intersect(num_cols, names(df))
+  char_cols <- intersect(char_cols, names(df))
+  
+  df[num_cols]  <- lapply(df[num_cols], as.numeric)
+  df[char_cols] <- lapply(df[char_cols], as.character)
+  
+  # special case: integer
+  if ("project_id" %in% names(df)) {
+    df$project_id <- as.integer(df$project_id)
+  }
+  
+  # --- 1. Write to temp table ---
+  temp_table <- paste0("tmp_antigen_", as.integer(Sys.time()))
+  
+  DBI::dbWriteTable(
+    conn,
+    name = temp_table,
+    value = df,
+    temporary = TRUE,
+    overwrite = TRUE
+  )
+  
+  # --- 2. Single UPDATE using join ---
+  sql <- glue::glue("
+    UPDATE madi_results.xmap_antigen_family AS target
+    SET
+      experiment_accession        = src.experiment_accession,
+      antigen                    = src.antigen,
+      feature                    = src.feature,
+      antigen_family             = src.antigen_family,
+      standard_curve_concentration = src.standard_curve_concentration,
+      antigen_name               = src.antigen_name,
+      virus_bacterial_strain     = src.virus_bacterial_strain,
+      antigen_source             = src.antigen_source,
+      catalog_number             = src.catalog_number,
+      l_asy_min_constraint       = src.l_asy_min_constraint,
+      l_asy_max_constraint       = src.l_asy_max_constraint,
+      l_asy_constraint_method    = src.l_asy_constraint_method,
+      model_form_list            = src.model_form_list,
+      pcov_threshold             = src.pcov_threshold
+    FROM {temp_table} AS src
+    WHERE
+      target.xmap_antigen_family_id = src.xmap_antigen_family_id
+      AND target.study_accession    = src.study_accession
+      AND target.project_id         = src.project_id;
+  ")
+  
+  DBI::dbExecute(conn, sql)
+  
+  message("Updated antigen family table (set-based).")
+}
 
 ## Clear Study Configuration
 # observeEvent(input$main_tabs, {
