@@ -1145,26 +1145,36 @@ createStatusBadge <- function(method,
       )
     } else NULL
 
-    # Per-combo coverage pills shown on antigen badge.
-    # Works for xMAP (source varies), ELISA (wavelength varies), or both.
-    # Labels come from get_antigen_source_coverage() which picks the right
-    # display dimension dynamically — nothing is hardcoded here.
-    sources <- bayes_status$sources
-    src_pills <- if (!is.null(sources) && is.data.frame(sources) &&
-                     nrow(sources) > 0L && "label" %in% names(sources)) {
-      pill_tags <- lapply(seq_len(nrow(sources)), function(i) {
-        ok  <- isTRUE(sources$covered[i])
+    # Coverage pills for source and wavelength — two independent groups.
+    # get_antigen_source_coverage() returns list(sources=df|NULL, wavelengths=df|NULL).
+    # Each group is only shown when that dimension has >1 distinct value.
+    coverage_groups <- bayes_status$sources  # named list or NULL
+    make_pill_group <- function(df, group_label) {
+      if (is.null(df) || !is.data.frame(df) || nrow(df) == 0L) return(NULL)
+      pills <- lapply(seq_len(nrow(df)), function(i) {
+        ok  <- isTRUE(df$covered[i])
         col <- if (ok) "#28a745" else "#dc3545"
         ico <- if (ok) "fa-check" else "fa-times"
         tags$span(
           style = paste0(
-            "display:inline-block; margin:2px 2px 0; padding:1px 6px; ",
+            "display:inline-block; margin:2px 2px 0; padding:1px 5px; ",
             "border-radius:8px; font-size:10px; background:", col, "; color:white;"
           ),
-          tags$i(class = paste("fa", ico)), " ", sources$label[i]
+          tags$i(class = paste("fa", ico)), " ", df$label[i]
         )
       })
-      tags$div(style = "margin-top:4px;", pill_tags)
+      tags$div(
+        style = "margin-top:3px; line-height:1.6;",
+        tags$span(style = "font-size:10px; opacity:0.75; margin-right:3px;",
+                  paste0(group_label, ":")),
+        pills
+      )
+    }
+    src_pills <- if (is.list(coverage_groups) && !is.data.frame(coverage_groups)) {
+      tagList(
+        make_pill_group(coverage_groups$sources,     "Source"),
+        make_pill_group(coverage_groups$wavelengths, "Wavelength")
+      )
     } else NULL
 
     badge_label <- switch(type_status,

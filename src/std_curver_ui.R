@@ -248,13 +248,13 @@ get_study_bayes_coverage <- function(conn, project_id, study) {
 }
 
 
-# For each (source, wavelength) combo available for this antigen+experiment,
-# check whether a Bayesian curve exists in bayes_curves.
-# Returns NULL when only one combo exists (nothing ambiguous to surface).
-# Works for both xMAP (differentiator = source) and ELISA (differentiator =
-# wavelength), and for studies that vary both dimensions simultaneously.
-# Display labels are computed from whichever dimension(s) actually vary —
-# no source or wavelength names are hardcoded.
+# Returns coverage broken into two independent category groups:
+#   $sources     — one row per distinct source value (NULL if only 1 source)
+#   $wavelengths — one row per distinct non-none wavelength (NULL if only 1)
+# A value in a group is "covered" when ALL (source × wavelength) combos that
+# include that value exist in bayes_curves.  Partial = red pill.
+# Returns NULL when neither dimension has >1 value (nothing to surface).
+# No names are hardcoded — everything is read dynamically from the DB.
 get_antigen_source_coverage <- function(conn, project_id, study, experiment, antigen) {
   all_combos <- tryCatch(DBI::dbGetQuery(conn,
     "SELECT DISTINCT source, COALESCE(wavelength, '__none__') AS wavelength
@@ -264,7 +264,7 @@ get_antigen_source_coverage <- function(conn, project_id, study, experiment, ant
     params = list(study, experiment, antigen)),
     error = function(e) data.frame(source = character(0), wavelength = character(0)))
 
-  if (nrow(all_combos) <= 1L) return(NULL)  # single combo — nothing to surface
+  if (nrow(all_combos) == 0L) return(NULL)
 
   done_combos <- tryCatch(DBI::dbGetQuery(conn,
     "SELECT DISTINCT source, COALESCE(wavelength, '__none__') AS wavelength
@@ -274,28 +274,33 @@ get_antigen_source_coverage <- function(conn, project_id, study, experiment, ant
     params = list(project_id, study, experiment, antigen)),
     error = function(e) data.frame(source = character(0), wavelength = character(0)))
 
-  # Determine which dimension(s) actually vary so labels are minimal but unambiguous
-  real_waves    <- all_combos$wavelength[all_combos$wavelength != "__none__"]
-  multi_source  <- length(unique(all_combos$source))    > 1L
-  multi_wave    <- length(unique(real_waves))            > 1L
-
-  make_label <- function(src, wl) {
-    if (multi_source && multi_wave)             paste0(src, " @ ", wl)
-    else if (multi_wave && wl != "__none__")    wl          # ELISA: show wavelength
-    else                                        src         # xMAP: show source
-  }
-
-  done_keys <- if (nrow(done_combos) > 0L)
+  done_set <- if (nrow(done_combos) > 0L)
     paste(done_combos$source, done_combos$wavelength, sep = "\x00")
   else character(0)
-  all_keys <- paste(all_combos$source, all_combos$wavelength, sep = "\x00")
+  combo_key <- function(s, w) paste(s, w, sep = "\x00")
 
-  data.frame(
-    label   = mapply(make_label, all_combos$source, all_combos$wavelength,
-                     USE.NAMES = FALSE),
-    covered = all_keys %in% done_keys,
-    stringsAsFactors = FALSE
-  )
+  # ── Source group (only when >1 distinct source) ─────────────────────────────
+  unique_sources <- sort(unique(all_combos$source))
+  src_df <- if (length(unique_sources) > 1L) {
+    covered <- vapply(unique_sources, function(s) {
+      needed_waves <- all_combos$wavelength[all_combos$source == s]
+      all(combo_key(s, needed_waves) %in% done_set)
+    }, logical(1))
+    data.frame(label = unique_sources, covered = covered, stringsAsFactors = FALSE)
+  } else NULL
+
+  # ── Wavelength group (only when >1 distinct real wavelength) ────────────────
+  real_waves <- sort(unique(all_combos$wavelength[all_combos$wavelength != "__none__"]))
+  wave_df <- if (length(real_waves) > 1L) {
+    covered <- vapply(real_waves, function(w) {
+      needed_sources <- all_combos$source[all_combos$wavelength == w]
+      all(combo_key(needed_sources, w) %in% done_set)
+    }, logical(1))
+    data.frame(label = real_waves, covered = covered, stringsAsFactors = FALSE)
+  } else NULL
+
+  if (is.null(src_df) && is.null(wave_df)) return(NULL)
+  list(sources = src_df, wavelengths = wave_df)
 }
 
 
