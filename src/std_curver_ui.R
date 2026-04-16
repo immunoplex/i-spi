@@ -155,15 +155,46 @@ get_latest_bayes_job <- function(conn, project_id, study, experiment = NULL,
 
 get_bayes_calc_status <- function(conn, project_id, study, experiment = NULL,
                                    antigen = NULL, scope = "study") {
-  # Only use the audit table — no fallback to bayes_curves.
-  # The audit table tracks jobs submitted from i-spi.
-  # Pre-computed results from external batch runs are visible in
-  # the Bayesian curve view (DB-first auto-fetch) but don't affect
-  # the status grid here.
+  # Uses the audit table for job status.
+  # Cascades upward: antigen → experiment → study so that a completed
+  # experiment-level job marks all its antigens as covered.
+  # Jobs stuck in "running" for >2 hours are treated as timed out.
 
-  job <- get_latest_bayes_job(conn, project_id, study, experiment, antigen, scope)
+  STALE_HOURS <- 2
 
-  if (is.null(job)) return(list(status = "not begun"))
+  .is_stale <- function(j) {
+    if (is.null(j) || !j$status %in% c("running", "queued")) return(FALSE)
+    upd <- j$updated_at %||% j$created_at
+    !is.null(upd) && !is.na(upd) &&
+      as.numeric(difftime(Sys.time(), as.POSIXct(upd, tz = "UTC"), units = "hours")) > STALE_HOURS
+  }
+
+  .fetch <- function(expt, antg, sc) {
+    j <- get_latest_bayes_job(conn, project_id, study, expt, antg, sc)
+    if (!is.null(j) && .is_stale(j)) j$status <- "timed_out"
+    j
+  }
+
+  job        <- .fetch(experiment, antigen, scope)
+  covered_by <- scope
+
+  # Cascade: if this scope has no active/completed job, check parent scopes
+  active <- function(j) !is.null(j) && j$status %in% c("completed", "running", "queued")
+
+  if (!active(job) && scope == "antigen" && !is.null(experiment)) {
+    parent <- .fetch(experiment, NULL, "experiment")
+    if (!is.null(parent) && parent$status == "completed") {
+      job <- parent; covered_by <- "experiment"
+    }
+  }
+  if (!active(job) && scope %in% c("antigen", "experiment")) {
+    parent <- .fetch(NULL, NULL, "study")
+    if (!is.null(parent) && parent$status == "completed") {
+      job <- parent; covered_by <- "study"
+    }
+  }
+
+  if (is.null(job)) return(list(status = "not begun", covered_by = covered_by))
 
   if (job$status %in% c("queued", "running")) {
     return(list(
@@ -172,26 +203,72 @@ get_bayes_calc_status <- function(conn, project_id, study, experiment = NULL,
       percentage  = job$percentage %||% 0,
       eta_display = job$eta_display %||% "",
       job_id      = job$job_id,
-      timestamp   = job$created_at
+      timestamp   = job$created_at,
+      covered_by  = covered_by
     ))
   }
   if (job$status == "completed") {
     return(list(
-      status    = "completed",
-      timestamp = job$completed_at %||% job$updated_at,
-      job_id    = job$job_id
+      status     = "completed",
+      timestamp  = job$completed_at %||% job$updated_at,
+      job_id     = job$job_id,
+      covered_by = covered_by
     ))
   }
-  if (job$status %in% c("failed", "error")) {
+  if (job$status %in% c("failed", "error", "timed_out")) {
     return(list(
-      status    = "failed",
-      error     = job$error %||% "Unknown error",
-      timestamp = job$completed_at %||% job$updated_at,
-      job_id    = job$job_id
+      status     = "failed",
+      error      = if (job$status == "timed_out") "Job stale — no update in 2+ hours"
+                   else job$error %||% "Unknown error",
+      timestamp  = job$completed_at %||% job$updated_at,
+      job_id     = job$job_id,
+      covered_by = covered_by
     ))
   }
 
-  list(status = "not begun")
+  list(status = "not begun", covered_by = covered_by)
+}
+
+
+# How many experiments in this study have at least one Bayesian curve fitted.
+# Uses bayes_curves as ground truth (more reliable than audit table for coverage).
+get_study_bayes_coverage <- function(conn, project_id, study) {
+  n_total <- tryCatch(DBI::dbGetQuery(conn,
+    "SELECT COUNT(DISTINCT experiment_accession) AS n
+     FROM madi_results.xmap_standard WHERE study_accession = $1",
+    params = list(study))$n[[1]], error = function(e) NA_integer_)
+
+  n_done <- tryCatch(DBI::dbGetQuery(conn,
+    "SELECT COUNT(DISTINCT experiment_accession) AS n
+     FROM madi_results.bayes_curves
+     WHERE project_id = $1 AND study_accession = $2",
+    params = list(project_id, study))$n[[1]], error = function(e) NA_integer_)
+
+  list(n_done = as.integer(n_done %||% 0L), n_total = as.integer(n_total %||% 0L))
+}
+
+
+# For each source available for this antigen+experiment, check whether a
+# Bayesian curve exists in bayes_curves.  Returns NULL for single-source
+# combos (no ambiguity to surface).
+get_antigen_source_coverage <- function(conn, project_id, study, experiment, antigen) {
+  all_src <- tryCatch(DBI::dbGetQuery(conn,
+    "SELECT DISTINCT source FROM madi_results.xmap_standard
+     WHERE study_accession = $1 AND experiment_accession = $2 AND antigen = $3
+     ORDER BY source",
+    params = list(study, experiment, antigen))$source,
+    error = function(e) character(0))
+
+  if (length(all_src) <= 1L) return(NULL)  # single source — nothing to surface
+
+  done_src <- tryCatch(DBI::dbGetQuery(conn,
+    "SELECT DISTINCT source FROM madi_results.bayes_curves
+     WHERE project_id = $1 AND study_accession = $2
+       AND experiment_accession = $3 AND antigen = $4",
+    params = list(project_id, study, experiment, antigen))$source,
+    error = function(e) character(0))
+
+  data.frame(source = all_src, covered = all_src %in% done_src, stringsAsFactors = FALSE)
 }
 
 
@@ -2135,17 +2212,28 @@ observeEvent(
       df         <- concentration_calc_df()
       interp_msg <- interp_progress_msg()
 
-      # Build Bayesian status for each scope
+      # Build Bayesian status for each scope (with cascade + coverage metadata)
       bayes_sl <- tryCatch({
         proj <- userWorkSpaceID()
         stdy <- input$readxMap_study_accession
         expt <- input$readxMap_experiment_accession
         antg <- input$sc_antigen_select
-        list(
-          study      = get_bayes_calc_status(conn, proj, stdy, NULL, NULL, "study"),
-          experiment = get_bayes_calc_status(conn, proj, stdy, expt, NULL, "experiment"),
-          antigen    = get_bayes_calc_status(conn, proj, stdy, expt, antg, "antigen")
-        )
+
+        study_st <- get_bayes_calc_status(conn, proj, stdy, NULL,  NULL,  "study")
+        expt_st  <- get_bayes_calc_status(conn, proj, stdy, expt,  NULL,  "experiment")
+        antg_st  <- get_bayes_calc_status(conn, proj, stdy, expt,  antg,  "antigen")
+
+        # Attach experiment-coverage count to study badge
+        study_st$coverage <- tryCatch(
+          get_study_bayes_coverage(conn, proj, stdy),
+          error = function(e) NULL)
+
+        # Attach per-source coverage to antigen badge (multi-source studies only)
+        antg_st$sources <- tryCatch(
+          get_antigen_source_coverage(conn, proj, stdy, expt, antg),
+          error = function(e) NULL)
+
+        list(study = study_st, experiment = expt_st, antigen = antg_st)
       }, error = function(e) {
         message("[concentrationMethodUI] bayes status error: ", e$message)
         NULL

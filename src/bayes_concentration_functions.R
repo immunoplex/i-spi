@@ -1125,6 +1125,44 @@ createStatusBadge <- function(method,
       "#999999"
     )
 
+    # "via experiment/study job" label shown when status cascaded from a parent scope
+    covered_by <- bayes_status$covered_by %||% scope
+    via_label  <- if (!identical(covered_by, scope) && type_status == "completed") {
+      tags$small(
+        style = "font-weight:normal; opacity:0.80; display:block; margin-top:2px;",
+        paste0("(covered by ", covered_by, " job)")
+      )
+    } else NULL
+
+    # Experiment coverage shown on study badge: "3 / 10 experiments"
+    coverage <- bayes_status$coverage
+    cov_label <- if (!is.null(coverage) && !is.na(coverage$n_total) && coverage$n_total > 0L) {
+      pct <- round(100 * coverage$n_done / coverage$n_total)
+      col <- if (coverage$n_done == coverage$n_total) "#155724" else "#856404"
+      tags$small(
+        style = paste0("font-weight:normal; display:block; margin-top:2px; color:", col, ";"),
+        sprintf("%d / %d experiments", coverage$n_done, coverage$n_total)
+      )
+    } else NULL
+
+    # Per-source coverage pills shown on antigen badge (multi-source studies only)
+    sources <- bayes_status$sources
+    src_pills <- if (!is.null(sources) && is.data.frame(sources) && nrow(sources) > 0L) {
+      pill_tags <- lapply(seq_len(nrow(sources)), function(i) {
+        ok  <- isTRUE(sources$covered[i])
+        col <- if (ok) "#28a745" else "#dc3545"
+        ico <- if (ok) "fa-check" else "fa-times"
+        tags$span(
+          style = paste0(
+            "display:inline-block; margin:2px 2px 0; padding:1px 6px; ",
+            "border-radius:8px; font-size:10px; background:", col, "; color:white;"
+          ),
+          tags$i(class = paste("fa", ico)), " ", sources$source[i]
+        )
+      })
+      tags$div(style = "margin-top:4px;", pill_tags)
+    } else NULL
+
     badge_label <- switch(type_status,
       "pending" = {
         prog <- bayes_status$progress %||% ""
@@ -1142,7 +1180,9 @@ createStatusBadge <- function(method,
           tags$i(class = "fa fa-check"), " Completed",
           if (!is.null(ts_label)) tags$br(),
           if (!is.null(ts_label)) tags$small(style = "font-weight:normal; opacity:0.85;",
-                                              paste0("Last: ", ts_label))
+                                              paste0("Last: ", ts_label)),
+          via_label,
+          cov_label
         )
       },
       "failed" = {
@@ -1161,7 +1201,7 @@ createStatusBadge <- function(method,
                                            substr(err_msg, 1, 80))
         )
       },
-      "not begun" = tagList(tags$i(class = "fa fa-times"), " Not Begun"),
+      "not begun" = tagList(tags$i(class = "fa fa-times"), " Not Begun", cov_label),
       NULL
     )
 
@@ -1176,7 +1216,8 @@ createStatusBadge <- function(method,
           "background-color:", bg_color, "; color:white; white-space:nowrap;"
         ),
         badge_label
-      )
+      ),
+      src_pills  # rendered outside the badge span so pills sit below it
     ))
   }
 
