@@ -875,7 +875,7 @@ observeEvent(
                           "antigen", "plate", "nominal_sample_dilution", "wavelength")
     
     # ── Vignette workflow: data is pre-loaded into loaded_data_frequentist ──────
-    loaded_data_frequentist <<- pull_data_frequentist(
+    loaded_data_frequentist <<- pull_data_freqentist(
       study_accession      = selected_study,
       experiment_accession = selected_experiment,
       project_id           = userWorkSpaceID(),
@@ -885,7 +885,7 @@ observeEvent(
     
     # Use loaded_data_frequentist as the single source of truth
     loaded_data <- loaded_data_frequentist
-
+    
     if (is.null(loaded_data)) {
       cat("⚠ [std_curver_ui] pull_data_frequentist returned NULL - aborting\n")
       return()
@@ -920,20 +920,6 @@ observeEvent(
       project_id      = userWorkSpaceID(),
       conn            = conn
     )
-    # 
-    # dil_series_se_table <<- compute_dil_series_se(standards_data = loaded_data$standards, 
-    #                                              response_col  = response_var,
-    #                                              dilution_col  = "dilution",
-    #                                              plate_col     = "plate_nom",
-    #                                              grouping_cols = c("project_id",
-    #                                                                "study_accession",
-    #                                                                "experiment_accession",
-    #                                                                "source_nom",
-    #                                                                "antigen",
-    #                                                                "feature"),
-    #                                              min_reps = 2,
-    #                                              verbose  = FALSE) 
-    
     # ------------------------------------------------------------------
     # Top-level UI shell
     # ------------------------------------------------------------------
@@ -1010,26 +996,15 @@ observeEvent(
             column(3, uiOutput("sc_antigen_selector")),
             column(3, uiOutput("sc_source_selector")),
             
-            conditionalPanel(
-              condition = "input.sc_curve_method == 'Frequentist'",
-              uiOutput("sc_wavelength_col"),
-              column(3, uiOutput("sc_plate_selector"))
+            # Plate selector (Frequentist only) --
+            column(
+              3,
+              conditionalPanel(
+                condition = "input.sc_curve_method == 'Frequentist'",
+                uiOutput("sc_plate_selector")
+              )
             )
           ),
-          # fluidRow(
-          #   column(3, uiOutput("sc_antigen_selector")),
-          #   column(3, uiOutput("sc_source_selector")),
-          #   
-          #   # Plate selector (Frequentist only) --
-          #   column(
-          #     3,
-          #     conditionalPanel(
-          #       condition = "input.sc_curve_method == 'Frequentist'",
-          #       uiOutput("sc_wavelength_selector"),
-          #       uiOutput("sc_plate_selector")
-          #     )
-          #   )
-          # ),
           
           # ── Row 2: Plate selector (Frequentist only) ──
           # conditionalPanel(
@@ -1322,11 +1297,10 @@ observeEvent(
     # Prerequisites check (shared between context UI and conditional panel)
     # ------------------------------------------------------------------
     sc_prereqs <- reactive({
-      experiment_curve_ids <- loaded_data_frequentist$curve_id_lookup$curve_id
       standards_n         <- nrow(loaded_data$standards[
-        loaded_data$standards$curve_id %in% experiment_curve_ids, ])
+        loaded_data$standards$experiment_accession == selected_experiment, ])
       blanks_n            <- nrow(loaded_data$blanks[
-        loaded_data$blanks$curve_id %in%experiment_curve_ids, ])
+        loaded_data$blanks$experiment_accession == selected_experiment, ])
       blank_option        <- study_params$blank_option
       constraints_methods <- unique(loaded_data$antigen_constraints$l_asy_constraint_method)
       invalid_constraints <- setdiff(constraints_methods, allowed_constraint_methods)
@@ -1431,267 +1405,87 @@ observeEvent(
     # ------------------------------------------------------------------
     # Selectors
     # ------------------------------------------------------------------
-    # ── helpers ──────────────────────────────────────────────────────────────────
-    src_col_name <- function(lk) {
-      if ("source_nom" %in% names(lk)) "source_nom" else "source"
-    }
-    
-    filter_lk <- function(lk, plate = NULL, antigen = NULL, source = NULL) {
-      lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-      if (!is.null(plate)   && nzchar(plate))
-        lk <- lk[as.character(lk$plate_nom) == plate,  , drop = FALSE]
-      if (!is.null(antigen) && nzchar(antigen))
-        lk <- lk[as.character(lk$antigen)   == antigen, , drop = FALSE]
-      if (!is.null(source)  && nzchar(source)) {
-        sc <- src_col_name(lk)
-        lk <- lk[as.character(lk[[sc]])     == source,  , drop = FALSE]
-      }
-      lk
-    }
-    
-    # ── selectors ─────────────────────────────────────────────────────────────────
     output$sc_plate_selector <- renderUI({
-      req(loaded_data$curve_id_lookup)
-      lk <- filter_lk(
-        loaded_data$curve_id_lookup,
-        antigen = input$sc_antigen_select,
-        source  = input$sc_source_select
-      )
-      plates <- sort(unique(as.character(lk$plate_nom)))
-      req(length(plates) > 0)
+      req(loaded_data$standards$study_accession,
+          loaded_data$standards$experiment_accession,
+          nrow(loaded_data$standards) > 0)
+      
+      updateSelectInput(session, "sc_plate_select", selected = NULL)  # Reset the plateSelection
+      req(nrow(loaded_data$standards) > 0)
+      
+      unique_plates <- unique(loaded_data$standards$plate_nom)
+      
       selectInput("sc_plate_select",
-                  label   = "Plate - Sample Dilution(s)",
-                  choices = plates)
+                  label = "Plate - Sample Dilution(s)",
+                  choices = unique_plates)
     })
     
     output$sc_antigen_selector <- renderUI({
-      req(loaded_data$curve_id_lookup)
-      lk <- filter_lk(
-        loaded_data$curve_id_lookup,
-        plate  = input$sc_plate_select,
-        source = input$sc_source_select
-      )
-      antigens <- sort(unique(as.character(lk$antigen)))
-      req(length(antigens) > 0)
+      req(loaded_data$standards$study_accession, loaded_data$standards$experiment_accession)
+      updateSelectInput(session, "sc_antigen_select", selected = NULL)
+      
+      response_var <- loaded_data$response_var  # "absorbance" for ELISA, "mfi" for Luminex
+      
+      cat("debug in antigen selector:\n")
+      print(response_var)
+      
+      print(selected_study)
+      print(selected_experiment)
+      print(input$sc_plate_select)
+      
+      print(head(loaded_data$standards))
+      
+      dat_antigen <- loaded_data$standards[loaded_data$standards$study_accession %in% selected_study &
+                                             loaded_data$standards$experiment_accession %in% selected_experiment &
+                                             loaded_data$standards$plate_nom %in% input$sc_plate_select, ]
+      
+      # Use the correct response variable column name
+      dat_antigen <- dat_antigen[!is.na(dat_antigen[[response_var]]),]
+      
+      req(nrow(dat_antigen) > 0)
+      
+      sc_feature_select(dat_antigen$feature)
+      
       selectInput("sc_antigen_select",
-                  label   = "Antigen",
-                  choices = antigens)
+                  label = "Antigen",
+                  choices = unique(dat_antigen$antigen))
     })
     
     output$sc_source_selector <- renderUI({
-      req(loaded_data$curve_id_lookup)
-      lk <- filter_lk(
-        loaded_data$curve_id_lookup,
-        plate   = input$sc_plate_select,
-        antigen = input$sc_antigen_select
+      req(loaded_data$standards, input$sc_plate_select, input$sc_antigen_select)
+      
+      cat("debug in source selector:\n")
+      print(selected_study)
+      print(selected_experiment)
+      print(input$sc_plate_select)
+      print(input$sc_antigen_select)
+      
+      print(head(loaded_data$standards))
+      
+      
+      dat_source <- loaded_data$standards[
+        loaded_data$standards$study_accession %in% selected_study &
+          loaded_data$standards$experiment_accession %in% selected_experiment &
+          loaded_data$standards$plate_nom %in% input$sc_plate_select &
+          loaded_data$standards$antigen %in% input$sc_antigen_select, ]
+      
+      
+      req(nrow(dat_source) > 0)
+      
+      # Use source_nom for the selector (includes wavelength for ELISA)
+      source_choices <- if ("source_nom" %in% names(dat_source)) {
+        unique(dat_source$source_nom)
+      } else {
+        unique(dat_source$source)
+      }
+      
+      radioButtons(
+        "sc_source_select",
+        label = "Source",
+        choices = source_choices,
+        selected = source_choices[1]
       )
-      sc   <- src_col_name(lk)
-      srcs <- sort(unique(as.character(lk[[sc]])))
-      req(length(srcs) > 0)
-      radioButtons("sc_source_select",
-                   label    = "Source",
-                   choices  = srcs,
-                   selected = srcs[1])
     })
-    
-    output$sc_wavelength_col <- renderUI({
-      req(loaded_data$curve_id_lookup)
-      lk <- filter_lk(
-        loaded_data$curve_id_lookup,
-        plate   = input$sc_plate_select,
-        antigen = input$sc_antigen_select,
-        source  = input$sc_source_select      # now uses same src_col logic
-      )
-      valid_wl <- sort(unique(as.character(lk$wavelength)))
-      valid_wl <- valid_wl[!is.na(valid_wl) & valid_wl != "" & valid_wl != "__none__"]
-      req(length(valid_wl) > 0)
-      column(3,
-             selectInput("sc_wavelength_select",
-                         label   = "Wavelength (nm)",
-                         choices = valid_wl)
-      )
-    })
-    # output$sc_antigen_selector <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   lk <- loaded_data$curve_id_lookup
-    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")  # always create first
-    #   
-    #   if (!is.null(input$sc_plate_select) && nzchar(input$sc_plate_select)) {
-    #     lk <- lk[as.character(lk$plate_nom) == input$sc_plate_select, , drop = FALSE]
-    #   }
-    #   antigens <- sort(unique(as.character(lk$antigen)))
-    #   req(length(antigens) > 0)
-    #   selectInput("sc_antigen_select",
-    #               label   = "Antigen",
-    #               choices = antigens)
-    # })
-    # 
-    # output$sc_source_selector <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   lk <- loaded_data$curve_id_lookup
-    #   
-    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-    #   
-    #   if (!is.null(input$sc_antigen_select) && nzchar(input$sc_antigen_select))
-    #     lk <- lk[as.character(lk$antigen) == input$sc_antigen_select, , drop = FALSE]
-    #   
-    #   if (!is.null(input$sc_plate_select) && nzchar(input$sc_plate_select))
-    #     lk <- lk[as.character(lk$plate_nom) == input$sc_plate_select, , drop = FALSE]
-    #   
-    #   src_col <- if ("source_nom" %in% names(lk)) "source_nom" else "source"
-    #   
-    #   # build display using the chosen source column
-    #   # lk$source_display <- ifelse(
-    #   #   !is.na(lk$wavelength) & lk$wavelength != "__none__" & nzchar(lk$wavelength),
-    #   #   paste0(lk[[src_col]], "|", lk$wavelength, "_nm"),
-    #   #   lk[[src_col]]
-    #   # )
-    #   
-    #   sources <- sort(unique(as.character(lk[[src_col]])))
-    #   req(length(sources) > 0)
-    #   
-    #   radioButtons(
-    #     "sc_source_select",
-    #     label    = "Source",
-    #     choices  = sources,
-    #     selected = sources[1]
-    #   )
-    # })
-    # 
-    # output$sc_wavelength_col <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   
-    #   lk <- loaded_data$curve_id_lookup
-    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-    #   
-    #   if (!is.null(input$sc_plate_select) && nzchar(input$sc_plate_select))
-    #     lk <- lk[as.character(lk$plate_nom) == input$sc_plate_select, , drop = FALSE]
-    #   
-    #   if (!is.null(input$sc_antigen_select) && nzchar(input$sc_antigen_select))
-    #     lk <- lk[as.character(lk$antigen) == input$sc_antigen_select, , drop = FALSE]
-    #   
-    #   if (!is.null(input$sc_source_select) && nzchar(input$sc_source_select))
-    #     lk <- lk[as.character(lk$source) == input$sc_source_select, , drop = FALSE]
-    #   
-    #   wavelengths <- unique(as.character(lk$wavelength))
-    #   
-    #   valid_wavelengths <- wavelengths[
-    #     !is.na(wavelengths) &
-    #       wavelengths != "" &
-    #       wavelengths != "__none__"
-    #   ]
-    #   
-    #   req(length(valid_wavelengths) > 0)
-    #   
-    #   column(
-    #     3,
-    #     selectInput(
-    #       "sc_wavelength_select",
-    #       "Wavelength (nm)",
-    #       choices = sort(valid_wavelengths)
-    #     )
-    #   )
-    # })
-    # # output$sc_wavelength_selector <- renderUI({
-    # #   req(loaded_data$curve_id_lookup)
-    # #   lk <- loaded_data$curve_id_lookup
-    # #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-    # # 
-    # #   if (!is.null(input$sc_plate_select) && nzchar(input$sc_plate_select))
-    # #     lk <- lk[as.character(lk$plate_nom) == input$sc_plate_select, , drop = FALSE]
-    # #   if (!is.null(input$sc_antigen_select) && nzchar(input$sc_antigen_select))
-    # #     lk <- lk[as.character(lk$antigen) == input$sc_antigen_select, , drop = FALSE]
-    # #   if (!is.null(input$sc_source_select) && nzchar(input$sc_source_select))
-    # #     lk <- lk[as.character(lk$source) == input$sc_source_select, , drop = FALSE]
-    # # 
-    # #   wavelengths <- sort(unique(as.character(lk$wavelength)))
-    # #   
-    # #   valid_wavelengths <- wavelengths[
-    # #     !is.na(wavelengths) &
-    # #       wavelengths != "" &
-    # #       wavelengths != "__none__"
-    # #   ]
-    # #   
-    # #   if (length(valid_wavelengths) == 0) {
-    # #     return(NULL)
-    # #   }
-    # #   
-    # #  #req(length(wavelengths) > 0)
-    # # 
-    # #   selectInput("sc_wavelength_select",
-    # #                label    = "Wavelength (nm)",
-    # #                choices  = sort(valid_wavelengths)
-    # #                )
-    # # })
-    # 
-    # output$sc_plate_selector <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   lk <- loaded_data$curve_id_lookup
-    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")  # always create first
-    #   
-    #   if (!is.null(input$sc_antigen_select) && nzchar(input$sc_antigen_select))
-    #     lk <- lk[as.character(lk$antigen) == input$sc_antigen_select, , drop = FALSE]
-    #   if (!is.null(input$sc_source_select) && nzchar(input$sc_source_select))
-    #     lk <- lk[as.character(lk$source) == input$sc_source_select, , drop = FALSE]
-    #   
-    #   plates <- sort(unique(as.character(lk$plate_nom)))
-    #   req(length(plates) > 0)
-    #   selectInput("sc_plate_select",
-    #               label   = "Plate - Sample Dilution(s)",
-    #               choices = plates)
-    # })
-  
-    
-    ## older
-      # output$sc_plate_selector <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   lk <- loaded_data$curve_id_lookup
-    #   lk_view <<- lk
-    #   # Filter to selected antigen + source if already chosen
-    #   if (!is.null(input$sc_antigen_select) && nzchar(input$sc_antigen_select))
-    #     lk <- lk[as.character(lk$antigen) == input$sc_antigen_select, , drop = FALSE]
-    #   if (!is.null(input$sc_source_select) && nzchar(input$sc_source_select))
-    #     lk <- lk[as.character(lk$source) == input$sc_source_select, , drop = FALSE]
-    #   lk_v <<- lk
-    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-    #   plates <- sort(unique(as.character(lk$plate_nom)))
-    #   req(length(plates) > 0)
-    #   selectInput("sc_plate_select",
-    #               label   = "Plate - Sample Dilution(s)",
-    #               choices = plates)
-    # })
-    # 
-    # 
-    # output$sc_antigen_selector <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   lk <- loaded_data$curve_id_lookup
-    #   # Filter to selected plate if already chosen
-    #   if (!is.null(input$sc_plate_select) && nzchar(input$sc_plate_select))
-    #     lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-    #     lk <- lk[as.character(lk$plate_nom) == input$sc_plate_select, , drop = FALSE]
-    #   antigens <- sort(unique(as.character(lk$antigen)))
-    #   req(length(antigens) > 0)
-    #   selectInput("sc_antigen_select",
-    #               label   = "Antigen",
-    #               choices = antigens)
-    # })
-    # 
-    # output$sc_source_selector <- renderUI({
-    #   req(loaded_data$curve_id_lookup)
-    #   lk <- loaded_data$curve_id_lookup
-    #   # Filter to the selected antigen + plate
-    #   if (!is.null(input$sc_antigen_select) && nzchar(input$sc_antigen_select))
-    #     lk <- lk[as.character(lk$antigen) == input$sc_antigen_select, , drop = FALSE]
-    #   if (!is.null(input$sc_plate_select) && nzchar(input$sc_plate_select))
-    #     lk <- lk[as.character(lk$plate_nom) == input$sc_plate_select, , drop = FALSE]
-    #   src_col  <- if ("source_nom" %in% names(lk)) "source_nom" else "source"
-    #   sources  <- sort(unique(as.character(lk[[src_col]])))
-    #   req(length(sources) > 0)
-    #   radioButtons("sc_source_select",
-    #                label    = "Source",
-    #                choices  = sources,
-    #                selected = sources[1])
-    # })
     
     # output$sc_antigen_selector <- renderUI({
     #   req(loaded_data$standards$study_accession,
@@ -1733,84 +1527,39 @@ observeEvent(
     # ------------------------------------------------------------------
     # Loading notification
     # ------------------------------------------------------------------
-    sc_loading_id     <- reactiveVal(NULL)
-    sc_best_fit_ready <- reactiveVal(FALSE)
+    sc_loading_id      <- reactiveVal(NULL)
+    sc_best_fit_ready  <- reactiveVal(FALSE)
     
-    # Resolves curve_id from the lookup table given the current control values.
-    # This is the single place where (antigen × plate × source) → curve_id.
-      selected_curve_id <- reactive({
-        req(
-          loaded_data$curve_id_lookup,
-          input$sc_antigen_select,
-          input$sc_plate_select,
-          input$sc_source_select
+    observeEvent(
+      list(input$sc_plate_select, input$sc_antigen_select, input$sc_source_select),
+      ignoreInit = TRUE,
+      {
+        req(input$sc_plate_select, input$sc_antigen_select)
+        
+        if (!is.null(sc_loading_id())) {
+          removeNotification(sc_loading_id())
+          sc_loading_id(NULL)
+        }
+        sc_best_fit_ready(FALSE)
+        
+        id <- showNotification(
+          ui = tagList(
+            tags$b("Fitting standard curve..."),
+            tags$br(),
+            tags$span(
+              style = "font-size:0.9em; color:#555;",
+              paste0("Plate: ", input$sc_plate_select,
+                     " | Antigen: ", input$sc_antigen_select)
+            )
+          ),
+          duration    = NULL,
+          closeButton = FALSE,
+          type        = "message",
+          id          = "sc_loading"
         )
-        
-        lk <- loaded_data$curve_id_lookup
-        
-        # always build this once (you do this elsewhere too — consider centralizing)
-        lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-        
-        # base mask
-        mask <- as.character(lk$antigen)   == input$sc_antigen_select &
-          as.character(lk$plate_nom) == input$sc_plate_select &
-          as.character(lk$source_nom %||% lk$source) == input$sc_source_select
-        
-        # ---- NEW: refine by wavelength if present ----
-        if (!is.null(input$sc_wavelength_select) &&
-            nzchar(input$sc_wavelength_select)) {
-          
-          mask <- mask &
-            as.character(lk$wavelength) == input$sc_wavelength_select
-        }
-        
-        # fallback (no source_nom)
-        if (!any(mask)) {
-          mask <- as.character(lk$antigen)   == input$sc_antigen_select &
-            as.character(lk$plate_nom) == input$sc_plate_select
-          
-          if (!is.null(input$sc_wavelength_select) &&
-              nzchar(input$sc_wavelength_select)) {
-            
-            mask <- mask &
-              as.character(lk$wavelength) == input$sc_wavelength_select
-          }
-        }
-        
-        req(any(mask))
-        
-        lk$curve_id[mask][1]
-        
-        curve_id <-  lk$curve_id[mask][1]
-        curvid <<- curve_id
-        return(curve_id)
-      })
-    
-    observeEvent(selected_curve_id(), ignoreNULL = TRUE, ignoreInit = TRUE, {
-      if (!is.null(sc_loading_id())) {
-        removeNotification(sc_loading_id())
-        sc_loading_id(NULL)
+        sc_loading_id(id)
       }
-      sc_best_fit_ready(FALSE)
-      
-      id <- showNotification(
-        ui = tagList(
-          tags$b("Fitting standard curve..."),
-          tags$br(),
-          tags$span(
-            style = "font-size:0.9em; color:#555;",
-            paste0("Curve ID: ", selected_curve_id(),
-                   " | Antigen: ", input$sc_antigen_select,
-                   " | Plate: ",   input$sc_plate_select)
-          )
-        ),
-        duration    = NULL,
-        closeButton = FALSE,
-        type        = "message",
-        id          = "sc_loading"
-      )
-      sc_loading_id(id)
-    })
+    )
     
     observeEvent(best_fit(), ignoreNULL = TRUE, ignoreInit = TRUE, {
       shinyjs::delay(100, {
@@ -1849,22 +1598,34 @@ observeEvent(
     # wrappers that pull fields out of this object so no computation is
     # repeated.
     sc_object <- reactive({
-      req(loaded_data,
+      req(input$sc_source_select,
+          input$sc_antigen_select,
+          input$sc_plate_select,
+          loaded_data,
           loaded_data$curve_id_lookup,
           loaded_data$antigen_constraints,
           loaded_data$standards,
           nrow(loaded_data$standards) > 0)
       
-      # curve_id resolved from the lookup table by the three controls
-      cid         <- selected_curve_id()
-      antigen_sel <- input$sc_antigen_select
+      # Resolve curve_id for the current selection
+      lookup <- loaded_data$curve_id_lookup
+      mask   <- as.character(lookup$antigen)    == input$sc_antigen_select  &
+        as.character(lookup$plate_nom)  == input$sc_plate_select    &
+        as.character(lookup$source_nom) == input$sc_source_select
+      # Fallback: match on antigen + plate only when source_nom is absent
+      if (!any(mask)) {
+        mask <- as.character(lookup$antigen)   == input$sc_antigen_select &
+          as.character(lookup$plate_nom) == input$sc_plate_select
+      }
+      req(any(mask))
+      cid <- lookup$curve_id[mask][1]
       
-      # Filter data to this single curve
+      # Filter data to a single curve
       curve_data <- filter_by_curve_id(loaded_data, curve_id = cid)
       
-      # Per-antigen constraints
+      # Per-antigen constraints from loaded_data$antigen_constraints
       antigen_constraints <- loaded_data$antigen_constraints[
-        loaded_data$antigen_constraints$antigen %in% antigen_sel, ,
+        loaded_data$antigen_constraints$antigen %in% input$sc_antigen_select, ,
         drop = FALSE
       ]
       req(nrow(antigen_constraints) > 0)
@@ -1881,82 +1642,7 @@ observeEvent(
       )
       sc$set_curve_settings()
       sc$fit()
-      sc$summarize()
       sc$propagate_error()
-      
-      # tryCatch({
-      #   lk  <- sc$loaded_data$curve_id_lookup
-      #   src <- if ("source_nom" %in% names(lk)) lk$source_nom[1] else lk$source[1]
-      #   
-      #   # grouping_cols <- intersect(
-      #   #   c("project_id", "study_accession", "experiment_accession",
-      #   #     "source", "antigen", "feature"),
-      #   #   names(sc$loaded_data$curve_id_lookup)
-      #   # )
-      #   whole_standards_with_plate <- merge(
-      #     sc$loaded_data$whole_standards,
-      #     sc$loaded_data$curve_id_whole_lookup,
-      #     by   = "curve_id",
-      #     all.x = TRUE
-      #   )
-      #   dil_series_se <<- compute_dil_series_se(
-      #     standards_data = whole_standards_with_plate,
-      #     response_col   = loaded_data$response_var,
-      #     dilution_col   = "dilution",
-      #     plate_col      = "plate",
-      #     grouping_cols  = c("project_id",
-      #                        "study_accession",
-      #                        "experiment_accession",
-      #                        "source",
-      #                        "nominal_sample_dilution",
-      #                        "antigen",
-      #                        "feature"),
-      #     min_reps       = 2,
-      #     verbose        = FALSE
-      #   )
-      #   
-      #   cat("after [compute_dil_series_se")
-      #   
-      #   src_col <- if ("source_nom" %in% names(dil_series_se)) "source_nom" else "source"
-      #   # 
-      #   dil_filtered <<- dil_series_se[dil_series_se$curve_id == selected_curve_id(),,drop = FALSE]
-      #   #   dil_series_se$antigen     == lk$antigen[1]   &
-      #   #     dil_series_se$plate_nom   == lk$plate_nom[1] &
-      #   #     dil_series_se[[src_col]]  == lk$source[1],
-      #   #   , drop = FALSE
-      #   # ]
-      #   if (nrow(dil_filtered) > 0) {
-      #     fda_result <<- compute_dil_series_accuracy(
-      #       best_fit                   = sc$best_fit,
-      #       dil_series_df              = dil_filtered,
-      #       response_col               = loaded_data$response_var,
-      #       independent_variable       = loaded_data$indep_var,
-      #       dilution_col               = "dilution",
-      #       fixed_a_result             = sc$antigen_plate$fixed_a_result,
-      #       is_log_response            = study_params$is_log_response,
-      #       is_log_concentration       = study_params$is_log_independent,
-      #       undiluted_sc_concentration = sc$antigen_plate$antigen_settings$standard_curve_concentration,
-      #       cv_threshold               = 20,
-      #       lloq_cv_threshold          = 25,
-      #       accuracy_lo                = 80,
-      #       accuracy_hi                = 120,
-      #       verbose                    = FALSE
-      #     )
-      # 
-      #     new_cols <- setdiff(
-      #       names(fda_result$best_fit_summary),
-      #       names(sc$best_fit$best_fit_summary)
-      #     )
-      #     if (length(new_cols) > 0) {
-      #       sc$best_fit$best_fit_summary <- cbind(
-      #         sc$best_fit$best_fit_summary,
-      #         fda_result$best_fit_summary[, new_cols, drop = FALSE]
-      #       )
-      #     }
-      #   }
-      # }, error = function(e) {
-      #   message("[fda_loq] skipped: ", e$message)
-      # })
       sc
     })
     
@@ -2013,17 +1699,24 @@ observeEvent(
     # Standard curve plot
     # ------------------------------------------------------------------
     output$standard_curve <- renderPlotly({
-      sc <<- sc_object()
-      req(sc)
+      bf    <- best_fit()
+      plate <- antigen_plate()
+      req(bf, plate)
       
-      p <- sc$plot(
+      p <- plot_standard_curve(
+        best_fit                   = bf,
         is_display_log_response    = input$display_log_response,
-        is_display_log_independent = input$display_log_independent
+        is_display_log_independent = input$display_log_independent,
+        pcov_threshold             = plate$antigen_settings$pcov_threshold,
+        independent_variable       = loaded_data$indep_var,
+        response_variable          = loaded_data$response_var,
+        # mcmc fields are Bayesian-only; StandardCurve does not populate them
+        mcmc_samples               = plate$plate_mcmc_samples %||% NULL,
+        mcmc_pred                  = plate$plate_mcmc_pred    %||% NULL
       )
-      
-      freq_curve_plot_cache(p)
-      comparison_visible(FALSE)
-      sc_concentration_cache(sc$antigen_plate$antigen_settings$standard_curve_concentration)
+      freq_curve_plot_cache(p)   # store for comparison overlay
+      comparison_visible(FALSE)  # reset comparison when curve changes
+      sc_concentration_cache(plate$antigen_settings$standard_curve_concentration)
       p
     })
     
@@ -2129,8 +1822,7 @@ observeEvent(
       
       showModal(modalDialog(
         title     = paste("Model Comparisons for",
-                          input$sc_antigen_select, "on", input$sc_plate_select,
-                          paste0("(curve ", selected_curve_id(), ")")),
+                          input$sc_antigen_select, "on", input$sc_plate_select),
         size      = "l",
         plotOutput("model_comparisions"),
         downloadButton("download_model_comparisons", "Download Model Comparisons"),
@@ -2146,8 +1838,7 @@ observeEvent(
           selected_study, "_",
           selected_experiment, "_",
           input$sc_plate_select, "_",
-          input$sc_antigen_select, "_cid",
-          tryCatch(selected_curve_id(), error = function(e) "NA"),
+          input$sc_antigen_select,
           ".pdf"
         )
       },
@@ -2189,7 +1880,6 @@ observeEvent(
                 input$readxMap_experiment_accession,
                 input$sc_plate_select, "x",
                 input$sc_antigen_select,
-                paste0("cid", tryCatch(selected_curve_id(), error = function(e) "NA")),
                 "tidy_parameter_estimates.csv", sep = "_")
         }
       },
@@ -2282,7 +1972,6 @@ observeEvent(
                 input$readxMap_experiment_accession,
                 input$sc_plate_select, "x",
                 input$sc_antigen_select,
-                paste0("cid", tryCatch(selected_curve_id(), error = function(e) "NA")),
                 "samples_above_ulod.csv", sep = "_")
         }
       },
@@ -2323,7 +2012,6 @@ observeEvent(
                 input$readxMap_experiment_accession,
                 input$sc_plate_select, "x",
                 input$sc_antigen_select,
-                paste0("cid", tryCatch(selected_curve_id(), error = function(e) "NA")),
                 "samples_below_llod.csv", sep = "_")
         }
       },

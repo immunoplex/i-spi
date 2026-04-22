@@ -1095,11 +1095,12 @@ server <- function(input, output, session) {
       source('propagate_functions.R', local = TRUE)
 
       source("std_curver_ui.R", local = TRUE)
-      source("std_curve_functions.R", local = TRUE)
+      source("curveRfreq_extensions.R", local = TRUE)
+      #source("std_curve_functions.R", local = TRUE)
       source("db_functions.R", local = TRUE)
-      source("model_functions.R", local = TRUE)
+      #source("model_functions.R", local = TRUE)
       # source("se_x_robust_fix.R", local = TRUE)
-      source("plot_functions.R", local = TRUE)
+      #source("plot_functions.R", local = TRUE)
       source("bayes_concentration_functions.R", local = T)
       source("batch_fit_functions.R", local = TRUE)
 

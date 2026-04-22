@@ -74,6 +74,7 @@ library(drda)
 library(tmvtnorm)
 
 ## std-curver
+library(curveRfreq)
 library(patchwork)
 library(rlang)
 library(rjags)
