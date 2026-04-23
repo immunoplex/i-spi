@@ -177,6 +177,7 @@ compute_dil_series_se <- function(
   return(out)
 }
 
+
 #' compute_dil_series_accuracy
 #'
 #' For each dilution level in a pooled dilution-series data frame (the output
@@ -248,6 +249,7 @@ compute_dil_series_accuracy <- function(
   # ── 0. Extract model components ──────────────────────────────────────
   fit        <- best_fit$best_fit
   model_name <- best_fit$best_model_name
+  parameters <- best_fit$best_fit_summary[, c("a", "b", "c", "d", "g")]
   
   if (is.null(fit) || !inherits(fit, "nls")) {
     warning("[compute_dil_series_accuracy] best_fit$best_fit is NULL or not an nls object.")
@@ -285,55 +287,90 @@ compute_dil_series_accuracy <- function(
   # Returns back-calculated x (on the model's concentration scale) or NA.
   safe_backcalc <- function(y_model_scale) {
     if (is.na(y_model_scale) || !is.finite(y_model_scale)) return(NA_real_)
-    tryCatch({
-      if (!is.null(fixed_a_result)) {
-        switch(model_name,
-               Y5     = inv_Y5_fixed(y_model_scale,
-                                     fixed_a = fixed_a_result,
-                                     b = coef(fit)["b"], c = coef(fit)["c"],
-                                     d = coef(fit)["d"], g = coef(fit)["g"]),
-               Yd5    = inv_Yd5_fixed(y_model_scale,
-                                      fixed_a = fixed_a_result,
-                                      b = coef(fit)["b"], c = coef(fit)["c"],
-                                      d = coef(fit)["d"], g = coef(fit)["g"]),
-               Y4     = inv_Y4_fixed(y_model_scale,
-                                     fixed_a = fixed_a_result,
-                                     b = coef(fit)["b"], c = coef(fit)["c"],
-                                     d = coef(fit)["d"]),
-               Yd4    = inv_Yd4_fixed(y_model_scale,
-                                      fixed_a = fixed_a_result,
-                                      b = coef(fit)["b"], c = coef(fit)["c"],
-                                      d = coef(fit)["d"]),
-               Ygomp4 = inv_Ygomp4_fixed(y_model_scale,
-                                         fixed_a = fixed_a_result,
-                                         b = coef(fit)["b"], c = coef(fit)["c"],
-                                         d = coef(fit)["d"]),
-               NA_real_
-        )
-      } else {
-        switch(model_name,
-               Y5     = inv_Y5(y_model_scale,
-                               a = coef(fit)["a"], b = coef(fit)["b"],
-                               c = coef(fit)["c"], d = coef(fit)["d"],
-                               g = coef(fit)["g"]),
-               Yd5    = inv_Yd5(y_model_scale,
-                                a = coef(fit)["a"], b = coef(fit)["b"],
-                                c = coef(fit)["c"], d = coef(fit)["d"],
-                                g = coef(fit)["g"]),
-               Y4     = inv_Y4(y_model_scale,
-                               a = coef(fit)["a"], b = coef(fit)["b"],
-                               c = coef(fit)["c"], d = coef(fit)["d"]),
-               Yd4    = inv_Yd4(y_model_scale,
-                                a = coef(fit)["a"], b = coef(fit)["b"],
-                                c = coef(fit)["c"], d = coef(fit)["d"]),
-               Ygomp4 = inv_Ygomp4(y_model_scale,
-                                   a = coef(fit)["a"], b = coef(fit)["b"],
-                                   c = coef(fit)["c"], d = coef(fit)["d"]),
-               NA_real_
-        )
-      }
-    }, error = function(e) NA_real_)
-  }
+    
+    mn <- switch(model_name,
+                 logistic5    = "Y5",    loglogistic5 = "Yd5",
+                 logistic4    = "Y4",    loglogistic4 = "Yd4",
+                 gompertz4    = "Ygomp4",
+                 model_name   # already legacy — pass through
+    )
+    
+    
+      a <- as.numeric(parameters$a[1])
+      b <- as.numeric(parameters$b[1])
+      c <- as.numeric(parameters$c[1])
+      d <- as.numeric(parameters$d[1])
+      g <- if ("g" %in% names(parameters) && !is.na(parameters$g[1])) as.numeric(parameters$g[1]) else NULL
+      
+      tryCatch(
+        switch(mn,
+               Y5     = inv_logistic5(y_model_scale,     a=a, b=b, c=c, d=d, g=g),
+               Yd5    = inv_logistic5(y_model_scale,    a=a, b=b, c=c, d=d, g=g),
+               Y4     = inv_logistic4(y_model_scale,     a=a, b=b, c=c, d=d),
+               Yd4    = inv_loglogistic5(y_model_scale,    a=a, b=b, c=c, d=d),
+               Ygomp4 = inv_gompertz4(y_model_scale, a=a, b=b, c=c, d=d),
+               { warning("[safe_backcalc] Unknown model: ", mn); NA_real_ }
+        ),
+        error = function(e) {
+          message("[safe_backcalc] ", mn, " failed: ", e$message)
+          NA_real_
+        }
+      )
+      
+    }
+  #     if (!is.null(fixed_a_result)) {
+  #       cat("model_name free a ")
+  #       print(mn)
+  #       switch(mn, #model_name,
+  #              Y5     = inv_Y5_fixed(y_model_scale,
+  #                                    fixed_a = fixed_a_result,
+  #                                    b = coef(fit)["b"], c = coef(fit)["c"],
+  #                                    d = coef(fit)["d"], g = coef(fit)["g"]),
+  #              Yd5    = inv_Yd5_fixed(y_model_scale,
+  #                                     fixed_a = fixed_a_result,
+  #                                     b = coef(fit)["b"], c = coef(fit)["c"],
+  #                                     d = coef(fit)["d"], g = coef(fit)["g"]),
+  #              Y4     = inv_Y4_fixed(y_model_scale,
+  #                                    fixed_a = fixed_a_result,
+  #                                    b = coef(fit)["b"], c = coef(fit)["c"],
+  #                                    d = coef(fit)["d"]),
+  #              Yd4    = inv_Yd4_fixed(y_model_scale,
+  #                                     fixed_a = fixed_a_result,
+  #                                     b = coef(fit)["b"], c = coef(fit)["c"],
+  #                                     d = coef(fit)["d"]),
+  #              Ygomp4 = inv_Ygomp4_fixed(y_model_scale,
+  #                                        fixed_a = fixed_a_result,
+  #                                        b = coef(fit)["b"], c = coef(fit)["c"],
+  #                                        d = coef(fit)["d"]),
+  #              NA_real_
+  #       )
+  #     } else {
+  #       cat("model_name with fixed result")
+  #       print(mn)
+  #       
+  #       switch(mn, # model_name 
+  #              Y5     = inv_Y5(y_model_scale,
+  #                              a = coef(fit)["a"], b = coef(fit)["b"],
+  #                              c = coef(fit)["c"], d = coef(fit)["d"],
+  #                              g = coef(fit)["g"]),
+  #              Yd5    = inv_Yd5(y_model_scale,
+  #                               a = coef(fit)["a"], b = coef(fit)["b"],
+  #                               c = coef(fit)["c"], d = coef(fit)["d"],
+  #                               g = coef(fit)["g"]),
+  #              Y4     = inv_Y4(y_model_scale,
+  #                              a = coef(fit)["a"], b = coef(fit)["b"],
+  #                              c = coef(fit)["c"], d = coef(fit)["d"]),
+  #              Yd4    = inv_Yd4(y_model_scale,
+  #                               a = coef(fit)["a"], b = coef(fit)["b"],
+  #                               c = coef(fit)["c"], d = coef(fit)["d"]),
+  #              Ygomp4 = inv_Ygomp4(y_model_scale,
+  #                                  a = coef(fit)["a"], b = coef(fit)["b"],
+  #                                  c = coef(fit)["c"], d = coef(fit)["d"]),
+  #              NA_real_
+  #       )
+  #     }
+  #   }, error = function(e) NA_real_)
+  # }
   
   # ── 3. Helper: convert model x back to linear concentration ──────────
   to_linear_conc <- function(x_model) {
@@ -786,4 +823,763 @@ compute_dil_series_accuracy <- function(
     dil_accuracy_range_lo    = acc_lo,
     dil_accuracy_range_hi    = acc_hi
   )
+}
+
+
+
+plot_ISPI_standard_curve <- function(best_fit,
+                                is_display_log_response,
+                                is_display_log_independent,
+                                pcov_threshold,
+                                response_variable = "mfi",
+                                independent_variable = "concentration",
+                                mcmc_samples = NULL,
+                                mcmc_pred = NULL) {
+  p <- plotly::plot_ly()
+  # best_fit_v <<- best_fit
+  # mcmc_samples_in <<- mcmc_samples
+  # mcmc_pred_in <<- mcmc_pred
+  
+  # ── Resolve response column ────────────────────────────────────────
+  resolved <- ensure_response_column(
+    df           = best_fit$best_data,
+    response_var = response_variable,
+    coerce_numeric = TRUE,
+    context      = "plot_standard_curve/best_data"
+  )
+  best_fit$best_data <- resolved$df
+  response_variable  <- resolved$response_var
+  
+  if (!resolved$ok) {
+    return(
+      plotly::plot_ly() %>%
+        plotly::layout(
+          title = "Cannot plot: response variable not found",
+          annotations = list(
+            text = paste0(
+              "Column '", response_variable,
+              "' not found or has no finite values in standard data.<br>",
+              "Available columns: ",
+              paste(names(best_fit$best_data), collapse = ", ")
+            ),
+            xref = "paper", yref = "paper",
+            x = 0.5, y = 0.5, showarrow = FALSE
+          )
+        )
+    )
+  }
+  
+  # ── Resolve independent variable ───────────────────────────────────
+  if (!independent_variable %in% names(best_fit$best_data)) {
+    if ("concentration" %in% names(best_fit$best_data)) {
+      independent_variable <- "concentration"
+    } else {
+      return(plotly::plot_ly() %>%
+               plotly::layout(title = "Missing independent variable column"))
+    }
+  }
+  
+  # ── Ensure stype exists ────────────────────────────────────────────
+  if (!"stype" %in% names(best_fit$best_data)) {
+    best_fit$best_data$stype <- "S"
+  }
+  
+  # ── Resolve response column in sample_se too ───────────────────────
+  samples_predicted_conc <- best_fit$sample_se
+  if (!is.null(samples_predicted_conc) && nrow(samples_predicted_conc) > 0) {
+    samp_resolved <- ensure_response_column(
+      df           = samples_predicted_conc,
+      response_var = response_variable,
+      coerce_numeric = TRUE,
+      context      = "plot_standard_curve/sample_se"
+    )
+    samples_predicted_conc <- samp_resolved$df
+    if (samp_resolved$ok && samp_resolved$response_var != response_variable) {
+      samples_predicted_conc[[response_variable]] <-
+        samples_predicted_conc[[samp_resolved$response_var]]
+    }
+    samples_predicted_conc <- samples_predicted_conc[
+      !is.nan(samples_predicted_conc$raw_predicted_concentration) &
+        is.finite(samples_predicted_conc$raw_predicted_concentration), ,
+      drop = FALSE
+    ]
+  } else {
+    samples_predicted_conc <- data.frame(
+      raw_predicted_concentration = numeric(0),
+      pcov = numeric(0),
+      stringsAsFactors = FALSE
+    )
+    samples_predicted_conc[[response_variable]] <- numeric(0)
+  }
+  
+  best_fit$best_pred$pcov_threshold <- pcov_threshold
+  
+  safe_glance <- function(field, default = NA_real_) {
+    val <- best_fit$best_fit_summary[[field]]
+    if (is.null(val) || length(val) == 0) return(default)
+    val <- unlist(val)
+    if (all(is.na(val))) return(default)
+    val[1]
+  }
+  
+  ### 1. RESPONSE VARIABLE (Y) log transform
+  log_response_status <- isTRUE(as.logical(safe_glance("is_log_response", FALSE)))
+  if (log_response_status && !isTRUE(is_display_log_response)) {
+    best_fit$best_data[[response_variable]] <- 10^best_fit$best_data[[response_variable]]
+    best_fit$best_pred$yhat               <- 10^best_fit$best_pred$yhat
+    best_fit$best_fit_summary$llod             <- 10^safe_glance("llod")
+    best_fit$best_fit_summary$ulod             <- 10^safe_glance("ulod")
+    best_fit$best_fit_summary$lloq_y           <- 10^safe_glance("lloq_y")
+    best_fit$best_fit_summary$uloq_y           <- 10^safe_glance("uloq_y")
+    best_fit$best_fit_summary$inflect_y        <- 10^safe_glance("inflect_y")
+    best_fit$best_d2xy$d2x_y              <- 10^best_fit$best_d2xy$d2x_y
+    if (!is.null(best_fit$best_curve_ci)) {
+      best_fit$best_curve_ci$ci_lo        <- 10^best_fit$best_curve_ci$ci_lo
+      best_fit$best_curve_ci$ci_hi        <- 10^best_fit$best_curve_ci$ci_hi
+    }
+    if (nrow(samples_predicted_conc) > 0 &&
+        response_variable %in% names(samples_predicted_conc)) {
+      samples_predicted_conc[[response_variable]] <-
+        10^samples_predicted_conc[[response_variable]]
+    }
+  }
+  
+  ### 2. INDEPENDENT VARIABLE (X) log transform
+  log_x_status <- isTRUE(as.logical(safe_glance("is_log_x", FALSE)))
+  if (log_x_status && !isTRUE(is_display_log_independent)) {
+    best_fit$best_data$concentration       <- 10^best_fit$best_data$concentration
+    best_fit$best_pred$x                   <- 10^best_fit$best_pred$x
+    best_fit$best_fit_summary$lloq              <- 10^safe_glance("lloq")
+    best_fit$best_fit_summary$uloq              <- 10^safe_glance("uloq")
+    best_fit$best_fit_summary$inflect_x         <- 10^safe_glance("inflect_x")
+    best_fit$best_d2xy$x                   <- 10^best_fit$best_d2xy$x
+    if (nrow(samples_predicted_conc) > 0) {
+      samples_predicted_conc$raw_predicted_concentration <-
+        10^samples_predicted_conc$raw_predicted_concentration
+    }
+    best_fit$best_fit_summary$mindc             <- 10^safe_glance("mindc")
+    best_fit$best_fit_summary$maxdc             <- 10^safe_glance("maxdc")
+    best_fit$best_fit_summary$minrdl            <- 10^safe_glance("minrdl")
+    best_fit$best_fit_summary$maxrdl            <- 10^safe_glance("maxrdl")
+    if (!is.null(best_fit$best_curve_ci)) {
+      best_fit$best_curve_ci$x             <- 10^best_fit$best_curve_ci$x
+    }
+  }
+  
+  y3_label <- "Precision Coefficient of Variation (pCoV %)"
+  
+  if (is_display_log_response) {
+    response_formatted <- format_assay_terms(response_variable)
+    cat("FORMATTED:", response_formatted, "\n")
+    y_label <- paste0("log<sub>10</sub> ", response_formatted)
+  } else {
+    y_label <- format_assay_terms(response_variable)
+  }
+  # y_label_v <<- y_label
+  # 
+  if (is_display_log_independent) {
+    x_label <- paste0("log<sub>10</sub> ", format_assay_terms(independent_variable))
+  } else {
+    x_label <- format_assay_terms(independent_variable)
+  }
+  
+  ### 3. MODEL NAME
+  model_name <- best_fit$best_model_name
+  title_model_name <- switch(
+    model_name,
+    "logistic4" = "4-parameter Logistic",
+    "loglogistic4" = "4-parameter Log-Logistic",
+    "gompertz4" = "4-parameter Gompertz type",
+    "logistic5" = "5-parameter Logistic",
+    "loglogistic5" = "5-parameter Log-Logistic",
+    model_name
+  )
+  
+  ## 3b. PREPARE SAMPLE-UNCERTAINTY (single scaling)
+  print(names(best_fit$best_pred))
+  se_model   <- best_fit$best_pred$pcov
+  se_samples <- samples_predicted_conc$pcov
+  se_all     <- c(best_fit$best_pred$pcov, samples_predicted_conc$pcov)
+  se_range   <- range(se_all, na.rm = TRUE)
+  
+  se_max <- 125
+  se_min <- -2
+  se_axis_limits <- c(se_min, se_max * 1.1)
+  dtick <- ifelse(se_max > 19, ifelse(se_max > 35, 10, 5), 1)
+  
+  ### 4. RAW POINTS
+  plot_std <- best_fit$best_data
+  
+  if (is_display_log_independent) {
+    glance_fda_lloq_conc <- log10(best_fit$best_fit_summary$lloq_fda2018_concentration)
+    glance_fda_2018_uloq_conc <- log10(best_fit$best_fit_summary$uloq_fda2018_concentration)
+  } else {
+    glance_fda_lloq_conc <- best_fit$best_fit_summary$lloq_fda2018_concentration
+    glance_fda_2018_uloq_conc <- best_fit$best_fit_summary$uloq_fda2018_concentration
+  }
+  
+  plot_std$fda2018_class <- ifelse(
+    plot_std[[independent_variable]] >= glance_fda_lloq_conc &
+      plot_std[[independent_variable]] <= glance_fda_2018_uloq_conc,
+    "Standards (+ FDA 2018)",
+    "Standards (- FDA 2018)"
+  )
+  
+  std_in <- plot_std[
+    plot_std$stype == "S" &
+      plot_std$fda2018_class == "Standards (+ FDA 2018)", ]
+  std_out <- plot_std[
+    plot_std$stype == "S" &
+      plot_std$fda2018_class == "Standards (- FDA 2018)", ]
+  blanks <- plot_std[plot_std$stype == "B", ]
+  
+  ### Standards inside FDA range (circle)
+  p <- p %>% plotly::add_trace(
+    data = std_in,
+    x = std_in[[independent_variable]],
+    y = std_in[[response_variable]],
+    type = "scatter",
+    mode = "markers",
+    name = "Standards (+ FDA 2018)",
+    legendgroup = "standards",
+    marker = list(color = "#2b3d26", symbol = "circle"),
+    text = ~paste0(
+      "<br>", format_assay_terms(independent_variable), ": ",
+      std_in[[independent_variable]],
+      "<br>Dilution Factor: ", dilution,
+      "<br>", format_assay_terms(response_variable), ": ",
+      std_in[[response_variable]],
+      "<br> FDA 2018 Status: ", gsub("Standards ", "", std_in$fda2018_class)
+    ),
+    hoverinfo = "text"
+  )
+  
+  ### Standards outside FDA range (triangle)
+  p <- p %>% plotly::add_trace(
+    data = std_out,
+    x = std_out[[independent_variable]],
+    y = std_out[[response_variable]],
+    type = "scatter",
+    mode = "markers",
+    name = "Standards (- FDA 2018)",
+    legendgroup = "standards",
+    marker = list(color = "#2b3d26", symbol = "triangle-up", size = 8),
+    text = ~paste0(
+      "<br>", format_assay_terms(independent_variable), ": ",
+      std_out[[independent_variable]],
+      "<br>Dilution Factor: ", dilution,
+      "<br>", format_assay_terms(response_variable), ": ",
+      std_out[[response_variable]],
+      "<br>FDA 2018 Status: ", gsub("Standards ", "", std_out$fda2018_class)
+    ),
+    hoverinfo = "text"
+  )
+  
+  ### Blanks
+  p <- p %>% plotly::add_trace(
+    data = blanks,
+    x = blanks[[independent_variable]],
+    y = blanks[[response_variable]],
+    type = "scatter",
+    mode = "markers",
+    name = "Geometric Mean of Blanks",
+    marker = list(color = "#c2b280", symbol = "circle"),
+    text = ~paste0(
+      "<br>", format_assay_terms(independent_variable), ": ",
+      blanks[[independent_variable]],
+      "<br>Dilution Factor: ", dilution,
+      "<br>", format_assay_terms(response_variable), ": ",
+      blanks[[response_variable]]
+    ),
+    hoverinfo = "text"
+  )
+  
+  ### 5. FITTED CURVE
+  p <- p %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_pred$yhat,
+    name = "Fitted Curve",
+    legendgroup = "fitted_curve",
+    showlegend = TRUE,
+    line = list(color = "#2b3d26")
+  )
+  
+  ### 5b. 95% CI BANDS (delta method)
+  if (!is.null(best_fit$best_curve_ci)) {
+    p <- p %>% add_lines(
+      x           = best_fit$best_curve_ci$x,
+      y           = best_fit$best_curve_ci$ci_lo,
+      name        = "95% CI",
+      line        = list(color = "#2b3d26", dash = "dash"),
+      legendgroup = "fitted_curve"
+    ) %>% add_lines(
+      x           = best_fit$best_curve_ci$x,
+      y           = best_fit$best_curve_ci$ci_hi,
+      name        = "",
+      line        = list(color = "#2b3d26", dash = "dash"),
+      legendgroup = "fitted_curve",
+      showlegend  = FALSE
+    )
+  }
+  
+  ### 6. LOD lines (horizontal)
+  p <- p %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_fit_summary$ulod,
+    name = paste("Upper LOD: (",
+                 round(best_fit$best_fit_summary$maxdc, 3), ",",
+                 round(best_fit$best_fit_summary$ulod, 3), ")"),
+    line = list(color = "#e25822", dash = "dash"),
+    legendgroup = "linked_ulod",
+    visible = "legendonly"
+  )
+  
+  p <- p %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_fit_summary$llod,
+    name = paste("Lower LOD: (",
+                 round(best_fit$best_fit_summary$mindc, 3), ",",
+                 round(best_fit$best_fit_summary$llod, 3), ")"),
+    line = list(color = "#e25822", dash = "dash"),
+    legendgroup = "linked_llod",
+    visible = "legendonly"
+  )
+  
+  ### 7. LOQ (vertical + horizontal)
+  y_min <- min(best_fit$best_data[[response_variable]], na.rm = TRUE)
+  y_max <- max(best_fit$best_data[[response_variable]], na.rm = TRUE)
+  
+  ### 6b. MDC / RDL vertical lines
+  if (!is.na(best_fit$best_fit_summary$mindc)) {
+    p <- p %>% add_lines(
+      x = c(best_fit$best_fit_summary$mindc, best_fit$best_fit_summary$mindc),
+      y = c(y_min, y_max),
+      name = paste("Lower DC:", round(best_fit$best_fit_summary$mindc, 3)),
+      line = list(color = "#e25822", dash = "dash"),
+      legendgroup = "linked_llod",
+      showlegend = FALSE, hoverinfo = "text", visible = "legendonly"
+    )
+  }
+  
+  if (!is.na(best_fit$best_fit_summary$minrdl)) {
+    p <- p %>% add_lines(
+      x = c(best_fit$best_fit_summary$minrdl, best_fit$best_fit_summary$minrdl),
+      y = c(y_min, y_max),
+      name = paste("Lower RDL:", round(best_fit$best_fit_summary$minrdl, 3)),
+      line = list(color = "#e25822"),
+      legendgroup = "linked_llod",
+      showlegend = TRUE, hoverinfo = "text", visible = "legendonly"
+    )
+  }
+  
+  if (!is.na(best_fit$best_fit_summary$maxdc)) {
+    p <- p %>% add_lines(
+      x = c(best_fit$best_fit_summary$maxdc, best_fit$best_fit_summary$maxdc),
+      y = c(y_min, y_max),
+      name = paste("Upper DC:", round(best_fit$best_fit_summary$maxdc, 3)),
+      line = list(color = "#e25822", dash = "dash"),
+      legendgroup = "linked_ulod",
+      showlegend = FALSE, hoverinfo = "text", visible = "legendonly"
+    )
+  }
+  
+  if (!is.na(best_fit$best_fit_summary$maxrdl)) {
+    p <- p %>% add_lines(
+      x = c(best_fit$best_fit_summary$maxrdl, best_fit$best_fit_summary$maxrdl),
+      y = c(y_min, y_max),
+      name = paste("Upper RDL:", round(best_fit$best_fit_summary$maxrdl, 3)),
+      line = list(color = "#e25822"),
+      legendgroup = "linked_ulod",
+      showlegend = TRUE, hoverinfo = "text", visible = "legendonly"
+    )
+  }
+  
+  ### LLOQ vertical line
+  p <- p %>% add_lines(
+    x = c(best_fit$best_fit_summary$lloq),
+    y = c(y_min, y_max),
+    name = paste("Lower LOQ: (",
+                 round(best_fit$best_fit_summary$lloq, 3), ",",
+                 round(best_fit$best_fit_summary$lloq_y, 3), ")"),
+    line = list(color = "#875692"),
+    legendgroup = "linked_lloq",
+    hoverinfo = "text", visible = "legendonly"
+  )
+  
+  ### ULOQ vertical line
+  p <- p %>% add_lines(
+    x = c(best_fit$best_fit_summary$uloq),
+    y = c(y_min, y_max),
+    name = paste("Upper LOQ: (",
+                 round(best_fit$best_fit_summary$uloq, 3), ",",
+                 round(best_fit$best_fit_summary$uloq_y, 3), ")"),
+    line = list(color = "#875692"),
+    legendgroup = "linked_uloq",
+    hoverinfo = "text", visible = "legendonly"
+  )
+  
+  ### Horizontal LOQ lines
+  p <- p %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_fit_summary$uloq_y,
+    name = "",
+    legendgroup = "linked_uloq", showlegend = FALSE,
+    line = list(color = "#875692"), visible = "legendonly"
+  )
+  
+  p <- p %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_fit_summary$lloq_y,
+    name = "",
+    legendgroup = "linked_lloq", showlegend = FALSE,
+    line = list(color = "#875692"), visible = "legendonly"
+  )
+  
+  ### 8a. SECOND DERIVATIVE (y2 axis)
+  p <- p %>% add_lines(
+    x = best_fit$best_d2xy$x,
+    y = best_fit$best_d2xy$d2x_y,
+    name = "2nd Derivative of x given y",
+    yaxis = "y2",
+    line = list(color = "#604e97"),
+    visible = "legendonly"
+  )
+  
+  ## 9. Samples - interpolated
+  p <- p %>% add_trace(
+    data = samples_predicted_conc,
+    x = ~raw_predicted_concentration,
+    y = samples_predicted_conc[[response_variable]],
+    type = "scatter",
+    mode = "markers",
+    name = "Samples",
+    marker = list(color = "#d1992a", symbol = "circle"),
+    text = ~paste("Predicted", x_label, ":", raw_predicted_concentration,
+                  "<br>", y_label, ":", samples_predicted_conc[[response_variable]],
+                  "<br>Patient ID:", patientid,
+                  "<br> Timepoint:", timeperiod,
+                  "<br>Well:", well,
+                  "<br>LOQ Gate Class:", samples_predicted_conc$gate_class_loq,
+                  "<br>LOD Gate Class:", samples_predicted_conc$gate_class_lod,
+                  "<br> PCOV Gate Class:", samples_predicted_conc$gate_class_pcov),
+    hovertemplate = "%{text}<extra></extra>"
+  )
+  ### 8b. Sample uncertainty (y3 axis) — interpolated
+  unc_col <- list(color = "#e68fac")
+  p <- p %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_pred$pcov,
+    name = "Measurement Uncertainty",
+    yaxis = "y3",
+    line = unc_col,
+    legendgroup = "linked_interp_uncertainty",
+    visible = "legendonly"
+  ) %>% add_trace(
+    data = samples_predicted_conc,
+    x = ~raw_predicted_concentration,
+    y = ~pcov,
+    type = "scatter",
+    mode = "markers",
+    name = "",
+    marker = list(color = "#800032", symbol = "circle"),
+    text = ~paste("Predicted", x_label, ":", raw_predicted_concentration,
+                  "<br>Coefficient of Variation (pCoV):", round(pcov, 2), "%"),
+    yaxis = "y3",
+    legendgroup = "linked_interp_uncertainty",
+    showlegend = FALSE,
+    hovertemplate = "%{text}<extra></extra>",
+    visible = "legendonly"
+  ) %>% add_lines(
+    x = best_fit$best_pred$x,
+    y = best_fit$best_pred$pcov_threshold,
+    name = paste0("pCoV Threshold: ", best_fit$best_pred$pcov_threshold, "%"),
+    yaxis = "y3",
+    line = list(color = "#e68fac", dash = "dash"),
+    legendgroup = "linked_interp_uncertainty",
+    visible = "legendonly"
+  )
+  
+  # MCMC ROBUST SAMPLES
+  if (!is.null(mcmc_samples) && nrow(mcmc_samples) > 0) {
+    # Map assay_response to the plot's response variable if needed
+    if ("assay_response" %in% names(mcmc_samples) &&
+        !response_variable %in% names(mcmc_samples)) {
+      mcmc_samples[[response_variable]] <- mcmc_samples$assay_response
+    }
+    
+    mcmc_x <- mcmc_samples$raw_robust_concentration
+    mcmc_y <- mcmc_samples[[response_variable]]
+    
+    # Apply same x-axis transform as all other traces (Section 2)
+    if (log_x_status && !isTRUE(is_display_log_independent)) {
+      mcmc_x <- 10^mcmc_x
+    }
+    
+    # Build hover text
+    mcmc_hover <- paste0(
+      "MCMC Robust Concentration: ", round(mcmc_x, 4),
+      "<br>", format_assay_terms(response_variable), ": ", round(mcmc_y, 2),
+      if ("patientid" %in% names(mcmc_samples))
+        paste0("<br>Patient ID: ", mcmc_samples$patientid) else "",
+      if ("timeperiod" %in% names(mcmc_samples))
+        paste0("<br>Timepoint: ", mcmc_samples$timeperiod) else "",
+      if ("well" %in% names(mcmc_samples))
+        paste0("<br>Well: ", mcmc_samples$well) else "",
+      if ("pcov_robust_concentration" %in% names(mcmc_samples))
+        paste0("<br>MCMC pCoV: ",
+               formatC(mcmc_samples$pcov_robust_concentration, format = "g", digits = 4), "%") else "",
+      if ("gate_class_loq" %in% names(mcmc_samples))
+        paste0("<br>LOQ Gate Class: ", mcmc_samples$gate_class_loq) else "",
+      if ("gate_class_lod" %in% names(mcmc_samples))
+        paste0("<br>LOD Gate Class: ", mcmc_samples$gate_class_lod) else "",
+      if ("source_nom" %in% names(mcmc_samples)) 
+        paste0("<br>Source: ", mcmc_samples$source_nom) else ""
+    )
+    
+    p <- p %>% plotly::add_trace(
+      x = mcmc_x,
+      y = mcmc_y,
+      type = "scatter",
+      mode = "markers",
+      name = "MCMC Samples",
+      marker = list(
+        color = "#d1992a",
+        symbol = "diamond",
+        size = 7,
+        opacity = 0.8
+      ),
+      text = mcmc_hover,
+      hovertemplate = "%{text}<extra></extra>"
+    )
+    
+    ### 9c. MCMC pCoV scatter points at sample locations (y3 axis)
+    if ("pcov_robust_concentration" %in% names(mcmc_samples)) {
+      pcov_valid <- is.finite(mcmc_samples$pcov_robust_concentration) &
+        is.finite(mcmc_x)
+      
+      if (any(pcov_valid)) {
+        p <- p %>% plotly::add_trace(
+          x = mcmc_x[pcov_valid],
+          y = mcmc_samples$pcov_robust_concentration[pcov_valid],
+          type = "scatter",
+          mode = "markers",
+          name = "",
+          marker = list(color = "#800032", symbol = "diamond", size = 5),
+          text = paste0(
+            "MCMC ", x_label, ": ", round(mcmc_x[pcov_valid], 4),
+            "<br>MCMC pCoV: ",
+            formatC(mcmc_samples$pcov_robust_concentration[pcov_valid], format = "g", digits = 4), "%"
+          ),
+          yaxis = "y3",
+          legendgroup = "linked_mcmc_uncertainty",
+          showlegend = FALSE,
+          hovertemplate = "%{text}<extra></extra>",
+          visible = "legendonly"
+        )
+      }
+    }
+  }
+  
+  ### 8c. MCMC pCoV uncertainty smooth line (y3 axis) — dense pred grid
+  if (!is.null(mcmc_pred) && nrow(mcmc_pred) > 0 &&
+      "pcov_robust_concentration" %in% names(mcmc_pred) &&
+      "raw_robust_concentration" %in% names(mcmc_pred)) {
+    
+    pred_valid <- is.finite(mcmc_pred$pcov_robust_concentration) &
+      is.finite(mcmc_pred$raw_robust_concentration)
+    
+    if (any(pred_valid)) {
+      mcmc_pred_x    <- mcmc_pred$raw_robust_concentration[pred_valid]
+      mcmc_pred_pcov <- mcmc_pred$pcov_robust_concentration[pred_valid]
+      
+      # Apply same x-axis transform as all other traces (Section 2)
+      if (log_x_status && !isTRUE(is_display_log_independent)) {
+        mcmc_pred_x <- 10^mcmc_pred_x
+      }
+      
+      # Sort by x for smooth line
+      sort_idx       <- order(mcmc_pred_x)
+      mcmc_pred_x    <- mcmc_pred_x[sort_idx]
+      mcmc_pred_pcov <- mcmc_pred_pcov[sort_idx]
+      
+      # MCMC uncertainty smooth line
+      p <- p %>% plotly::add_lines(
+        x = mcmc_pred_x,
+        y = mcmc_pred_pcov,
+        name = "MCMC Measurement Uncertainty",
+        yaxis = "y3",
+        line = list(color = "#e68fac"),
+        legendgroup = "linked_mcmc_uncertainty",
+        showlegend = TRUE,
+        visible = "legendonly"
+      )
+      
+      # pCoV threshold line — same threshold, shown with MCMC group
+      p <- p %>% plotly::add_lines(
+        x = mcmc_pred_x,
+        y = rep(pcov_threshold, length(mcmc_pred_x)),
+        name = paste0("pCoV Threshold: ", pcov_threshold, "%"),
+        yaxis = "y3",
+        line = list(color = "#e68fac", dash = "dash"),
+        legendgroup = "linked_mcmc_uncertainty",
+        showlegend = TRUE,
+        visible = "legendonly"
+      )
+    }
+  }
+  
+  
+  ### 9b. MCMC ROBUST SAMPLES
+  
+  ### 10. INFLECTION POINT
+  p <- p %>% add_trace(
+    x = best_fit$best_fit_summary$inflect_x,
+    y = best_fit$best_fit_summary$inflect_y,
+    type = "scatter",
+    mode = "markers",
+    name = paste("Inflection Point: (",
+                 round(best_fit$best_fit_summary$inflect_x, 3), ",",
+                 round(best_fit$best_fit_summary$inflect_y, 3), ")"),
+    legendgroup = "fitted_curve",
+    showlegend = TRUE,
+    marker = list(color = "#2724F0", size = 8)
+  )
+  
+  ### 11. LAYOUT
+  p <- p %>% layout(
+    title = paste(
+      "Fitted", title_model_name, "Model (",
+      unique(best_fit$best_fit_summary$plate), ",",
+      unique(best_fit$best_fit_summary$antigen), ")"
+    ),
+    xaxis = list(
+      title    = x_label,
+      showgrid = TRUE,
+      zeroline = FALSE
+    ),
+    yaxis = list(
+      title    = y_label,
+      showgrid = TRUE,
+      zeroline = TRUE
+    ),
+    legend = list(
+      x       = 1.1,
+      y       = 1,
+      xanchor = "left"
+    ),
+    font = list(size = 12),
+    yaxis2 = list(
+      showticklabels = FALSE,
+      title          = "",
+      tickmode       = "linear",
+      dtick          = 10,
+      overlaying     = "y",
+      side           = "right",
+      showgrid       = FALSE,
+      zeroline       = FALSE
+    ),
+    yaxis3 = list(
+      overlaying     = "y",
+      side           = "right",
+      title          = y3_label,
+      range          = se_axis_limits,
+      tickmode       = "linear",
+      type           = "linear",
+      dtick          = dtick,
+      showgrid       = FALSE,
+      zeroline       = FALSE,
+      showticklabels = TRUE
+    )
+  )
+  
+  return(p)
+}
+
+#' Ensure the response variable column exists in a data frame.
+#' If the named column is missing, attempts to find it via
+#' assay_response_variable metadata or common response column names.
+#' Optionally coerces to numeric.
+#'
+#' @param df            Data frame to check
+#' @param response_var  Expected column name (e.g. "mfi", "absorbance")
+#' @param coerce_numeric Logical; if TRUE, coerce the column to numeric
+#' @param context       Character label for diagnostic messages
+#' @return A list with:
+#'   \item{df}{The (possibly modified) data frame}
+#'   \item{response_var}{The resolved column name (may differ from input)}
+#'   \item{ok}{Logical: TRUE if a valid numeric response column was found}
+ensure_response_column <- function(df, 
+                                   response_var, 
+                                   coerce_numeric = TRUE,
+                                   context = "") {
+  
+  prefix <- if (nzchar(context)) paste0("[", context, "] ") else ""
+  
+  # Guard: NULL or empty data frame
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) {
+    message(sprintf("%sData frame is NULL or empty.", prefix))
+    return(list(df = df, response_var = response_var, ok = FALSE))
+  }
+  
+  # Case 1: Column exists by name
+  if (response_var %in% names(df)) {
+    if (coerce_numeric && !is.numeric(df[[response_var]])) {
+      message(sprintf(
+        "%sCoercing '%s' from %s to numeric.",
+        prefix, response_var, class(df[[response_var]])[1]
+      ))
+      df[[response_var]] <- suppressWarnings(as.numeric(df[[response_var]]))
+    }
+    n_finite <- sum(is.finite(df[[response_var]]))
+    if (n_finite == 0) {
+      message(sprintf("%s'%s' exists but has 0 finite values.", prefix, response_var))
+      return(list(df = df, response_var = response_var, ok = FALSE))
+    }
+    return(list(df = df, response_var = response_var, ok = TRUE))
+  }
+  
+  # Case 2: Try assay_response_variable metadata
+  if ("assay_response_variable" %in% names(df)) {
+    arv <- unique(df$assay_response_variable)
+    arv <- arv[!is.na(arv) & arv != ""]
+    for (candidate in arv) {
+      if (candidate %in% names(df)) {
+        message(sprintf(
+          "%s'%s' not found; using '%s' from assay_response_variable.",
+          prefix, response_var, candidate
+        ))
+        response_var <- candidate
+        if (coerce_numeric && !is.numeric(df[[response_var]])) {
+          df[[response_var]] <- suppressWarnings(as.numeric(df[[response_var]]))
+        }
+        return(list(df = df, response_var = response_var, ok = TRUE))
+      }
+    }
+  }
+  
+  # Case 3: Try common response column names
+  common_names <- c("mfi", "absorbance", "fluorescence", "od",
+                    "MFI", "Absorbance", "Fluorescence", "OD")
+  found <- intersect(common_names, names(df))
+  if (length(found) > 0) {
+    candidate <- found[1]
+    message(sprintf(
+      "%s'%s' not found; falling back to '%s'.",
+      prefix, response_var, candidate
+    ))
+    response_var <- candidate
+    if (coerce_numeric && !is.numeric(df[[response_var]])) {
+      df[[response_var]] <- suppressWarnings(as.numeric(df[[response_var]]))
+    }
+    return(list(df = df, response_var = response_var, ok = TRUE))
+  }
+  
+  # Case 4: Try to extract from the NLS formula LHS
+  # (If there's a formula stored somewhere, we could parse it)
+  
+  message(sprintf(
+    "%sCannot find response column '%s'. Available columns: %s",
+    prefix, response_var, paste(names(df), collapse = ", ")
+  ))
+  return(list(df = df, response_var = response_var, ok = FALSE))
 }

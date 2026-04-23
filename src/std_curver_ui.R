@@ -1884,79 +1884,70 @@ observeEvent(
       sc$summarize()
       sc$propagate_error()
       
-      # tryCatch({
-      #   lk  <- sc$loaded_data$curve_id_lookup
-      #   src <- if ("source_nom" %in% names(lk)) lk$source_nom[1] else lk$source[1]
-      #   
-      #   # grouping_cols <- intersect(
-      #   #   c("project_id", "study_accession", "experiment_accession",
-      #   #     "source", "antigen", "feature"),
-      #   #   names(sc$loaded_data$curve_id_lookup)
-      #   # )
-      #   whole_standards_with_plate <- merge(
-      #     sc$loaded_data$whole_standards,
-      #     sc$loaded_data$curve_id_whole_lookup,
-      #     by   = "curve_id",
-      #     all.x = TRUE
-      #   )
-      #   dil_series_se <<- compute_dil_series_se(
-      #     standards_data = whole_standards_with_plate,
-      #     response_col   = loaded_data$response_var,
-      #     dilution_col   = "dilution",
-      #     plate_col      = "plate",
-      #     grouping_cols  = c("project_id",
-      #                        "study_accession",
-      #                        "experiment_accession",
-      #                        "source",
-      #                        "nominal_sample_dilution",
-      #                        "antigen",
-      #                        "feature"),
-      #     min_reps       = 2,
-      #     verbose        = FALSE
-      #   )
-      #   
-      #   cat("after [compute_dil_series_se")
-      #   
-      #   src_col <- if ("source_nom" %in% names(dil_series_se)) "source_nom" else "source"
-      #   # 
-      #   dil_filtered <<- dil_series_se[dil_series_se$curve_id == selected_curve_id(),,drop = FALSE]
-      #   #   dil_series_se$antigen     == lk$antigen[1]   &
-      #   #     dil_series_se$plate_nom   == lk$plate_nom[1] &
-      #   #     dil_series_se[[src_col]]  == lk$source[1],
-      #   #   , drop = FALSE
-      #   # ]
-      #   if (nrow(dil_filtered) > 0) {
-      #     fda_result <<- compute_dil_series_accuracy(
-      #       best_fit                   = sc$best_fit,
-      #       dil_series_df              = dil_filtered,
-      #       response_col               = loaded_data$response_var,
-      #       independent_variable       = loaded_data$indep_var,
-      #       dilution_col               = "dilution",
-      #       fixed_a_result             = sc$antigen_plate$fixed_a_result,
-      #       is_log_response            = study_params$is_log_response,
-      #       is_log_concentration       = study_params$is_log_independent,
-      #       undiluted_sc_concentration = sc$antigen_plate$antigen_settings$standard_curve_concentration,
-      #       cv_threshold               = 20,
-      #       lloq_cv_threshold          = 25,
-      #       accuracy_lo                = 80,
-      #       accuracy_hi                = 120,
-      #       verbose                    = FALSE
-      #     )
-      # 
-      #     new_cols <- setdiff(
-      #       names(fda_result$best_fit_summary),
-      #       names(sc$best_fit$best_fit_summary)
-      #     )
-      #     if (length(new_cols) > 0) {
-      #       sc$best_fit$best_fit_summary <- cbind(
-      #         sc$best_fit$best_fit_summary,
-      #         fda_result$best_fit_summary[, new_cols, drop = FALSE]
-      #       )
-      #     }
-      #   }
-      # }, error = function(e) {
-      #   message("[fda_loq] skipped: ", e$message)
-      # })
+      tryCatch({
+        # 1. Build dil-series SE from the FULL (unfiltered) standards so we get
+        #    cross-plate replication (min_reps = 2).
+        whole_stds <- loaded_data$standards
+        
+        whole_stds <- merge(
+          whole_stds,
+          loaded_data_frequentist$curve_id_lookup,
+          by    = "curve_id",
+          all.x = TRUE
+        )
+        
+        available_grouping_cols <- intersect(
+          c("project_id", "study_accession", "experiment_accession",
+            "source", "antigen", "feature"),
+          names(whole_stds)
+        )
+        
+        dil_se <- compute_dil_series_se(
+          standards_data = whole_stds,
+          response_col   = loaded_data$response_var,
+          dilution_col   = "dilution",
+          plate_col      = "plate",
+          grouping_cols  = available_grouping_cols,
+          min_reps       = 2,
+          verbose        = FALSE
+        )
+      })
+      
+      dil_filtered <<- dil_se[dil_se$curve_id == selected_curve_id(),,drop = FALSE]
+      
+      if (nrow(dil_filtered) > 0) {
+        # 3. Compute back-calculation accuracy + FDA pass/fail flags
+        dil_acc <<- compute_dil_series_accuracy(
+          best_fit                   = sc$best_fit,
+          dil_series_df              = dil_filtered,
+          response_col               = loaded_data$response_var,
+          independent_variable       = loaded_data$indep_var,
+          dilution_col               = "dilution",
+          fixed_a_result             = sc$antigen_plate$fixed_a_result,
+          is_log_response            = sc$study_params$is_log_response,
+          is_log_concentration       = sc$study_params$is_log_independent,
+          undiluted_sc_concentration = sc$antigen_plate$antigen_settings$standard_curve_concentration,
+          cv_threshold               = 20,
+          lloq_cv_threshold          = 25,
+          accuracy_lo                = 80,
+          accuracy_hi                = 120,
+          verbose                    = TRUE
+        )
+      }
+      
+      fda_scalars <- .extract_fda_loqs_from_dil_series(
+        dil_series_se_plate_source = dil_acc,
+        fit                        = sc$best_fit$best_fit,
+        independent_variable       = loaded_data$indep_var,
+        is_log_x                   = isTRUE(sc$antigen_plate$antigen_fit_options$is_log_concentration),
+        verbose                    = FALSE
+      )
+      
+      # add fields to the best fit summary 
+      for (nm in names(fda_scalars)) {
+        sc$best_fit$best_fit_summary[[nm]] <- fda_scalars[[nm]]
+      }
+      
       sc
     })
     
@@ -2016,9 +2007,19 @@ observeEvent(
       sc <<- sc_object()
       req(sc)
       
-      p <- sc$plot(
+      # p <- sc$plot(
+      #   is_display_log_response    = input$display_log_response,
+      #   is_display_log_independent = input$display_log_independent
+      # )
+      p <- plot_ISPI_standard_curve(
+        best_fit                   = sc$best_fit,
         is_display_log_response    = input$display_log_response,
-        is_display_log_independent = input$display_log_independent
+        is_display_log_independent = input$display_log_independent,
+        pcov_threshold             = sc$antigen_constraints$pcov_threshold,
+        independent_variable       = sc$loaded_data$indep_var,
+        response_variable          = sc$loaded_data$response_var,
+        mcmc_samples               = NULL,
+        mcmc_pred                  = NULL
       )
       
       freq_curve_plot_cache(p)
