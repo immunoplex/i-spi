@@ -1436,31 +1436,31 @@ observeEvent(
       if ("source_nom" %in% names(lk)) "source_nom" else "source"
     }
     
-    # filter_lk <- function(lk, plate = NULL, antigen = NULL, source = NULL) {
-    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-    #   if (!is.null(plate)   && nzchar(plate))
-    #     lk <- lk[as.character(lk$plate_nom) == plate,  , drop = FALSE]
-    #   if (!is.null(antigen) && nzchar(antigen))
-    #     lk <- lk[as.character(lk$antigen)   == antigen, , drop = FALSE]
-    #   if (!is.null(source)  && nzchar(source)) {
-    #     sc <- src_col_name(lk)
-    #     lk <- lk[as.character(lk[[sc]])     == source,  , drop = FALSE]
-    #   }
-    #   lk
-    # }
     filter_lk <- function(lk, plate = NULL, antigen = NULL, source = NULL) {
       lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-      if (!is.null(plate) && nzchar(plate) && plate %in% lk$plate_nom)
+      if (!is.null(plate)   && nzchar(plate))
         lk <- lk[as.character(lk$plate_nom) == plate,  , drop = FALSE]
-      if (!is.null(antigen) && nzchar(antigen) && antigen %in% as.character(lk$antigen))
+      if (!is.null(antigen) && nzchar(antigen))
         lk <- lk[as.character(lk$antigen)   == antigen, , drop = FALSE]
       if (!is.null(source)  && nzchar(source)) {
         sc <- src_col_name(lk)
-        if (source %in% as.character(lk[[sc]]))
-          lk <- lk[as.character(lk[[sc]])   == source,  , drop = FALSE]
+        lk <- lk[as.character(lk[[sc]])     == source,  , drop = FALSE]
       }
       lk
     }
+    # filter_lk <- function(lk, plate = NULL, antigen = NULL, source = NULL) {
+    #   lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
+    #   if (!is.null(plate) && nzchar(plate) && plate %in% lk$plate_nom)
+    #     lk <- lk[as.character(lk$plate_nom) == plate,  , drop = FALSE]
+    #   if (!is.null(antigen) && nzchar(antigen) && antigen %in% as.character(lk$antigen))
+    #     lk <- lk[as.character(lk$antigen)   == antigen, , drop = FALSE]
+    #   if (!is.null(source)  && nzchar(source)) {
+    #     sc <- src_col_name(lk)
+    #     if (source %in% as.character(lk[[sc]]))
+    #       lk <- lk[as.character(lk[[sc]])   == source,  , drop = FALSE]
+    #   }
+    #   lk
+    # }
     
     # ── selectors ─────────────────────────────────────────────────────────────────
     output$sc_plate_selector <- renderUI({
