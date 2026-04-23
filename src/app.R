@@ -4,7 +4,7 @@
 source("global.R", local = TRUE)
 
 # Set to 1 for local and do not push in prod
-# Sys.setenv(LOCAL_DEV = "1")
+#  Sys.setenv(LOCAL_DEV = "1")
 # # local_email_user <- "seamus.owen.stein@dartmouth.edu"
 # local_email_user <- "mscotzens@gmail.com"
 
