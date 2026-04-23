@@ -105,7 +105,7 @@ pull_standard <- function(conn, selected_study, current_user, plates) {
   INNER JOIN madi_results.xmap_header AS h
           ON h.study_accession      = s.study_accession
          AND h.experiment_accession = s.experiment_accession
-         AND h.plate_id            = s.plate_id
+         AND TRIM(h.plate_id)            = TRIM(s.plate_id)
   WHERE  s.study_accession = {selected_study}
   ORDER BY s.experiment_accession,
            s.antigen;", .con = conn)
@@ -193,7 +193,7 @@ INNER JOIN (
 INNER JOIN madi_results.xmap_header AS h
     ON h.study_accession      = b.study_accession
    AND h.experiment_accession = b.experiment_accession
-   AND h.plate_id            = b.plate_id
+   AND TRIM(h.plate_id)            = TRIM(b.plate_id)
 WHERE b.study_accession = {selected_study}
 ORDER BY b.experiment_accession,
          b.antigen;
@@ -278,7 +278,7 @@ pull_control <- function(conn, selected_study, current_user, plates) {
   INNER JOIN madi_results.xmap_header AS h
           ON h.study_accession      = c.study_accession
          AND h.experiment_accession = c.experiment_accession
-         AND h.plate_id            = c.plate_id
+         AND TRIM(h.plate_id)            = TRIM(c.plate_id)
   WHERE  c.study_accession = {selected_study}
   ORDER BY c.experiment_accession,
            c.antigen;
@@ -472,7 +472,7 @@ FROM madi_results.xmap_sample AS s
 INNER JOIN madi_results.xmap_header AS h
     ON h.study_accession      = s.study_accession
    AND h.experiment_accession = s.experiment_accession
-   AND h.plate_id             = s.plate_id
+   AND TRIM(h.plate_id)             = TRIM(s.plate_id)
 
 INNER JOIN study_config AS cfg
     ON cfg.study_accession = s.study_accession
