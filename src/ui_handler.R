@@ -575,6 +575,13 @@ output$dynamic_data_ui <- renderUI({
         label = "Refresh Data",
         icon = icon("refresh")
       ),
+      downloadButton(
+        outputId = "download_rdata_bundle",
+        label = "R Data Bundle",
+        icon = icon("download")
+      ) |> tagAppendAttributes(
+        title = "Downloads an RData file containing plates, standards, blanks, controls, samples, and sample QC dataframes."
+      ),
     tabsetPanel(
       id = "dataCollapse",
       tabPanel(
