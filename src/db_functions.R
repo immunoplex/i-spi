@@ -586,9 +586,9 @@ pull_data_frequentist <- function(study_accession, experiment_accession, project
   
   curve_id_lookup <- get_curve_ids(conn, study_accession = study_accession, project_id = project_id, 
                                    experiment_accession = experiment_accession)
-  curve_id_lookup_t <<- curve_id_lookup
+  #curve_id_lookup_t <<- curve_id_lookup
   standards <- make_curve_id(standards)
-  standards_t <<- standards
+ # standards_t <<- standards
   blanks <- make_curve_id(blanks)
   samples <- make_curve_id(samples)
   
