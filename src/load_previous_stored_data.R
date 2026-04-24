@@ -1,3 +1,29 @@
+# RData Bundle download 
+coerce_int64_to_character <- function(df) {
+  if (is.null(df) || !is.data.frame(df)) return(df)
+  df[] <- lapply(df, function(col) {
+    if (inherits(col, "integer64")) bit64::as.character.integer64(col) else col
+  })
+  df
+}
+
+output$download_rdata_bundle <- downloadHandler(
+  filename = function() {
+    paste0(
+      input$readxMap_study_accession, "_",
+      input$readxMap_experiment_accession, ".RData"
+    )
+  },
+  content = function(file) {
+    plates     <- coerce_int64_to_character(stored_plates_data$stored_header)
+    standards  <- coerce_int64_to_character(stored_plates_data$stored_standard)
+    blanks     <- coerce_int64_to_character(stored_plates_data$stored_buffer)
+    controls   <- coerce_int64_to_character(stored_plates_data$stored_control)
+    samples    <- coerce_int64_to_character(stored_plates_data$stored_sample)
+    sample_qc  <- coerce_int64_to_character(stored_plates_data$stored_best_sample_se)
+    save(plates, standards, blanks, controls, samples, sample_qc, file = file)
+  }
+)
 
 
 # Function to create download handler for each button

@@ -2048,7 +2048,7 @@ gate_class_pcov, best_glance_all_id, feature, norm_assay_response, raw_robust_co
 
 ## Adds the Bayesian concentration and SE to the dataframe
 fetch_best_sampl_se_with_bayes <- function(study_accession, experiment_accession, project_id, conn) {
-  query <- glue("SELECT
+  query <- glue("SELECT 
     -- Identifiers
     bse.best_sample_se_all_id,
     bse.project_id,
@@ -2121,6 +2121,9 @@ LEFT JOIN madi_results.bayes_samples bs
     AND bse.well                  = bs.well
     AND bse.antigen               = bs.antigen
     AND bse.feature               = bs.feature
+    AND bse.timeperiod            = bs.timeperiod    
+    AND bse.dilution              = bs.dilution    
+	  AND bse.wavelength 			      = bs.wavelength
 WHERE bse.project_id           = {project_id}
   AND bse.study_accession      = '{study_accession}'
   AND bse.experiment_accession = '{experiment_accession}'
