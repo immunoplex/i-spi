@@ -1012,6 +1012,24 @@ server <- function(input, output, session) {
       # Debounce flag for layout processing
       layout_processing_lock <- reactiveVal(FALSE)
 
+      ## FlowJo / post-gating flow cytometry reactive state
+      flowjo_data_state_rv <- reactiveVal(list(
+        flowjo_long = NULL,
+        dilutions   = NULL,
+        source_file = NULL
+      ))
+
+      flowjo_layout_sheets_rv <- reactiveVal(list())
+
+      flowjo_validation_rv <- reactiveVal(list(
+        is_validated    = FALSE,
+        is_uploaded     = FALSE,
+        validation_time = NULL,
+        upload_time     = NULL,
+        metadata_result    = NULL,
+        bead_array_result  = NULL
+      ))
+
       delete_confirmed <- reactiveVal(FALSE)
 
       # study_configuration import
@@ -1086,6 +1104,7 @@ server <- function(input, output, session) {
       source("elisa_diagnostic.R", local = TRUE)
       source("elisa_wavelength_subtraction.R", local = TRUE)
       source("curve_lookup_functions.R", local = TRUE)
+      source("flowjo_reader.R", local = TRUE)
       # source("segment_reader.R", local = TRUE)
 
       source("plate_norm_server.R", local = TRUE)

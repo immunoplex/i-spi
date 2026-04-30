@@ -640,20 +640,25 @@ output$readxMapData <- renderUI({
             )
           )
         ),
-        # ---- POST-GATING FLOW CYTOMETRY PLACEHOLDER ----
+        # # ---- POST-GATING FLOW CYTOMETRY PLACEHOLDER ----
+        # conditionalPanel(
+        #   condition = "input.assay_type_selector == 'Post-gating Flow Cytometry'",
+        #   fluidRow(
+        #     column(12,
+        #            div(
+        #              style = "text-align: center; padding: 80px 40px; color: #777; background-color: #f9f9fa; border: 2px dashed #ccc; border-radius: 10px; margin: 20px 0;",
+        #              icon("filter", style = "font-size: 64px; margin-bottom: 20px; color: #aaa;"),
+        #              h3("Post-gating Flow Cytometry Data Import", style = "color: #555;"),
+        #              p("Post-gating Flow Cytometry data import is currently under development.", style = "font-size: 16px;"),
+        #              p("This feature will be available in a future release.", style = "font-size: 14px; color: #999;")
+        #            )
+        #     )
+        #   )
+        # ),
+        # ---- POST-GATING FLOW CYTOMETRY ----
         conditionalPanel(
           condition = "input.assay_type_selector == 'Post-gating Flow Cytometry'",
-          fluidRow(
-            column(12,
-                   div(
-                     style = "text-align: center; padding: 80px 40px; color: #777; background-color: #f9f9fa; border: 2px dashed #ccc; border-radius: 10px; margin: 20px 0;",
-                     icon("filter", style = "font-size: 64px; margin-bottom: 20px; color: #aaa;"),
-                     h3("Post-gating Flow Cytometry Data Import", style = "color: #555;"),
-                     p("Post-gating Flow Cytometry data import is currently under development.", style = "font-size: 16px;"),
-                     p("This feature will be available in a future release.", style = "font-size: 14px; color: #999;")
-                   )
-            )
-          )
+          uiOutput("flowjo_import_ui")
         ),
         # ---- BEAD ARRAY CONTENT (existing workflow, refactored) ----
         conditionalPanel(
@@ -2501,27 +2506,32 @@ validate_assay_response_data <- function(assay_response_long,
     return(result)
   }
 
-  # Check 2: Required columns present
-  required_cols <- c("plateid", "well", "antigen", "assay_response")
+  # Check 2: Required columns present.
+  # Flow templates use 'feature' for the isotype column;
+  # bead-array templates use 'antigen'. Accept either.
+  analyte_col <- if ("feature" %in% names(assay_response_long)) "feature" else "antigen"
+  required_cols <- c("plateid", "well", analyte_col, "assay_response")
   missing_cols <- setdiff(required_cols, names(assay_response_long))
   if (length(missing_cols) > 0) {
     result$is_valid <- FALSE
     result$messages <- c(result$messages,
                          paste("Missing required columns:", paste(missing_cols, collapse = ", ")))
   }
+  cat("  analyte column detected as:", analyte_col, "\n")
 
-  # Check 3: All antigens in assay_response have a match in antigen_list
-  response_antigens <- unique(assay_response_long$antigen_label_on_plate)
-  layout_antigens <- unique(antigen_import_list$antigen_label_on_plate)
+  # Check 3: Analytes in assay_response match antigen_list
+  antigen_list_analyte_col <- if ("feature" %in% names(antigen_import_list)) "feature" else "antigen_label_on_plate"
+  response_antigens <- unique(assay_response_long[[analyte_col]])
+  layout_antigens   <- unique(antigen_import_list[[antigen_list_analyte_col]])
 
   missing_antigens <- setdiff(response_antigens, layout_antigens)
   if (length(missing_antigens) > 0) {
     result$warnings <- c(result$warnings,
-                         paste(length(missing_antigens), "antigens in response data not in antigen_list"))
+                         paste(length(missing_antigens), "analytes in response data not in antigen_list"))
   }
 
   # Check 4: All wells in assay_response have a match in plates_map
-  response_wells <- unique(paste(assay_response_long$plateid, assay_response_long$well, sep = "|"))
+  response_wells   <- unique(paste(assay_response_long$plateid, assay_response_long$well, sep = "|"))
   plates_map_wells <- unique(paste(plates_map$plateid, plates_map$well, sep = "|"))
 
   missing_wells <- setdiff(response_wells, plates_map_wells)
@@ -2531,12 +2541,12 @@ validate_assay_response_data <- function(assay_response_long,
   }
 
   # Check 5: No NA values in critical columns
-  na_antigen <- sum(is.na(assay_response_long$antigen))
+  na_analyte  <- sum(is.na(assay_response_long[[analyte_col]]))
   na_response <- sum(is.na(assay_response_long$assay_response))
 
-  if (na_antigen > 0) {
+  if (na_analyte > 0) {
     result$warnings <- c(result$warnings,
-                         paste(na_antigen, "rows have NA antigen (missing mapping)"))
+                         paste(na_analyte, "rows have NA", analyte_col, "(missing mapping)"))
   }
 
   if (na_response > 0) {

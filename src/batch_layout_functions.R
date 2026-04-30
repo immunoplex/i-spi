@@ -1219,15 +1219,19 @@ remove_trailing_na_rows <- function(df) {
 identify_rows_to_skip <- function(file_path, max_rows_to_search = 50) {
 
 
-  # Define sheet types and their header identifiers
+  # Define sheet types and their header identifiers.
+  # assay_response_long is marked optional: it may be absent in older
+  # bead-array templates and is allowed to be silently skipped.
   sheet_config <- list(
-    plate_id = "study_name",
-    subject_groups = "study_name",
-    timepoint = "study_name",
-    antigen_list = "study_name",
-    plates_map = "study_name",
-    cell_valid = "l_asy_constraint_method"
+    plate_id            = "study_name",
+    subject_groups      = "study_name",
+    timepoint           = "study_name",
+    antigen_list        = "study_name",
+    plates_map          = "study_name",
+    cell_valid          = "l_asy_constraint_method",
+    assay_response_long = "project_id"   # flowjo + xPONENT pathway
   )
+  optional_sheets <- c("assay_response_long")
 
   # Get actual sheets in file
   actual_sheets <- readxl::excel_sheets(file_path)
@@ -1318,21 +1322,22 @@ get_skip_values <- function(file_path, max_rows_to_search = 50) {
 #' @param skip_results Results from identify_rows_to_skip()
 #'
 #' @return List with validation status and details
-validate_skip_results <- function(skip_results) {
+validate_skip_results <- function(skip_results,
+                                   optional_sheets = c("assay_response_long")) {
 
-
-  all_found <- all(sapply(skip_results, function(x) x$found))
-
-  failed_sheets <- names(skip_results)[!sapply(skip_results, function(x) x$found)]
-
-  messages <- sapply(skip_results, function(x) x$message)
+  # Only required sheets must be found; optional ones can be missing without
+  # causing a validation failure (backwards-compatible with older templates).
+  required_results <- skip_results[!names(skip_results) %in% optional_sheets]
+  all_found        <- all(sapply(required_results, function(x) x$found))
+  failed_sheets    <- names(required_results)[!sapply(required_results, function(x) x$found)]
+  messages         <- sapply(skip_results, function(x) x$message)
 
   list(
     valid = all_found,
     failed_sheets = failed_sheets,
     messages = messages,
     summary = if (all_found) {
-      "All header rows successfully identified."
+      "All required header rows successfully identified."
     } else {
       paste("Failed to find headers in:", paste(failed_sheets, collapse = ", "))
     }
@@ -1372,22 +1377,26 @@ read_all_sheets <- function(file_path, max_rows_to_search = 50) {
 
   skip_values <- get_skip_values(file_path, max_rows_to_search)
 
-  # Check for any NA values (headers not found)
-  if (any(is.na(skip_values))) {
-    missing <- names(skip_values)[is.na(skip_values)]
-    stop("Could not find header row for sheets: ", paste(missing, collapse = ", "))
+  # Sheets with NA skip values were not found in the file (e.g. assay_response_long
+  # in older bead-array templates).  Hard-fail only for required missing sheets;
+  # silently drop optional ones rather than stopping with an error.
+  optional_sheets <- c("assay_response_long")
+  required_na     <- names(skip_values)[is.na(skip_values) &
+                                         !names(skip_values) %in% optional_sheets]
+  if (length(required_na) > 0) {
+    stop("Could not find header row for required sheets: ",
+         paste(required_na, collapse = ", "))
   }
 
-  # Read and clean each sheet
-  sheet_data <- lapply(names(skip_values), function(sheet_name) {
-    read_and_clean_sheet(
-      file_path,
-      sheet_name,
-      skip_values[[sheet_name]]
-    )
+  # Keep only sheets where the header was successfully located
+  found_skip_values <- skip_values[!is.na(skip_values)]
+
+  # Read and clean each located sheet
+  sheet_data <- lapply(names(found_skip_values), function(sheet_name) {
+    read_and_clean_sheet(file_path, sheet_name, found_skip_values[[sheet_name]])
   })
 
-  names(sheet_data) <- names(skip_values)
+  names(sheet_data) <- names(found_skip_values)
 
   return(sheet_data)
 }

@@ -9,7 +9,11 @@ looks_like_file_path <- function(x) {
 # Validate the RP1 Volts and RP1 Target
 # Only one decimal point is allowed
 check_rp1_numeric <- function(x) {
-  grepl("^\\d+(\\.\\d+)?$", x)
+  # NA is treated as "not applicable" (e.g. flow cytometry has no RP1 values).
+  # All other values must match a non-negative number with at most one decimal.
+  ifelse(is.na(x) | trimws(as.character(x)) %in% c("NA", ""),
+         TRUE,
+         grepl("^\\d+(\\.\\d+)?$", trimws(as.character(x))))
 }
 
 ## Validate Time is in correct format to store in database
