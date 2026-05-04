@@ -1795,7 +1795,9 @@ observeEvent(
         return(div(
           style = "padding:8px 0; color:#888; font-style:italic;",
           icon("clock"),
-          " Awaiting antigen / plate selection..."
+          " Use the ",
+          tags$em("Frequentist"),
+          " batch button to calculate and save results."
         ))
       }
       
@@ -1813,7 +1815,7 @@ observeEvent(
             style = "font-size:0.88em;",
             "Use the ",
             tags$em("Frequentist"),
-            " batch button below to calculate and save results ",
+            " batch button to calculate and save results ",
             tags$em(paste0("(curve ID: ", cid, ")"))
           )
         ))
@@ -2535,21 +2537,22 @@ observeEvent(
         
         # No curve resolved yet
         if (is.null(cid)) {
-          return(
-            plotly::plot_ly() |>
-              plotly::layout(
-                xaxis = list(visible = FALSE),
-                yaxis = list(visible = FALSE),
-                paper_bgcolor = "white",
-                plot_bgcolor  = "white",
-                annotations = list(list(
-                  text      = "Select an antigen and plate to view the standard curve.",
-                  x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-                  showarrow = FALSE,
-                  font = list(size = 14, color = "#888888")
-                ))
-              )
-          )
+          return(NULL)
+          # return(
+          #   plotly::plot_ly() |>
+          #     plotly::layout(
+          #       xaxis = list(visible = FALSE),
+          #       yaxis = list(visible = FALSE),
+          #       paper_bgcolor = "white",
+          #       plot_bgcolor  = "white",
+          #       annotations = list(list(
+          #         text      = "Select an antigen and plate to view the standard curve.",
+          #         x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+          #         showarrow = FALSE,
+          #         font = list(size = 14, color = "#888888")
+          #       ))
+          #     )
+          #)
         }
         
         # Curve resolved but no DB record yet
