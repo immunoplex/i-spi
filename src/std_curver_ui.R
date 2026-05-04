@@ -342,164 +342,13 @@ get_antigen_source_coverage <- function(conn, project_id, study, experiment, ant
 # ============================================================================
 
 # Build a plotly object from DB-stored grids (mirrors plot_from_db.R)
-build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
-                                     standards_df = NULL, samples_df = NULL) {
-  COL_STD  <- "#2b3d26"; COL_FIT  <- "#2b3d26"; COL_CI   <- "#2b3d26"
-  COL_SAMP <- "#d1992a"; COL_LOQ  <- "#875692"; COL_RDL  <- "#e25822"
-  COL_INFL <- "#2724F0"; COL_CDAN <- "#e68fac"; COL_ASYM <- "#999999"
-  
-  fam <- bayes_fam_label(curve_row$curve_family)
-  
-  fit_df <- data.frame(
-    x       = curve_grid$log10_conc,
-    y       = log10(pmax(curve_grid$mfi_median, 1e-9)),
-    y_lower = log10(pmax(curve_grid$mfi_lower_95, 1e-9)),
-    y_upper = log10(pmax(curve_grid$mfi_upper_95, 1e-9))
-  )
-  
-  y_all <- c(fit_df$y_lower, fit_df$y_upper)
-  if (!is.null(standards_df) && nrow(standards_df) > 0) {
-    y_all <- c(y_all, log10(pmax(standards_df$mfi, 1)))
-  }
-  y_lo <- min(y_all, na.rm = TRUE); y_hi <- max(y_all, na.rm = TRUE)
-  
-  p <- plotly::plot_ly()
-  
-  # Standards
-  if (!is.null(standards_df) && nrow(standards_df) > 0) {
-    p <- p |> plotly::add_markers(
-      data = standards_df, x = ~log10(concentration), y = ~log10(mfi),
-      name = "Standards", marker = list(color = COL_STD, size = 7),
-      hovertemplate = "Conc: %{customdata:.4f}<br>MFI: %{y:.3f}<extra></extra>",
-      customdata = standards_df$concentration)
-  }
-  
-  # Fitted curve + 95% CI as dashed lines (mirrors frequentist style)
-  p <- p |>
-    plotly::add_lines(data = fit_df, x = ~x, y = ~y,
-                      name = paste0(fam, " Fit"),
-                      legendgroup = "fitted_curve",
-                      line = list(color = COL_FIT, width = 2)) |>
-    plotly::add_lines(data = fit_df, x = ~x, y = ~y_lower,
-                      name = "95% CI",
-                      legendgroup = "fitted_curve",
-                      line = list(color = COL_CI, dash = "dash")) |>
-    plotly::add_lines(data = fit_df, x = ~x, y = ~y_upper,
-                      name = "",
-                      legendgroup = "fitted_curve",
-                      showlegend = FALSE,
-                      line = list(color = COL_CI, dash = "dash"))
-  
-  # Samples
-  if (!is.null(samples_df) && nrow(samples_df) > 0) {
-    vs <- samples_df[!is.na(samples_df$raw_predicted_concentration) &
-                       samples_df$raw_predicted_concentration > 0 &
-                       !is.na(samples_df$mfi) & samples_df$mfi > 0, , drop = FALSE]
-    if (nrow(vs) > 0) {
-      vs$pcov_pct <- vs$pcov * 100
-      vs$hover <- paste0(
-        "<b>ID:</b> ", vs$sampleid,
-        "<br><b>MFI:</b> ", round(vs$mfi, 1),
-        "<br><b>Conc:</b> ", signif(vs$raw_predicted_concentration, 4),
-        "<br><b>95%CI:</b> [", signif(vs$conc_lower, 3), ", ", signif(vs$conc_upper, 3), "]",
-        "<br><b>pCoV:</b> ", ifelse(!is.na(vs$pcov_pct), paste0(round(vs$pcov_pct, 1), "%"), "N/A"),
-        "<br><b>Gate:</b> ", vs$gate_class)
-      p <- p |> plotly::add_markers(
-        data = vs, x = ~log10(raw_predicted_concentration), y = ~log10(mfi),
-        name = "Samples", text = ~hover, hoverinfo = "text",
-        marker = list(color = COL_SAMP, size = 7, symbol = "diamond-open",
-                      line = list(width = 2, color = COL_SAMP)))
-      
-      # Second trace: sample pCoV on CDAN precision profile (yaxis2)
-      vs_pcov <- vs[!is.na(vs$pcov_pct), , drop = FALSE]
-      if (nrow(vs_pcov) > 0) {
-        p <- p |> plotly::add_markers(
-          data = vs_pcov, x = ~log10(raw_predicted_concentration), y = ~pcov_pct,
-          yaxis = "y2", name = "Sample pCoV", text = ~hover, hoverinfo = "text",
-          legendgroup = "cdan", 
-          showlegend = FALSE,
-          marker = list(color = "#800032", size = 6) # symbol = "diamond",
-                       # line = list(width = 1, color = "#000000")
-                        )
-        #)
-      }
-    }
-  }
-  
-  # Vertical limit lines
-  add_vline <- function(p, val, nm, lg, col, dash, show) {
-    if (!is.na(val) && is.finite(val) && val > 0)
-      p |> plotly::add_segments(x = log10(val), xend = log10(val), y = y_lo, yend = y_hi,
-                                name = nm, legendgroup = lg, line = list(color = col, dash = dash, width = 2),
-                                showlegend = show, hoverinfo = "skip")
-    else p
-  }
-  p <- p |>
-    add_vline(curve_row$lloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash",    TRUE)  |>
-    add_vline(curve_row$uloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash",    FALSE) |>
-    add_vline(curve_row$lrdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", TRUE)  |>
-    add_vline(curve_row$urdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", FALSE)
-  
-  # Inflection point
-  ix <- curve_row$inflect_x
-  if (!is.na(ix) && ix > 0) {
-    iy <- tryCatch(approx(fit_df$x, fit_df$y, xout = log10(ix))$y, error = function(e) NA)
-    if (!is.na(iy)) {
-      p <- p |> plotly::add_markers(x = log10(ix), y = iy,
-                                    name = "Inflection (max |dy/dx|)",
-                                    marker = list(color = COL_INFL, size = 10, symbol = "diamond",
-                                                  line = list(width = 1.5, color = "#000000")))
-    }
-  }
-  
-  # CDAN precision profile (secondary Y axis)
-  if (!is.null(cdan_grid) && nrow(cdan_grid) > 0) {
-    cg <- cdan_grid[!is.na(cdan_grid$smoothed_cv) & cdan_grid$smoothed_cv < 60, , drop = FALSE]
-    if (nrow(cg) > 0) {
-      p <- p |>
-        plotly::add_lines(data = cg, x = ~log10_conc, y = ~smoothed_cv,
-                          name = "Bayesian CDAN Precision Profile",
-                          legendgroup = "cdan", yaxis = "y2",
-                          line = list(color = COL_CDAN, width = 2.5),
-                          hovertemplate = "Log10 Conc: %{x:.2f}<br>CV%%: %{y:.1f}%%<extra>CDAN</extra>") |>
-        plotly::add_lines(x = range(cg$log10_conc), y = c(20, 20),
-                          name = "pCoV Threshold: 20%", yaxis = "y2",
-                          legendgroup = "cdan", 
-                          line = list(color = COL_CDAN, dash = "dash", width = 1.5), hoverinfo = "skip") |>
-        plotly::add_lines(x = range(cg$log10_conc), y = c(15, 15),
-                          name = "pCoV Threshold: 15%", yaxis = "y2",
-                          legendgroup = "cdan", 
-                          line = list(color = "#4CAF50", dash = "dash", width = 1.5), hoverinfo = "skip")
-    }
-  }
-  
-  # Layout
-  layout_args <- list(
-    title = list(text = paste0(fam, " Fit \u2014 ", curve_row$plateid), font = list(size = 14)),
-    xaxis = list(title = "Log\u2081\u2080 Concentration",
-                 gridcolor = "#E5E5E5", showline = TRUE, linecolor = "#CCCCCC"),
-    yaxis = list(title = "Log\u2081\u2080 MFI",
-                 gridcolor = "#E5E5E5", showline = TRUE, linecolor = "#CCCCCC"),
-    plot_bgcolor = "white", paper_bgcolor = "white", hovermode = "closest",
-    legend = list(x = 1.05, y = 1, xanchor = "left",
-                  bgcolor = "rgba(255,255,255,0.85)", bordercolor = "#CCCCCC", borderwidth = 1))
-  if (!is.null(cdan_grid) && nrow(cdan_grid) > 0) {
-    layout_args$yaxis2 <- list(
-      overlaying = "y", side = "right",
-      title = "Concentration Uncertainty (pCoV %)",
-      range = c(0, 55), showgrid = FALSE, zeroline = FALSE,
-      tickfont = list(color = COL_CDAN), titlefont = list(color = COL_CDAN))
-    layout_args$margin <- list(r = 140)
-  }
-  do.call(plotly::layout, c(list(p), layout_args))
-}
-# Build a plotly object from DB-stored grids (mirrors plot_from_db.R)
+# [monochromatic version — replaced by colorful version below]
 # build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
 #                                      standards_df = NULL, samples_df = NULL) {
-#   COL_STD  <- "#000000"; COL_FIT  <- "#0072B2"; COL_CI   <- "rgba(86,180,233,0.20)"
-#   COL_SAMP <- "#E69F00"; COL_LOQ  <- "#D55E00"; COL_RDL  <- "#604e97"
-#   COL_INFL <- "#009E73"; COL_CDAN <- "#8E44AD"; COL_ASYM <- "#999999"
-#   
+#   COL_STD  <- "#2b3d26"; COL_FIT  <- "#2b3d26"; COL_CI   <- "#2b3d26"
+#   COL_SAMP <- "#d1992a"; COL_LOQ  <- "#875692"; COL_RDL  <- "#e25822"
+#   COL_INFL <- "#2724F0"; COL_CDAN <- "#e68fac"; COL_ASYM <- "#999999"
+
 #   fam <- bayes_fam_label(curve_row$curve_family)
 #   
 #   fit_df <- data.frame(
@@ -526,12 +375,21 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
 #       customdata = standards_df$concentration)
 #   }
 #   
-#   # CI ribbon + fitted curve
+#   # Fitted curve + 95% CI as dashed lines (mirrors frequentist style)
 #   p <- p |>
-#     plotly::add_ribbons(data = fit_df, x = ~x, ymin = ~y_lower, ymax = ~y_upper,
-#                         name = "95% CI", fillcolor = COL_CI, line = list(color = "transparent")) |>
 #     plotly::add_lines(data = fit_df, x = ~x, y = ~y,
-#                       name = paste0(fam, " Fit"), line = list(color = COL_FIT, width = 2.5))
+#                       name = paste0(fam, " Fit"),
+#                       legendgroup = "fitted_curve",
+#                       line = list(color = COL_FIT, width = 2)) |>
+#     plotly::add_lines(data = fit_df, x = ~x, y = ~y_lower,
+#                       name = "95% CI",
+#                       legendgroup = "fitted_curve",
+#                       line = list(color = COL_CI, dash = "dash")) |>
+#     plotly::add_lines(data = fit_df, x = ~x, y = ~y_upper,
+#                       name = "",
+#                       legendgroup = "fitted_curve",
+#                       showlegend = FALSE,
+#                       line = list(color = COL_CI, dash = "dash"))
 #   
 #   # Samples
 #   if (!is.null(samples_df) && nrow(samples_df) > 0) {
@@ -554,15 +412,14 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
 #                       line = list(width = 2, color = COL_SAMP)))
 #       
 #       # Second trace: sample pCoV on CDAN precision profile (yaxis2)
-#       # pcov from DB is a fraction (0-1); multiply by 100 to match the CDAN profile scale
 #       vs_pcov <- vs[!is.na(vs$pcov_pct), , drop = FALSE]
 #       if (nrow(vs_pcov) > 0) {
 #         p <- p |> plotly::add_markers(
 #           data = vs_pcov, x = ~log10(raw_predicted_concentration), y = ~pcov_pct,
 #           yaxis = "y2", name = "Sample pCoV", text = ~hover, hoverinfo = "text",
+#           legendgroup = "cdan",
 #           showlegend = FALSE,
-#           marker = list(color = COL_CDAN, size = 6, symbol = "diamond",
-#                         line = list(width = 1, color = "#000000")))
+#           marker = list(color = "#800032", size = 6))
 #       }
 #     }
 #   }
@@ -576,9 +433,9 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
 #     else p
 #   }
 #   p <- p |>
-#     add_vline(curve_row$lloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash", TRUE) |>
-#     add_vline(curve_row$uloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash", FALSE) |>
-#     add_vline(curve_row$lrdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", TRUE) |>
+#     add_vline(curve_row$lloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash",    TRUE)  |>
+#     add_vline(curve_row$uloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash",    FALSE) |>
+#     add_vline(curve_row$lrdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", TRUE)  |>
 #     add_vline(curve_row$urdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", FALSE)
 #   
 #   # Inflection point
@@ -631,6 +488,246 @@ build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
 #   }
 #   do.call(plotly::layout, c(list(p), layout_args))
 # }
+
+
+# Build a plotly object from DB-stored grids — colorful palette, ribbon CI
+build_bayes_plot_from_db <- function(curve_row, curve_grid, cdan_grid,
+                                     standards_df = NULL, samples_df = NULL) {
+  
+  COL_STD  <- "#2b3d26"; COL_FIT  <- "#2b3d26"; COL_CI   <- "#2b3d26"
+  COL_SAMP <- "#d1992a"; COL_LOQ  <- "#875692"; COL_RDL  <- "#e25822"
+  COL_INFL <- "#2724F0"; COL_CDAN <- "#e68fac"; COL_ASYM <- "#999999"
+  
+  fam <- bayes_fam_label(curve_row$curve_family)
+  
+  fit_df <- data.frame(
+    x       = curve_grid$log10_conc,
+    y       = log10(pmax(curve_grid$mfi_median, 1e-9)),
+    y_lower = log10(pmax(curve_grid$mfi_lower_95, 1e-9)),
+    y_upper = log10(pmax(curve_grid$mfi_upper_95, 1e-9))
+  )
+  
+  y_all <- c(fit_df$y_lower, fit_df$y_upper)
+  if (!is.null(standards_df) && nrow(standards_df) > 0) {
+    y_all <- c(y_all, log10(pmax(standards_df$mfi, 1)))
+  }
+  y_lo <- min(y_all, na.rm = TRUE); y_hi <- max(y_all, na.rm = TRUE)
+  
+  p <- plotly::plot_ly()
+  
+  # Standards
+  if (!is.null(standards_df) && nrow(standards_df) > 0) {
+    p <- p |> plotly::add_markers(
+      data = standards_df, x = ~log10(concentration), y = ~log10(mfi),
+      name = "Standards", marker = list(color = COL_STD, size = 7),
+      hovertemplate = "Conc: %{customdata:.4f}<br>MFI: %{y:.3f}<extra></extra>",
+      customdata = standards_df$concentration)
+  }
+  
+  # CI ribbon + fitted curve
+  # p <- p |>
+  #   plotly::add_ribbons(data = fit_df, x = ~x, ymin = ~y_lower, ymax = ~y_upper,
+  #                       name = "95% CI", fillcolor = COL_CI, line = list(color = "transparent")) |>
+  #   plotly::add_lines(data = fit_df, x = ~x, y = ~y,
+  #                     name = paste0(fam, " Fit"), line = list(color = COL_FIT, width = 2.5))
+  p <- p |>
+    plotly::add_lines(data = fit_df, x = ~x, y = ~y_lower,
+                      name = "95% CI", legendgroup = "bayes_ci",
+                      line = list(color = COL_CI, dash = "dot", width = 1.5)) |>
+    plotly::add_lines(data = fit_df, x = ~x, y = ~y_upper,
+                      name = "95% CI", legendgroup = "bayes_ci",
+                      showlegend = FALSE,
+                      line = list(color = COL_CI, dash = "dot", width = 1.5)) |>
+    plotly::add_lines(data = fit_df, x = ~x, y = ~y,
+                      name = paste0(fam, " Fit"), line = list(color = COL_FIT, width = 2.5))
+  
+  # Samples
+  if (!is.null(samples_df) && nrow(samples_df) > 0) {
+    vs <- samples_df[!is.na(samples_df$raw_predicted_concentration) &
+                       samples_df$raw_predicted_concentration > 0 &
+                       !is.na(samples_df$mfi) & samples_df$mfi > 0, , drop = FALSE]
+    if (nrow(vs) > 0) {
+      vs$pcov_pct <- vs$pcov * 100
+      vs$hover <- paste0(
+        "<b>ID:</b> ", vs$sampleid,
+        "<br><b>MFI:</b> ", round(vs$mfi, 1),
+        "<br><b>Conc:</b> ", signif(vs$raw_predicted_concentration, 4),
+        "<br><b>95%CI:</b> [", signif(vs$conc_lower, 3), ", ", signif(vs$conc_upper, 3), "]",
+        "<br><b>pCoV:</b> ", ifelse(!is.na(vs$pcov_pct), paste0(round(vs$pcov_pct, 1), "%"), "N/A"),
+        "<br><b>Gate:</b> ", vs$gate_class)
+      p <- p |> plotly::add_markers(
+        data = vs, x = ~log10(raw_predicted_concentration), y = ~log10(mfi),
+        name = "Samples", text = ~hover, hoverinfo = "text",
+        marker = list(color = COL_SAMP, size = 7, symbol = "diamond-open",
+                      line = list(width = 2, color = COL_SAMP)))
+      
+      # Second trace: sample pCoV on CDAN precision profile (yaxis2)
+      # pcov from DB is a fraction (0-1); multiply by 100 to match the CDAN profile scale
+      vs_pcov <- vs[!is.na(vs$pcov_pct), , drop = FALSE]
+      if (nrow(vs_pcov) > 0) {
+        p <- p |> plotly::add_markers(
+          data = vs_pcov, x = ~log10(raw_predicted_concentration), y = ~pcov_pct,
+          yaxis = "y2", name = "Sample pCoV", text = ~hover, hoverinfo = "text",
+          showlegend = FALSE,
+          marker = list(color = COL_CDAN, size = 6, symbol = "diamond",
+                        line = list(width = 1, color = "#000000")))
+      }
+    }
+  }
+  
+  # Vertical limit lines
+  add_vline <- function(p, val, nm, lg, col, dash, show) {
+    if (!is.na(val) && is.finite(val) && val > 0)
+      p |> plotly::add_segments(x = log10(val), xend = log10(val), y = y_lo, yend = y_hi,
+                                name = nm, legendgroup = lg, line = list(color = col, dash = dash, width = 2),
+                                showlegend = show, hoverinfo = "skip")
+    else p
+  }
+  p <- p |>
+    add_vline(curve_row$lloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash", TRUE) |>
+    add_vline(curve_row$uloq %||% NA, "LLOQ / ULOQ", "loq", COL_LOQ, "dash", FALSE) |>
+    add_vline(curve_row$lrdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", TRUE) |>
+    add_vline(curve_row$urdl %||% NA, "LRDL / URDL", "rdl", COL_RDL, "dashdot", FALSE)
+  
+  # Inflection point
+  ix <- curve_row$inflect_x
+  if (!is.na(ix) && ix > 0) {
+    iy <- tryCatch(approx(fit_df$x, fit_df$y, xout = log10(ix))$y, error = function(e) NA)
+    if (!is.na(iy)) {
+      p <- p |> plotly::add_markers(x = log10(ix), y = iy,
+                                    name = "Inflection (max |dy/dx|)",
+                                    marker = list(color = COL_INFL, size = 10, symbol = "diamond",
+                                                  line = list(width = 1.5, color = "#000000")))
+    }
+  }
+  
+  # CDAN precision profile (secondary Y axis)
+  if (!is.null(cdan_grid) && nrow(cdan_grid) > 0) {
+    cg <- cdan_grid[!is.na(cdan_grid$smoothed_cv) & cdan_grid$smoothed_cv < 60, , drop = FALSE]
+    if (nrow(cg) > 0) {
+      p <- p |>
+        plotly::add_lines(data = cg, x = ~log10_conc, y = ~smoothed_cv,
+                          name = "Bayesian CDAN Precision Profile", yaxis = "y2",
+                          line = list(color = COL_CDAN, width = 2.5),
+                          hovertemplate = "Log10 Conc: %{x:.2f}<br>CV%%: %{y:.1f}%%<extra>CDAN</extra>") |>
+        plotly::add_lines(x = range(cg$log10_conc), y = c(20, 20),
+                          name = "pCoV Threshold: 20%", yaxis = "y2",
+                          line = list(color = "#e68fac", dash = "dash", width = 1.5), hoverinfo = "skip") |>
+        plotly::add_lines(x = range(cg$log10_conc), y = c(15, 15),
+                          name = "pCoV Threshold: 15%", yaxis = "y2",
+                          line = list(color = "#4CAF50", dash = "dash", width = 1.5), hoverinfo = "skip")
+    }
+  }
+  
+  # Layout
+  layout_args <- list(
+    title = list(text = paste0(fam, " Fit \u2014 ", curve_row$plateid), font = list(size = 14)),
+    xaxis = list(title = "Log\u2081\u2080 Concentration",
+                 gridcolor = "#E5E5E5", showline = TRUE, linecolor = "#CCCCCC"),
+    yaxis = list(title = "Log\u2081\u2080 MFI",
+                 gridcolor = "#E5E5E5", showline = TRUE, linecolor = "#CCCCCC"),
+    plot_bgcolor = "white", paper_bgcolor = "white", hovermode = "closest",
+    legend = list(x = 1.05, y = 1, xanchor = "left",
+                  bgcolor = "rgba(255,255,255,0.85)", bordercolor = "#CCCCCC", borderwidth = 1))
+  if (!is.null(cdan_grid) && nrow(cdan_grid) > 0) {
+    layout_args$yaxis2 <- list(
+      overlaying = "y", side = "right",
+      title = "Concentration Uncertainty (pCoV %)",
+      range = c(0, 55), showgrid = FALSE, zeroline = FALSE,
+      tickfont = list(color = COL_CDAN), titlefont = list(color = COL_CDAN))
+    layout_args$margin <- list(r = 140)
+  }
+  do.call(plotly::layout, c(list(p), layout_args))
+}
+
+
+# ============================================================================
+# Helper: compute a posterior prediction grid from a live StanAssay fit.
+# Returns a data.frame(log10_conc, mfi_median, mfi_lower_95, mfi_upper_95)
+# suitable for build_bayes_plot_from_db, using the 5PL / 4PL / Gompertz
+# parameterisation stored in the Stan draws.
+# ============================================================================
+compute_live_curve_grid <- function(assay, plt, best_fam, stds_plt) {
+  tryCatch({
+    fit_obj   <- assay$ensemble$fits[[best_fam]]
+    if (is.null(fit_obj)) return(NULL)
+    plate_map <- fit_obj$plate_map
+    plate_idx <- which(as.character(plate_map$plateid) == plt)
+    if (length(plate_idx) == 0) return(NULL)
+    
+    draws <- rstan::extract(fit_obj$fit)
+    
+    a_d <- draws$a[, plate_idx]
+    b_d <- draws$b[, plate_idx]
+    c_d <- exp(draws$log_c[, plate_idx])   # log_c stored in log-space
+    d_d <- draws$d[, plate_idx]
+    g_d <- if ("g" %in% names(draws)) {
+      draws$g[, plate_idx]
+    } else {
+      rep(1, length(a_d))
+    }
+    
+    # Grid spanning the standards range ± 0.5 log10 units
+    conc_range <- range(log10(pmax(stds_plt$concentration, 1e-12)), na.rm = TRUE)
+    x_grid     <- seq(conc_range[1] - 0.3, conc_range[2] + 0.3, length.out = 80)
+    conc_grid  <- 10^x_grid
+    n_draws    <- length(a_d)
+    
+    mfi_mat <- matrix(NA_real_, nrow = n_draws, ncol = length(conc_grid))
+    for (i in seq_len(n_draws)) {
+      if (best_fam == "gompertz") {
+        mfi_mat[i, ] <- a_d[i] + (d_d[i] - a_d[i]) *
+          exp(-exp(-b_d[i] * (log(conc_grid) - log(c_d[i]))))
+      } else {
+        # 5PL / 4PL: mfi = a + (d - a) / (1 + (c / conc)^b)^g
+        mfi_mat[i, ] <- a_d[i] + (d_d[i] - a_d[i]) /
+          (1 + (c_d[i] / conc_grid)^b_d[i])^g_d[i]
+      }
+    }
+    
+    data.frame(
+      log10_conc   = x_grid,
+      mfi_median   = apply(mfi_mat, 2, median,           na.rm = TRUE),
+      mfi_lower_95 = apply(mfi_mat, 2, quantile, 0.025,  na.rm = TRUE),
+      mfi_upper_95 = apply(mfi_mat, 2, quantile, 0.975,  na.rm = TRUE)
+    )
+  }, error = function(e) {
+    message(sprintf("[compute_live_curve_grid] %s/%s: %s", plt, best_fam, e$message))
+    NULL
+  })
+}
+
+
+# ============================================================================
+# Helper: adapt live-fit predict_samples output to the column names expected
+# by build_bayes_plot_from_db (same schema as madi_results.bayes_samples).
+# ============================================================================
+adapt_live_samples_df <- function(results_df, plt) {
+  if (is.null(results_df) || nrow(results_df) == 0) return(NULL)
+  rp <- results_df[results_df$plateid == plt, , drop = FALSE]
+  if (nrow(rp) == 0) return(NULL)
+  
+  # Resolve column names flexibly
+  id_col    <- Filter(function(n) n %in% names(rp), c("sampleid", "sample_id", "id"))[1]
+  conc_col  <- Filter(function(n) n %in% names(rp),
+                      c("predicted_conc_mean", "conc_absolute_mean", "raw_predicted_concentration"))[1]
+  lower_col <- Filter(function(n) n %in% names(rp),
+                      c("predicted_conc_lower", "conc_absolute_lower", "conc_lower"))[1]
+  upper_col <- Filter(function(n) n %in% names(rp),
+                      c("predicted_conc_upper", "conc_absolute_upper", "conc_upper"))[1]
+  if (is.na(conc_col)) return(NULL)
+  
+  data.frame(
+    sampleid                    = if (!is.na(id_col))    rp[[id_col]]    else NA_character_,
+    mfi                         = rp$mfi,
+    raw_predicted_concentration = rp[[conc_col]],
+    conc_lower                  = if (!is.na(lower_col)) rp[[lower_col]] else NA_real_,
+    conc_upper                  = if (!is.na(upper_col)) rp[[upper_col]] else NA_real_,
+    pcov                        = if ("pcov" %in% names(rp)) rp$pcov else NA_real_,
+    gate_class                  = if ("gate_class" %in% names(rp)) rp$gate_class else NA_character_,
+    stringsAsFactors = FALSE
+  )
+}
 
 
 
@@ -1038,7 +1135,7 @@ observeEvent(
     
     # Use loaded_data_frequentist as the single source of truth
     loaded_data <- loaded_data_frequentist
-
+    
     if (is.null(loaded_data)) {
       cat("⚠ [std_curver_ui] pull_data_frequentist returned NULL - aborting\n")
       return()
@@ -1107,6 +1204,8 @@ observeEvent(
         conditionalPanel(
           condition = "output.can_fit_standard_curve == true",
           
+          uiOutput("concentrationMethodUI"),
+          hr(),
           # ── Row 1: Curve Method + Antigen + Source (always visible) ──
           fluidRow(
             column(
@@ -1163,7 +1262,7 @@ observeEvent(
             column(3, uiOutput("sc_antigen_selector")),
             column(3, uiOutput("sc_source_selector"))
           ),
-
+          
           fluidRow(
             column(3, actionButton("show_comparisions",
                                    "Show Model Comparisons")),
@@ -1174,6 +1273,12 @@ observeEvent(
             column(3, downloadButton("download_samples_below_llod",
                                      "Download Samples below the Lower Limit of Detection"))
           ),
+          
+          # hr(),
+          # uiOutput("calculation_scope_ui"),
+          # br(),
+          # uiOutput("concentration_buttons_ui"),
+          # br(),
           
           conditionalPanel(
             condition = "input.sc_curve_method == 'Frequentist'",
@@ -1199,15 +1304,20 @@ observeEvent(
                 icon("info-circle"),
                 " Frequentist fit is per-plate. Select a plate and sample dilution below, then adjust axis scaling for display."
               ),
-              # Wavelength selector (rendered only when wavelengths are present)
+              
+              # Selectors are ALWAYS rendered here so that input$sc_plate_select
+              # is always set.  concentration_calc_df() requires it via req(),
+              # so hiding the selector would break concentrationMethodUI even
+              # before any batch has been run.
               uiOutput("sc_wavelength_col"),
               fluidRow(
-                # Plate — Sample Dilution selector
                 column(3, uiOutput("sc_plate_selector")),
-                # Log-scale toggles (mirror the Bayesian log axes)
                 column(3, uiOutput("is_display_log_response")),
                 column(3, uiOutput("is_display_log_independent_variable"))
-              )
+              ),
+              
+              # Status message only — "awaiting" | "no fit on record" | nothing
+              uiOutput("freq_fit_status_ui")
             )
           ),
           # fluidRow(
@@ -1243,7 +1353,7 @@ observeEvent(
           #   )
           # ),
           
-      
+          
           
           # ----------------------------------------------------------------
           # Frequentist panel — visible when Curve Method == "Frequentist"
@@ -1559,8 +1669,8 @@ observeEvent(
             condition = "input.sc_curve_method == 'Bayesian'",
             div(class = "table-container", style = "overflow-x:auto;",
                 tableOutput("bayes_summary_statistics"))
-          ),
-          uiOutput("concentrationMethodUI")
+          )
+          #  uiOutput("concentrationMethodUI")
         )
       )
     })
@@ -1571,6 +1681,7 @@ observeEvent(
     # ------------------------------------------------------------------
     sc_prereqs <- reactive({
       experiment_curve_ids <- loaded_data_frequentist$curve_id_lookup$curve_id
+      std_cid <- loaded_data$standards$curve_id 
       standards_n         <- nrow(loaded_data$standards[
         loaded_data$standards$curve_id %in% experiment_curve_ids, ])
       blanks_n            <- nrow(loaded_data$blanks[
@@ -1676,6 +1787,41 @@ observeEvent(
     outputOptions(output, "can_fit_standard_curve", suspendWhenHidden = FALSE)
     
     
+    output$freq_fit_status_ui <- renderUI({
+      cid <- tryCatch(selected_curve_id(), error = function(e) NULL)
+      
+      # No curve resolved yet
+      if (is.null(cid)) {
+        return(div(
+          style = "padding:8px 0; color:#888; font-style:italic;",
+          icon("clock"),
+          " Awaiting antigen / plate selection..."
+        ))
+      }
+      
+      # Curve resolved but no DB record yet
+      if (!isTRUE(freq_curve_in_db())) {
+        return(div(
+          # style = paste0(
+          #   "padding:10px 14px; margin-top:8px; border-radius:4px; ",
+          #   "border:1px solid #ffe082; color:#7b5800;"
+          # ),
+          icon("exclamation-circle"),
+          tags$strong(" No frequentist fit found for this curve."),
+          tags$br(),
+          tags$span(
+            style = "font-size:0.88em;",
+            "Use the ",
+            tags$em("Frequentist"),
+            " batch button below to calculate and save results ",
+            tags$em(paste0("(curve ID: ", cid, ")"))
+          )
+        ))
+      }
+      
+      # DB record present — selectors already rendered above, nothing extra needed
+      NULL
+    })
     # ------------------------------------------------------------------
     # Selectors
     # ------------------------------------------------------------------
@@ -1965,10 +2111,10 @@ observeEvent(
     #               label   = "Plate - Sample Dilution(s)",
     #               choices = plates)
     # })
-  
+    
     
     ## older
-      # output$sc_plate_selector <- renderUI({
+    # output$sc_plate_selector <- renderUI({
     #   req(loaded_data$curve_id_lookup)
     #   lk <- loaded_data$curve_id_lookup
     #   lk_view <<- lk
@@ -2063,59 +2209,89 @@ observeEvent(
     
     # Resolves curve_id from the lookup table given the current control values.
     # This is the single place where (antigen × plate × source) → curve_id.
-      selected_curve_id <- reactive({
-        req(
-          loaded_data$curve_id_lookup,
-          input$sc_antigen_select,
-          input$sc_plate_select,
-          input$sc_source_select
-        )
+    selected_curve_id <- reactive({
+      req(
+        loaded_data$curve_id_lookup,
+        input$sc_antigen_select,
+        input$sc_plate_select,
+        input$sc_source_select
+      )
+      
+      lk <- loaded_data$curve_id_lookup
+      
+      # always build this once (you do this elsewhere too — consider centralizing)
+      lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
+      
+      # base mask
+      mask <- as.character(lk$antigen)   == input$sc_antigen_select &
+        as.character(lk$plate_nom) == input$sc_plate_select &
+        as.character(lk$source_nom %||% lk$source) == input$sc_source_select
+      
+      # ---- NEW: refine by wavelength if present ----
+      if (!is.null(input$sc_wavelength_select) &&
+          nzchar(input$sc_wavelength_select)) {
         
-        lk <- loaded_data$curve_id_lookup
-        
-        # always build this once (you do this elsewhere too — consider centralizing)
-        lk$plate_nom <- paste(lk$plate, lk$nominal_sample_dilution, sep = "-")
-        
-        # base mask
+        mask <- mask &
+          as.character(lk$wavelength) == input$sc_wavelength_select
+      }
+      
+      # fallback (no source_nom)
+      if (!any(mask)) {
         mask <- as.character(lk$antigen)   == input$sc_antigen_select &
-          as.character(lk$plate_nom) == input$sc_plate_select &
-          as.character(lk$source_nom %||% lk$source) == input$sc_source_select
+          as.character(lk$plate_nom) == input$sc_plate_select
         
-        # ---- NEW: refine by wavelength if present ----
         if (!is.null(input$sc_wavelength_select) &&
             nzchar(input$sc_wavelength_select)) {
           
           mask <- mask &
             as.character(lk$wavelength) == input$sc_wavelength_select
         }
-        
-        # fallback (no source_nom)
-        if (!any(mask)) {
-          mask <- as.character(lk$antigen)   == input$sc_antigen_select &
-            as.character(lk$plate_nom) == input$sc_plate_select
-          
-          if (!is.null(input$sc_wavelength_select) &&
-              nzchar(input$sc_wavelength_select)) {
-            
-            mask <- mask &
-              as.character(lk$wavelength) == input$sc_wavelength_select
-          }
-        }
-        
-        req(any(mask))
-        
-        lk$curve_id[mask][1]
-        
-        curve_id <-  lk$curve_id[mask][1]
-        curvid <<- curve_id
-        return(curve_id)
-      })
+      }
+      
+      req(any(mask))
+      
+      lk$curve_id[mask][1]
+      
+      curve_id <-  lk$curve_id[mask][1]
+      curvid <<- curve_id
+      return(curve_id)
+    })
+    
+    # ------------------------------------------------------------------
+    # DB presence check — TRUE when freq_curves has a row for the
+    # currently selected curve_id.
+    # Placed here (after selected_curve_id) so it is in the nav observer
+    # scope and accessible from output$freq_fit_status_ui, sc_object, and
+    # output$standard_curve.
+    # Invalidates automatically when concentrationUIRefresher() is bumped
+    # inside .cleanup_interp() after each batch run.
+    # ------------------------------------------------------------------
+    freq_curve_in_db <- reactive({
+      concentrationUIRefresher()
+      cid <- tryCatch(selected_curve_id(), error = function(e) NULL)
+      if (is.null(cid)) return(FALSE)
+      n <- tryCatch(
+        DBI::dbGetQuery(
+          conn,
+          "SELECT COUNT(*) AS n FROM madi_results.freq_curves WHERE curve_id = $1",
+          params = list(as.integer(cid))
+        )$n[[1]],
+        error = function(e) 0L
+      )
+      isTRUE(n > 0L)
+    })
     
     observeEvent(selected_curve_id(), ignoreNULL = TRUE, ignoreInit = TRUE, {
       if (!is.null(sc_loading_id())) {
         removeNotification(sc_loading_id())
         sc_loading_id(NULL)
       }
+      if (!isTRUE(freq_curve_in_db())) return()
+      if (!isTRUE(freq_curve_in_db())) {
+        removeNotification(sc_loading_id())
+        sc_loading_id(NULL)
+      }
+      
       sc_best_fit_ready(FALSE)
       
       id <- showNotification(
@@ -2179,6 +2355,12 @@ observeEvent(
           loaded_data$antigen_constraints,
           loaded_data$standards,
           nrow(loaded_data$standards) > 0)
+      
+      # Only run the NLS pipeline when a DB record exists.
+      # This keeps the summary table, downloads, and plot all in sync:
+      # all show results once freq_curves has a row, and are all silent
+      # (req stops them quietly) when no batch has been run yet.
+      req(isTRUE(freq_curve_in_db()))
       
       # curve_id resolved from the lookup table by the three controls
       cid         <- selected_curve_id()
@@ -2336,12 +2518,63 @@ observeEvent(
         req(input$bayes_view_plate)
         req(length(bayes_state$plots) > 0)
         
+        bs <<- bayes_state
+        
         p <- bayes_state$plots[[input$bayes_view_plate]]
         if (is.null(p)) return(plotly::plotly_empty())
         p
         
       } else {
         # ── Frequentist branch ───────────────────────────────────────────
+        #
+        # sc_object() gates on freq_curve_in_db() internally via req().
+        # When no DB record exists it returns nothing silently, and we show
+        # a friendly empty plot.  When a record exists the full pipeline runs.
+        
+        cid <- tryCatch(selected_curve_id(), error = function(e) NULL)
+        
+        # No curve resolved yet
+        if (is.null(cid)) {
+          return(
+            plotly::plot_ly() |>
+              plotly::layout(
+                xaxis = list(visible = FALSE),
+                yaxis = list(visible = FALSE),
+                paper_bgcolor = "white",
+                plot_bgcolor  = "white",
+                annotations = list(list(
+                  text      = "Select an antigen and plate to view the standard curve.",
+                  x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+                  showarrow = FALSE,
+                  font = list(size = 14, color = "#888888")
+                ))
+              )
+          )
+        }
+        
+        # Curve resolved but no DB record yet
+        if (!isTRUE(freq_curve_in_db())) {
+          return(NULL)
+          #   plotly::plot_ly() |>
+          #     plotly::layout(
+          #       xaxis = list(visible = FALSE),
+          #       yaxis = list(visible = FALSE),
+          #       # paper_bgcolor = "#fff8e1",
+          #       # plot_bgcolor  = "#fff8e1",
+          #       annotations = list(list(
+          #         text = paste0(
+          #           "<b>No frequentist fit on record for curve ID ", cid, "</b><br>",
+          #           " Save the frequentist fit using the table and controls above."
+          #         ),
+          #         x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+          #         showarrow = FALSE,
+          #         font = list(size = 14, color = "black")
+          #       ))
+          #     )
+          # )
+        }
+        
+        # DB record present — run full pipeline and render
         sc <- sc_object()
         req(sc)
         sc_v <<- sc
@@ -2351,6 +2584,7 @@ observeEvent(
           is_display_log_response    = input$display_log_response,
           is_display_log_independent = input$display_log_independent,
           pcov_threshold             = sc$antigen_constraints$pcov_threshold,
+          curve_id_lookup            = sc$antigen_plate$curve_id_lookup,
           independent_variable       = sc$loaded_data$indep_var,
           response_variable          = sc$loaded_data$response_var,
           mcmc_samples               = NULL,
@@ -2817,7 +3051,37 @@ observeEvent(
       showNotification("Running batch test (no save)...",
                        id = "batch_test_notify", duration = NULL, type = "message")
       
+      scope <- selected_scope() 
+      antigen    <- input$sc_antigen_select
+      plate_sel  <- input$sc_plate_select
+      exp_sel    <- input$readxMap_experiment_accession
+      study_sel  <- input$readxMap_study_accession
+      
       lk <- loaded_data$curve_id_lookup
+      
+      # lk_v <<- lk
+      # scope_v <<- scope
+      # 
+      lk <- switch(scope,
+                   "plate" = {
+                     plate_raw <- sub("-.*$", "", plate_sel)
+                     lk[as.character(lk$antigen) == antigen &
+                          as.character(lk$plate)   == plate_raw, , drop = FALSE]
+                   },
+                   "experiment" = {
+                     lk[as.character(lk$antigen)              == antigen &
+                          as.character(lk$experiment_accession) == exp_sel, , drop = FALSE]
+                   },
+                   "study" = {
+                     lk[as.character(lk$antigen) == antigen, , drop = FALSE]
+                   }
+      )
+      
+      if (nrow(lk) == 0L) {
+        showNotification(sprintf("No curves for antigen='%s' at scope='%s'.", antigen, scope),
+                         type = "warning", duration = 8)
+        return()
+      }
       
       antigen_constraints_list <- split(
         loaded_data$antigen_constraints,
@@ -2842,8 +3106,8 @@ observeEvent(
         best_parameters  = vector("list", nrow(lk)),
         sample_se        = vector("list", nrow(lk)),
         best_pred        = vector("list", nrow(lk)),
-        best_standard    = vector("list", nrow(lk)),
-        best_curve_id    = vector("list", nrow(lk))
+        best_standard    = vector("list", nrow(lk))
+        # best_curve_id    = vector("list", nrow(lk))
       )
       
       for (i in seq_len(nrow(lk))) {
@@ -2859,12 +3123,20 @@ observeEvent(
           
           res <- sc$get_results()
           
+          # remove QC metrics -- will be recalculated via unified functions
+          # for Baysian and frequentist Packages
+          
+          res$best_fit_summary <- res$best_fit_summary[, !names(res$best_fit_summary) %in% c("inflect_x", 
+                                                                                             "inflect_y", "llod", "ulod",
+                                                                                             "mindc","maxdc","minrdl", "maxrdl", "lloq",
+                                                                                             "uloq" , "lloq_y", "uloq_y")]
+          
           all_results$best_fit_summary[[i]] <- res$best_fit_summary
           all_results$best_parameters[[i]]  <- res$best_parameters
           all_results$sample_se[[i]]        <- res$sample_se
           all_results$best_pred[[i]]        <- res$best_pred
           all_results$best_standard[[i]]    <- res$best_standard
-          all_results$best_curve_id[[i]]    <- res$best_curve_id
+          #  all_results$best_curve_id[[i]]    <- res$best_curve_id
           
           message(sprintf("[test_batch] %d/%d  curve_id=%s  antigen=%s  OK",
                           i, nrow(lk), cid, antigen))
@@ -2874,12 +3146,25 @@ observeEvent(
         })
       }
       
+      # sc_last <<- sc
       # Combine each table across all curves
       combined <- lapply(all_results, function(tbl_list) {
         rows <- Filter(Negate(is.null), tbl_list)
         if (length(rows) == 0L) return(data.frame())
         do.call(rbind, rows)
       })
+      
+      rename_response <- function(df) {
+        if ("absorbance" %in% names(df)) {
+          names(df)[names(df) == "absorbance"] <- "assay_response"
+        } else if ("mfi" %in% names(df)) {
+          names(df)[names(df) == "mfi"] <- "assay_response"
+        }
+        df
+      }
+      
+      combined[["sample_se"]]     <- rename_response(combined[["sample_se"]])
+      combined[["best_standard"]] <- rename_response(combined[["best_standard"]])
       
       combined_results <<- combined
       n_ok     <- sum(vapply(all_results$best_fit_summary, Negate(is.null), logical(1)))
@@ -2915,86 +3200,7 @@ observeEvent(
         type = "message", duration = 15
       )
     })
-    # observeEvent(input$btn_test_batch_interp, ignoreInit = TRUE, {
-    #   
-    #   req(loaded_data, study_params)
-    #   req(nrow(loaded_data$standards) > 0L)
-    #   
-    #   showNotification(
-    #     "Running batch test (no save)...",
-    #     id       = "batch_test_notify",
-    #     duration = NULL,
-    #     type     = "message"
-    #   )
-    #   
-    #   # Wrap the single already-loaded experiment into the list shape
-    #   # run_batch_interpolated() expects.
-    #   ld_list <- stats::setNames(
-    #     list(loaded_data),
-    #     selected_experiment
-    #   )
-    #   
-    #   # Build dil_series_se_table from the standards that are in memory.
-    #   dil_se <- tryCatch(
-    #     compute_dil_series_se(
-    #       standards_data = loaded_data$standards,
-    #       response_col   = loaded_data$response_var,
-    #       dilution_col   = "dilution",
-    #       plate_col      = "plate_nom",
-    #       grouping_cols  = c("project_id", "study_accession", "experiment_accession",
-    #                          "source_nom", "antigen", "feature"),
-    #       min_reps = 2,
-    #       verbose  = FALSE
-    #     ),
-    #     error = function(e) {
-    #       message("[test_batch] compute_dil_series_se failed: ", e$message)
-    #       data.frame()
-    #     }
-    #   )
-    #   
-    #   result <- tryCatch(
-    #     run_batch_interpolated(
-    #       loaded_data_list           = ld_list,
-    #       study_params               = study_params,
-    #       antigen_constraints_master = loaded_data$antigen_constraints,
-    #       dil_series_se_table        = dil_se,
-    #       model_names                = model_names,
-    #       verbose                    = FALSE
-    #     ),
-    #     error = function(e) {
-    #       removeNotification("batch_test_notify")
-    #       showNotification(
-    #         paste0("Batch test FAILED: ", e$message),
-    #         type = "error", duration = 15
-    #       )
-    #       message("[test_batch] ERROR: ", e$message)
-    #       NULL
-    #     }
-    #   )
-    #   
-    #   if (!is.null(result)) {
-    #     # Print full tables to console for inspection
-    #     message("\n========== BATCH TEST RESULTS ==========")
-    #     for (nm in names(result)) {
-    #       df <- result[[nm]]
-    #       message(sprintf("  %-22s  %d rows x %d cols", nm, nrow(df), ncol(df)))
-    #     }
-    #     message("========================================\n")
-    #     
-    #     removeNotification("batch_test_notify")
-    #     showNotification(
-    #       tagList(
-    #         tags$strong("Batch test complete."),
-    #         tags$br(),
-    #         sprintf("glance: %d  |  tidy: %d  |  samples: %d",
-    #                 nrow(result$best_glance_all),
-    #                 nrow(result$best_tidy_all),
-    #                 nrow(result$best_sample_se_all))
-    #       ),
-    #       type = "message", duration = 10
-    #     )
-    #   }
-    # })
+    
   } # end if Standard Curve
 )   # end navigation observer
 
@@ -3006,49 +3212,50 @@ observeEvent(
 # invalidates mid-calculation.
 # ============================================================================
 output$calculation_scope_ui <- renderUI({
+  # Single shared scope control — drives both Bayesian and Frequentist buttons.
+  # "antigen" maps to "plate" on the frequentist side (see observer below).
   tagList(
-    tags$strong("Frequentist scope:", style = "margin-right:8px;"),
+    tags$strong("Current Scope:", style = "margin-right:8px;"),
     radioButtons(
-      inputId  = "save_scope",
-      label    = NULL,
-      choices  = c(
-        "Current Plate"      = "plate",
-        "Current Experiment" = "experiment",
-        "All Experiments"    = "study"
-      ),
-      selected = selected_scope(),
-      inline   = TRUE
-    ),
-    tags$strong("Bayesian scope:", style = "margin-right:8px; margin-top:6px;"),
-    radioButtons(
-      inputId  = "bayes_scope",
+      inputId  = "shared_scope",
       label    = NULL,
       choices  = c(
         "Current Antigen"    = "antigen",
         "Current Experiment" = "experiment",
         "All Experiments"    = "study"
       ),
-      selected = "antigen",
+      selected = {
+        # Restore from persistent reactiveVal; map freq "plate" back to "antigen"
+        s <- selected_scope()
+        if (identical(s, "plate")) "antigen" else s
+      },
       inline   = TRUE
     )
   )
 })
 
-# Mirror every user change into the persistent reactiveVal
-observeEvent(input$save_scope, ignoreInit = TRUE, {
-  selected_scope(input$save_scope)
+# Mirror every user change into the persistent reactiveVal.
+# "antigen" has no direct frequentist equivalent — map it to "plate".
+observeEvent(input$shared_scope, ignoreInit = TRUE, {
+  freq_equiv <- switch(input$shared_scope,
+                       "antigen"    = "plate",
+                       "experiment" = "experiment",
+                       "study"      = "study",
+                       "plate")
+  selected_scope(freq_equiv)
 })
 
 
 # ============================================================================
 # Concentration buttons UI
-# Uses selected_scope() (not input$save_scope) so the buttons remain stable
+# Uses selected_scope() (not input$shared_scope) so the buttons remain stable
 # while a long-running calculation causes concentration_calc_df() to re-run.
 # ============================================================================
 output$concentration_buttons_ui <- renderUI({
   df          <- concentration_calc_df()
-  freq_scope  <- selected_scope()
-  bayes_scope <- input$bayes_scope %||% "antigen"
+  shared      <- input$shared_scope %||% "antigen"
+  freq_scope  <- switch(shared, "antigen" = "plate", shared)  # antigen → plate for frequentist
+  bayes_scope <- shared
   
   interp_status <- get_status(df, freq_scope, "interpolated")
   
@@ -3113,7 +3320,7 @@ observeEvent(input$run_bayes_batch, ignoreInit = TRUE, {
     input$readxMap_experiment_accession != "Click here"
   )
   
-  s <- input$bayes_scope %||% "antigen"
+  s <- input$shared_scope %||% "antigen"
   
   study_val  <- input$readxMap_study_accession
   exp_val    <- input$readxMap_experiment_accession
@@ -3290,6 +3497,322 @@ lapply(c("study", "experiment", "plate"), function(s) {
     )
   })
 })
+# 
+# .run_interpolated <- function(scope, study, experiment, plate, proj,
+#                               current_user, scope_label, session) {
+#   is_batch_processing(TRUE)
+#   
+#   # ── Progress setup ──
+#   prog_file <- tempfile(pattern = "interp_progress_", fileext = ".txt")
+#   writeLines(paste0("Starting Interpolated...\nScope: ", scope_label), prog_file)
+#   interp_progress_file(prog_file)
+#   interp_progress_msg(paste0("Starting Interpolated...\nScope: ", scope_label))
+#   interp_pending_scopes(c(
+#     interp_pending_scopes(),
+#     list(c(scope = scope, method = "interpolated"))
+#   ))
+#   concentrationUIRefresher(concentrationUIRefresher() + 1)
+#   
+#   showNotification(
+#     id = "batch_sc_fit_notify",
+#     HTML(
+#       paste0(
+#         "<div class='big-notification'>",
+#         "Starting standard curves:<br>",
+#         "interpolated concentrations<br>",
+#         "for ", scope_label, "<span class='dots'></span>",
+#         "</div>"
+#       )
+#     ),
+#     duration = NULL
+#   )
+#   
+#   # ── ALL DATA LOADING ON MAIN THREAD ──
+#   headers <- fetch_db_header_experiments(
+#     study_accession = study, conn = conn
+#   )
+#   exp_list <- switch(scope,
+#                      "study"      = unique(headers$experiment_accession),
+#                      "experiment" = ,
+#                      "plate"      = experiment
+#   )
+#   
+#   loaded_data_list <- lapply(
+#     stats::setNames(exp_list, exp_list),
+#     function(exp) pull_data(
+#       study_accession      = study,
+#       experiment_accession = exp,
+#       project_id           = proj,
+#       conn                 = conn
+#     )
+#   )
+#   
+#   # ── Compute dil_series SE on FULL unfiltered standards (all plates) ──
+#   # Must happen BEFORE plate-scope filtering so we get proper cross-plate
+#   # replication (n >= min_reps) and valid SE estimates for FDA LOQ computation.
+#   all_standards_full <- do.call(rbind, lapply(loaded_data_list, `[[`, "standards"))
+#   response_var <- loaded_data_list[[exp_list[1]]]$response_var
+#   
+#   dil_series_se_table_batch <- compute_dil_series_se(
+#     standards_data = all_standards_full,
+#     response_col   = response_var,
+#     dilution_col   = "dilution",
+#     plate_col      = "plate_nom",
+#     grouping_cols  = c("project_id",
+#                        "study_accession",
+#                        "experiment_accession",
+#                        "source_nom",
+#                        "antigen",
+#                        "feature"),
+#     min_reps = 2,
+#     verbose  = FALSE
+#   )
+#   
+#   # ── NOW apply plate scope filter to loaded_data_list ──
+#   if (scope == "plate") {
+#     loaded_data_list <- lapply(loaded_data_list, function(x) {
+#       for (tbl in c("plates", "standards", "samples", "blanks")) {
+#         if (!is.null(x[[tbl]]) && nrow(x[[tbl]]) > 0)
+#           x[[tbl]] <- x[[tbl]][x[[tbl]]$plate_nom == plate, , drop = FALSE]
+#       }
+#       x
+#     })
+#   }
+#   
+#   all_standards <- do.call(rbind, lapply(loaded_data_list, `[[`, "standards"))
+#   
+#   se_antigen_table_batch <- compute_antigen_se_table(
+#     standards_data = all_standards,
+#     response_col   = response_var,
+#     dilution_col   = "dilution",
+#     plate_col      = "plate",
+#     grouping_cols  = c("project_id", "study_accession", "experiment_accession",
+#                        "source_nom", "antigen", "feature"),
+#     verbose        = FALSE
+#   )
+#   
+#   study_params_batch <- fetch_study_parameters(
+#     study_accession = study,
+#     param_user      = current_user,
+#     param_group     = "standard_curve_options",
+#     project_id      = proj,
+#     conn            = conn
+#   )
+#   
+#   antigen_list_res       <- build_antigen_list(exp_list, loaded_data_list, study)
+#   antigen_plate_list_res <- build_antigen_plate_list(antigen_list_res, loaded_data_list)
+#   prepped_data_list_res  <- prep_plate_data_batch(
+#     antigen_plate_list_res, study_params_batch, verbose = FALSE
+#   )
+#   antigen_plate_list_res$antigen_plate_list_ids <-
+#     prepped_data_list_res$antigen_plate_name_list
+#   n_total <- length(prepped_data_list_res$antigen_plate_name_list)
+#   
+#   db_conn_args <- get_db_connection_args()
+#   
+#   # ── FUTURE: Only fitting + DB writes ──
+#   future_promise <- future::future({
+#     bg_conn <- do.call(get_db_connection_from_args, db_conn_args)
+#     on.exit(DBI::dbDisconnect(bg_conn), add = TRUE)
+#     
+#     batch_fit_res <- fit_experiment_plate_batch(
+#       prepped_data_list_res   = prepped_data_list_res,
+#       antigen_plate_list_res  = antigen_plate_list_res,
+#       model_names             = model_names,
+#       study_params            = study_params_batch,
+#       se_antigen_table        = se_antigen_table_batch,
+#       dil_series_se_table     = dil_series_se_table_batch,
+#       prog_file               = prog_file,
+#       dil_series_response_col = response_var,
+#       verbose                 = FALSE
+#     )
+#     
+#     batch_outputs <- create_batch_fit_outputs(
+#       batch_fit_res, antigen_plate_list_res
+#     )
+#     batch_outputs <- process_batch_outputs(
+#       batch_outputs, response_var, proj
+#     )
+#     
+#     # ── Debug: check FDA LOQ columns ──
+#     tryCatch(writeLines(
+#       paste0("Interpolated: saving best_glance_all...\nScope: ", scope_label),
+#       prog_file), error = function(e) NULL)
+#     
+#     message("[debug] best_glance_all columns: ",
+#             paste(names(batch_outputs$best_glance_all), collapse = ", "))
+#     
+#     lloq_check_cols <- grep("lloq_fda2018|uloq_fda2018",
+#                             names(batch_outputs$best_glance_all), value = TRUE)
+#     message("[debug] lloq cols present in best_glance_all: ",
+#             if (length(lloq_check_cols) == 0) "NONE"
+#             else paste(lloq_check_cols, collapse = ", "))
+#     
+#     if (length(lloq_check_cols) > 0) {
+#       message("[debug] lloq values (first 3 rows):")
+#       print(batch_outputs$best_glance_all[
+#         1:min(3, nrow(batch_outputs$best_glance_all)),
+#         lloq_check_cols, drop = FALSE])
+#       message("[debug] lloq NA counts:")
+#       print(colSums(is.na(
+#         batch_outputs$best_glance_all[, lloq_check_cols, drop = FALSE]
+#       )))
+#     }
+#     
+#     
+#     # ── Save best_glance_all first (parent table) ──
+#     upsert_best_curve(
+#       conn = bg_conn, df = batch_outputs$best_glance_all,
+#       schema = "madi_results", table = "best_glance_all",
+#       notify = NULL, shiny_mode = FALSE
+#     )
+#     
+#     # ── Fetch glance lookup for FK joins ──
+#     study_to_save   <- unique(batch_outputs$best_glance_all$study_accession)
+#     project_to_save <- unique(batch_outputs$best_glance_all$project_id)
+#     exp_list_sql    <- paste0("'", paste(exp_list, collapse = "','"), "'")
+#     
+#     glance_lookup <- DBI::dbGetQuery(bg_conn, glue::glue(
+#       "SELECT best_glance_all_id, project_id, study_accession, experiment_accession,
+#               plateid, plate, nominal_sample_dilution, source, antigen, feature, wavelength
+#        FROM madi_results.best_glance_all
+#        WHERE project_id = {project_to_save}
+#          AND study_accession = '{study_to_save}'
+#          AND experiment_accession IN ({exp_list_sql});"
+#     ))
+#     glance_lookup$best_glance_all_id <- as.integer(glance_lookup$best_glance_all_id)
+#     
+#     keys <- c("project_id", "study_accession", "experiment_accession", "plateid",
+#               "plate", "nominal_sample_dilution", "source", "antigen", "feature", "wavelength")
+#     
+#     # ── Normalize wavelength in glance_lookup AND all child tables ──
+#     glance_lookup$wavelength <- normalize_wavelength(glance_lookup$wavelength)
+#     
+#     for (tbl_name in c("best_pred_all", "best_sample_se_all", "best_standard_all",
+#                        "best_plate_all", "best_tidy_all")) {
+#       if (!is.null(batch_outputs[[tbl_name]]) &&
+#           "wavelength" %in% names(batch_outputs[[tbl_name]])) {
+#         batch_outputs[[tbl_name]]$wavelength <-
+#           normalize_wavelength(batch_outputs[[tbl_name]]$wavelength)
+#       }
+#     }
+#     
+#     message(sprintf("[save] glance_lookup: %d rows", nrow(glance_lookup)))
+#     message(sprintf("[save] glance_lookup wavelengths: %s",
+#                     paste(unique(glance_lookup$wavelength), collapse = ", ")))
+#     
+#     # ── FK joins: attach best_glance_all_id to each child table ──
+#     if (!is.null(batch_outputs$best_pred_all) &&
+#         nrow(batch_outputs$best_pred_all) > 0) {
+#       n_before <- nrow(batch_outputs$best_pred_all)
+#       batch_outputs$best_pred_all <- dplyr::inner_join(
+#         batch_outputs$best_pred_all, glance_lookup, by = keys
+#       )
+#       n_after <- nrow(batch_outputs$best_pred_all)
+#       message(sprintf("[save] best_pred_all FK join: %d -> %d rows", n_before, n_after))
+#       if (n_after == 0 && n_before > 0)
+#         message("[save] WARNING: FK join dropped ALL best_pred_all rows — likely key mismatch.")
+#     }
+#     
+#     if (!is.null(batch_outputs$best_sample_se_all) &&
+#         nrow(batch_outputs$best_sample_se_all) > 0) {
+#       n_before <- nrow(batch_outputs$best_sample_se_all)
+#       batch_outputs$best_sample_se_all <- dplyr::inner_join(
+#         batch_outputs$best_sample_se_all, glance_lookup, by = keys
+#       )
+#       n_after <- nrow(batch_outputs$best_sample_se_all)
+#       message(sprintf("[save] best_sample_se_all FK join: %d -> %d rows", n_before, n_after))
+#       if (n_after == 0 && n_before > 0)
+#         message("[save] WARNING: FK join dropped ALL best_sample_se_all rows — likely key mismatch.")
+#     }
+#     
+#     if (!is.null(batch_outputs$best_standard_all) &&
+#         nrow(batch_outputs$best_standard_all) > 0) {
+#       n_before <- nrow(batch_outputs$best_standard_all)
+#       batch_outputs$best_standard_all <- dplyr::inner_join(
+#         batch_outputs$best_standard_all, glance_lookup, by = keys
+#       )
+#       n_after <- nrow(batch_outputs$best_standard_all)
+#       message(sprintf("[save] best_standard_all FK join: %d -> %d rows", n_before, n_after))
+#       if (n_after == 0 && n_before > 0)
+#         message("[save] WARNING: FK join dropped ALL best_standard_all rows — likely key mismatch.")
+#     }
+#     
+#     # ── Save all child tables ──
+#     for (pair in list(
+#       list(df = "best_plate_all",     table = "best_plate_all"),
+#       list(df = "best_tidy_all",      table = "best_tidy_all"),
+#       list(df = "best_pred_all",      table = "best_pred_all"),
+#       list(df = "best_sample_se_all", table = "best_sample_se_all"),
+#       list(df = "best_standard_all",  table = "best_standard_all")
+#     )) {
+#       tryCatch(writeLines(
+#         paste0("Interpolated: saving ", pair$table, "...\nScope: ", scope_label),
+#         prog_file), error = function(e) NULL)
+#       
+#       upsert_best_curve(
+#         conn = bg_conn, df = batch_outputs[[pair$df]],
+#         schema = "madi_results", table = pair$table,
+#         notify = NULL, shiny_mode = FALSE
+#       )
+#     }
+#     
+#     list(ok = TRUE, n_curves = n_total, scope_label = scope_label)
+#   }, seed = TRUE)
+#   
+#   removeNotification("batch_sc_fit_notify")
+#   
+#   progress_poller <- reactivePoll(
+#     intervalMillis = 2000, session = session,
+#     checkFunc = function() {
+#       pf <- interp_progress_file()
+#       if (is.null(pf) || !file.exists(pf)) return(0)
+#       file.info(pf)$mtime
+#     },
+#     valueFunc = function() {
+#       pf <- interp_progress_file()
+#       if (is.null(pf) || !file.exists(pf)) return(NULL)
+#       tryCatch(paste(readLines(pf), collapse = "\n"), error = function(e) NULL)
+#     }
+#   )
+#   
+#   progress_observer <- observe({
+#     msg <- progress_poller()
+#     if (!is.null(msg) && nzchar(msg)) interp_progress_msg(msg)
+#   })
+#   
+#   .cleanup_interp <- function(label, type = "message", duration = 10) {
+#     progress_observer$destroy()
+#     pf <- interp_progress_file()
+#     if (!is.null(pf) && file.exists(pf)) file.remove(pf)
+#     interp_progress_file(NULL)
+#     interp_progress_msg(NULL)
+#     .remove_pending(interp_pending_scopes, scope, "interpolated")
+#     showNotification(label, type = type, duration = duration)
+#     concentrationUIRefresher(concentrationUIRefresher() + 1)
+#     is_batch_processing(FALSE)
+#   }
+#   
+#   promises::then(
+#     future_promise,
+#     onFulfilled = function(result) {
+#       .cleanup_interp(
+#         paste0("Interpolated completed for ", result$scope_label,
+#                " (", result$n_curves, " curves).")
+#       )
+#     },
+#     onRejected = function(err) {
+#       .cleanup_interp(
+#         paste0("Interpolated error: ", conditionMessage(err)),
+#         type = "error", duration = 15
+#       )
+#       message("Interpolated future rejected: ", conditionMessage(err))
+#     }
+#   )
+#   
+#   NULL
+# }
+
 
 .run_interpolated <- function(scope, study, experiment, plate, proj,
                               current_user, scope_label, session) {
@@ -3308,60 +3831,43 @@ lapply(c("study", "experiment", "plate"), function(s) {
   
   showNotification(
     id = "batch_sc_fit_notify",
-    HTML(
-      paste0(
-        "<div class='big-notification'>",
-        "Starting standard curves:<br>",
-        "interpolated concentrations<br>",
-        "for ", scope_label, "<span class='dots'></span>",
-        "</div>"
-      )
-    ),
+    HTML(paste0(
+      "<div class='big-notification'>",
+      "Starting standard curves:<br>interpolated concentrations<br>",
+      "for ", scope_label, "<span class='dots'></span>",
+      "</div>"
+    )),
     duration = NULL
   )
   
   # ── ALL DATA LOADING ON MAIN THREAD ──
-  headers <- fetch_db_header_experiments(
-    study_accession = study, conn = conn
-  )
+  headers  <- fetch_db_header_experiments(study_accession = study, conn = conn)
   exp_list <- switch(scope,
                      "study"      = unique(headers$experiment_accession),
                      "experiment" = ,
                      "plate"      = experiment
   )
   
+  curve_id_elements <- c(
+    "project_id", "study_accession", "experiment_accession",
+    "feature", "source", "antigen", "plate",
+    "nominal_sample_dilution", "wavelength"
+  )
+  
   loaded_data_list <- lapply(
     stats::setNames(exp_list, exp_list),
-    function(exp) pull_data(
+    function(exp) pull_data_frequentist(
       study_accession      = study,
       experiment_accession = exp,
       project_id           = proj,
+      curve_id_elements    = curve_id_elements,
       conn                 = conn
     )
   )
   
-  # ── Compute dil_series SE on FULL unfiltered standards (all plates) ──
-  # Must happen BEFORE plate-scope filtering so we get proper cross-plate
-  # replication (n >= min_reps) and valid SE estimates for FDA LOQ computation.
-  all_standards_full <- do.call(rbind, lapply(loaded_data_list, `[[`, "standards"))
   response_var <- loaded_data_list[[exp_list[1]]]$response_var
   
-  dil_series_se_table_batch <- compute_dil_series_se(
-    standards_data = all_standards_full,
-    response_col   = response_var,
-    dilution_col   = "dilution",
-    plate_col      = "plate_nom",
-    grouping_cols  = c("project_id",
-                       "study_accession",
-                       "experiment_accession",
-                       "source_nom",
-                       "antigen",
-                       "feature"),
-    min_reps = 2,
-    verbose  = FALSE
-  )
-  
-  # ── NOW apply plate scope filter to loaded_data_list ──
+  # ── Apply plate-scope filter ──
   if (scope == "plate") {
     loaded_data_list <- lapply(loaded_data_list, function(x) {
       for (tbl in c("plates", "standards", "samples", "blanks")) {
@@ -3372,16 +3878,15 @@ lapply(c("study", "experiment", "plate"), function(s) {
     })
   }
   
-  all_standards <- do.call(rbind, lapply(loaded_data_list, `[[`, "standards"))
-  
-  se_antigen_table_batch <- compute_antigen_se_table(
-    standards_data = all_standards,
-    response_col   = response_var,
-    dilution_col   = "dilution",
-    plate_col      = "plate",
-    grouping_cols  = c("project_id", "study_accession", "experiment_accession",
-                       "source_nom", "antigen", "feature"),
-    verbose        = FALSE
+  # ── Combine all experiments into one loaded_data object ──
+  loaded_data_combined <- list(
+    standards           = do.call(rbind, lapply(loaded_data_list, `[[`, "standards")),
+    blanks              = do.call(rbind, lapply(loaded_data_list, `[[`, "blanks")),
+    samples             = do.call(rbind, lapply(loaded_data_list, `[[`, "samples")),
+    antigen_constraints = do.call(rbind, lapply(loaded_data_list, `[[`, "antigen_constraints")),
+    curve_id_lookup     = do.call(rbind, lapply(loaded_data_list, `[[`, "curve_id_lookup")),
+    response_var        = response_var,
+    indep_var           = loaded_data_list[[exp_list[1]]]$indep_var
   )
   
   study_params_batch <- fetch_study_parameters(
@@ -3392,169 +3897,115 @@ lapply(c("study", "experiment", "plate"), function(s) {
     conn            = conn
   )
   
-  antigen_list_res       <- build_antigen_list(exp_list, loaded_data_list, study)
-  antigen_plate_list_res <- build_antigen_plate_list(antigen_list_res, loaded_data_list)
-  prepped_data_list_res  <- prep_plate_data_batch(
-    antigen_plate_list_res, study_params_batch, verbose = FALSE
+  lk <- loaded_data_combined$curve_id_lookup
+  # ── Mirror the scope filter the test batch applies to lk ──
+  if (scope == "plate") {
+    plate_raw <- sub("-.*$", "", plate)
+    lk <- lk[as.character(lk$plate) == plate_raw, , drop = FALSE]
+  } else if (scope == "experiment") {
+    lk <- lk[as.character(lk$experiment_accession) == experiment, , drop = FALSE]
+  }
+  antigen_constraints_list <- split(
+    loaded_data_combined$antigen_constraints,
+    loaded_data_combined$antigen_constraints$antigen
   )
-  antigen_plate_list_res$antigen_plate_list_ids <-
-    prepped_data_list_res$antigen_plate_name_list
-  n_total <- length(prepped_data_list_res$antigen_plate_name_list)
+  n_total <- nrow(lk)
   
-  db_conn_args <- get_db_connection_args()
-  
-  # ── FUTURE: Only fitting + DB writes ──
+  # ── FUTURE: fitting only ──
   future_promise <- future::future({
-    bg_conn <- do.call(get_db_connection_from_args, db_conn_args)
-    on.exit(DBI::dbDisconnect(bg_conn), add = TRUE)
     
-    batch_fit_res <- fit_experiment_plate_batch(
-      prepped_data_list_res   = prepped_data_list_res,
-      antigen_plate_list_res  = antigen_plate_list_res,
-      model_names             = model_names,
-      study_params            = study_params_batch,
-      se_antigen_table        = se_antigen_table_batch,
-      dil_series_se_table     = dil_series_se_table_batch,
-      prog_file               = prog_file,
-      dil_series_response_col = response_var,
-      verbose                 = FALSE
+    first_cid     <- lk$curve_id[1]
+    first_antigen <- lk$antigen[1]
+    first_data    <- filter_by_curve_id(loaded_data_combined, curve_id = first_cid)
+    
+    sc <- StandardCurve$new(
+      loaded_data         = first_data,
+      study_params        = study_params_batch,
+      antigen_constraints = antigen_constraints_list[[first_antigen]],
+      model_names         = model_names,
+      verbose             = FALSE
     )
     
-    batch_outputs <- create_batch_fit_outputs(
-      batch_fit_res, antigen_plate_list_res
-    )
-    batch_outputs <- process_batch_outputs(
-      batch_outputs, response_var, proj
-    )
-    
-    # ── Debug: check FDA LOQ columns ──
-    tryCatch(writeLines(
-      paste0("Interpolated: saving best_glance_all...\nScope: ", scope_label),
-      prog_file), error = function(e) NULL)
-    
-    message("[debug] best_glance_all columns: ",
-            paste(names(batch_outputs$best_glance_all), collapse = ", "))
-    
-    lloq_check_cols <- grep("lloq_fda2018|uloq_fda2018",
-                            names(batch_outputs$best_glance_all), value = TRUE)
-    message("[debug] lloq cols present in best_glance_all: ",
-            if (length(lloq_check_cols) == 0) "NONE"
-            else paste(lloq_check_cols, collapse = ", "))
-    
-    if (length(lloq_check_cols) > 0) {
-      message("[debug] lloq values (first 3 rows):")
-      print(batch_outputs$best_glance_all[
-        1:min(3, nrow(batch_outputs$best_glance_all)),
-        lloq_check_cols, drop = FALSE])
-      message("[debug] lloq NA counts:")
-      print(colSums(is.na(
-        batch_outputs$best_glance_all[, lloq_check_cols, drop = FALSE]
-      )))
-    }
-    
-    
-    # ── Save best_glance_all first (parent table) ──
-    upsert_best_curve(
-      conn = bg_conn, df = batch_outputs$best_glance_all,
-      schema = "madi_results", table = "best_glance_all",
-      notify = NULL, shiny_mode = FALSE
+    all_results <- list(
+      best_fit_summary = vector("list", n_total),
+      best_parameters  = vector("list", n_total),
+      sample_se        = vector("list", n_total),
+      best_pred        = vector("list", n_total),
+      best_standard    = vector("list", n_total)
     )
     
-    # ── Fetch glance lookup for FK joins ──
-    study_to_save   <- unique(batch_outputs$best_glance_all$study_accession)
-    project_to_save <- unique(batch_outputs$best_glance_all$project_id)
-    exp_list_sql    <- paste0("'", paste(exp_list, collapse = "','"), "'")
-    
-    glance_lookup <- DBI::dbGetQuery(bg_conn, glue::glue(
-      "SELECT best_glance_all_id, project_id, study_accession, experiment_accession,
-              plateid, plate, nominal_sample_dilution, source, antigen, feature, wavelength
-       FROM madi_results.best_glance_all
-       WHERE project_id = {project_to_save}
-         AND study_accession = '{study_to_save}'
-         AND experiment_accession IN ({exp_list_sql});"
-    ))
-    glance_lookup$best_glance_all_id <- as.integer(glance_lookup$best_glance_all_id)
-    
-    keys <- c("project_id", "study_accession", "experiment_accession", "plateid",
-              "plate", "nominal_sample_dilution", "source", "antigen", "feature", "wavelength")
-    
-    # ── Normalize wavelength in glance_lookup AND all child tables ──
-    glance_lookup$wavelength <- normalize_wavelength(glance_lookup$wavelength)
-    
-    for (tbl_name in c("best_pred_all", "best_sample_se_all", "best_standard_all",
-                       "best_plate_all", "best_tidy_all")) {
-      if (!is.null(batch_outputs[[tbl_name]]) &&
-          "wavelength" %in% names(batch_outputs[[tbl_name]])) {
-        batch_outputs[[tbl_name]]$wavelength <-
-          normalize_wavelength(batch_outputs[[tbl_name]]$wavelength)
-      }
-    }
-    
-    message(sprintf("[save] glance_lookup: %d rows", nrow(glance_lookup)))
-    message(sprintf("[save] glance_lookup wavelengths: %s",
-                    paste(unique(glance_lookup$wavelength), collapse = ", ")))
-    
-    # ── FK joins: attach best_glance_all_id to each child table ──
-    if (!is.null(batch_outputs$best_pred_all) &&
-        nrow(batch_outputs$best_pred_all) > 0) {
-      n_before <- nrow(batch_outputs$best_pred_all)
-      batch_outputs$best_pred_all <- dplyr::inner_join(
-        batch_outputs$best_pred_all, glance_lookup, by = keys
-      )
-      n_after <- nrow(batch_outputs$best_pred_all)
-      message(sprintf("[save] best_pred_all FK join: %d -> %d rows", n_before, n_after))
-      if (n_after == 0 && n_before > 0)
-        message("[save] WARNING: FK join dropped ALL best_pred_all rows — likely key mismatch.")
-    }
-    
-    if (!is.null(batch_outputs$best_sample_se_all) &&
-        nrow(batch_outputs$best_sample_se_all) > 0) {
-      n_before <- nrow(batch_outputs$best_sample_se_all)
-      batch_outputs$best_sample_se_all <- dplyr::inner_join(
-        batch_outputs$best_sample_se_all, glance_lookup, by = keys
-      )
-      n_after <- nrow(batch_outputs$best_sample_se_all)
-      message(sprintf("[save] best_sample_se_all FK join: %d -> %d rows", n_before, n_after))
-      if (n_after == 0 && n_before > 0)
-        message("[save] WARNING: FK join dropped ALL best_sample_se_all rows — likely key mismatch.")
-    }
-    
-    if (!is.null(batch_outputs$best_standard_all) &&
-        nrow(batch_outputs$best_standard_all) > 0) {
-      n_before <- nrow(batch_outputs$best_standard_all)
-      batch_outputs$best_standard_all <- dplyr::inner_join(
-        batch_outputs$best_standard_all, glance_lookup, by = keys
-      )
-      n_after <- nrow(batch_outputs$best_standard_all)
-      message(sprintf("[save] best_standard_all FK join: %d -> %d rows", n_before, n_after))
-      if (n_after == 0 && n_before > 0)
-        message("[save] WARNING: FK join dropped ALL best_standard_all rows — likely key mismatch.")
-    }
-    
-    # ── Save all child tables ──
-    for (pair in list(
-      list(df = "best_plate_all",     table = "best_plate_all"),
-      list(df = "best_tidy_all",      table = "best_tidy_all"),
-      list(df = "best_pred_all",      table = "best_pred_all"),
-      list(df = "best_sample_se_all", table = "best_sample_se_all"),
-      list(df = "best_standard_all",  table = "best_standard_all")
-    )) {
+    for (i in seq_len(n_total)) {
+      cid         <- lk$curve_id[i]
+      cur_antigen <- lk$antigen[i]
+      
       tryCatch(writeLines(
-        paste0("Interpolated: saving ", pair$table, "...\nScope: ", scope_label),
+        paste0("Interpolated: fitting curve ", i, "/", n_total,
+               "\nScope: ", scope_label),
         prog_file), error = function(e) NULL)
       
-      upsert_best_curve(
-        conn = bg_conn, df = batch_outputs[[pair$df]],
-        schema = "madi_results", table = pair$table,
-        notify = NULL, shiny_mode = FALSE
-      )
+      curve_data <- filter_by_curve_id(loaded_data_combined, curve_id = cid)
+      
+      tryCatch({
+        sc$set_data(curve_data)
+        sc$antigen_constraints <- antigen_constraints_list[[cur_antigen]]
+        sc$set_curve_settings()$fit()$summarize()$propagate_error()
+        
+        res <- sc$get_results()
+        
+        res$best_fit_summary <- res$best_fit_summary[
+          , !names(res$best_fit_summary) %in% c(
+            "inflect_x", "inflect_y", "llod", "ulod",
+            "mindc", "maxdc", "minrdl", "maxrdl",
+            "lloq", "uloq", "lloq_y", "uloq_y"
+          ), drop = FALSE
+        ]
+        
+        all_results$best_fit_summary[[i]] <- res$best_fit_summary
+        all_results$best_parameters[[i]]  <- res$best_parameters
+        all_results$sample_se[[i]]        <- res$sample_se
+        all_results$best_pred[[i]]        <- res$best_pred
+        all_results$best_standard[[i]]    <- res$best_standard
+        
+        message(sprintf("[interp_batch] %d/%d  curve_id=%s  antigen=%s  OK",
+                        i, n_total, cid, cur_antigen))
+      }, error = function(e) {
+        message(sprintf("[interp_batch] %d/%d  curve_id=%s  FAILED: %s",
+                        i, n_total, cid, e$message))
+      })
     }
     
-    list(ok = TRUE, n_curves = n_total, scope_label = scope_label)
+    # ── Combine across curves ──
+    combined <- lapply(all_results, function(tbl_list) {
+      rows <- Filter(Negate(is.null), tbl_list)
+      if (length(rows) == 0L) return(data.frame())
+      do.call(rbind, rows)
+    })
+    
+    rename_response <- function(df) {
+      if ("absorbance" %in% names(df))   names(df)[names(df) == "absorbance"] <- "assay_response"
+      else if ("mfi" %in% names(df))     names(df)[names(df) == "mfi"]        <- "assay_response"
+      df
+    }
+    combined$sample_se     <- rename_response(combined$sample_se)
+    combined$best_standard <- rename_response(combined$best_standard)
+    
+    n_ok <- sum(vapply(all_results$best_fit_summary, Negate(is.null), logical(1)))
+    
+    message("\n===== INTERPOLATED BATCH RESULTS =====")
+    for (nm in names(combined)) {
+      df <- combined[[nm]]
+      message(sprintf("  %-20s  %d rows x %d cols", nm, nrow(df), ncol(df)))
+    }
+    message(sprintf("  %d / %d curves fitted successfully", n_ok, n_total))
+    message("=======================================\n")
+    
+    list(combined = combined, n_ok = n_ok, n_total = n_total, scope_label = scope_label)
+    
   }, seed = TRUE)
   
   removeNotification("batch_sc_fit_notify")
   
+  # ── Progress polling ──
   progress_poller <- reactivePoll(
     intervalMillis = 2000, session = session,
     checkFunc = function() {
@@ -3589,9 +4040,22 @@ lapply(c("study", "experiment", "plate"), function(s) {
   promises::then(
     future_promise,
     onFulfilled = function(result) {
+      combined_res <<-result$combined
+      
+      tryCatch(
+        upsert_freq_results(conn, result$combined),
+        error = function(e) {
+          message("[interp_batch] DB upsert failed: ", conditionMessage(e))
+          showNotification(
+            paste0("Interpolated fitted OK but DB save failed: ", conditionMessage(e)),
+            type = "warning", duration = 20
+          )
+        }
+      )
+      
       .cleanup_interp(
         paste0("Interpolated completed for ", result$scope_label,
-               " (", result$n_curves, " curves).")
+               " (", result$n_ok, "/", result$n_total, " curves).")
       )
     },
     onRejected = function(err) {
@@ -3605,6 +4069,11 @@ lapply(c("study", "experiment", "plate"), function(s) {
   
   NULL
 }
+
+
+
+
+
 # 
 # .run_interpolated <- function(scope, study, experiment, plate, proj,
 #                               current_user, scope_label, session) {
@@ -4663,6 +5132,8 @@ observeEvent(input$btn_run_bayes, ignoreInit = TRUE, {
       prozone_threshold  = snap_prozone_threshold
     )
     
+    
+    
     # ── 4. Fit the hierarchical Stan model ──────────────────────────────────
     # Between-chain parallelism: each chain runs on its own core (cores = n_chains).
     # Within-chain parallelism: STAN_THREADS compiled in; each chain uses
@@ -4683,6 +5154,7 @@ observeEvent(input$btn_run_bayes, ignoreInit = TRUE, {
       )
     )
     
+    stanassay <<- assay
     # ── 4b. Retrieve ensemble summary ────────────────────────────────────────
     ens_summary <- assay$summarize_ensemble()
     
@@ -4792,13 +5264,58 @@ observeEvent(input$btn_run_bayes, ignoreInit = TRUE, {
     generated_plots <- list()
     for (plt in target_plates) {
       tryCatch({
-        # LOD threshold MFI — NULL-safe (compute_lod may have failed for this plate)
-        lod_mfi <- tryCatch(lod_list[[plt]]$threshold_mfi_median, error = function(e) NULL)
+        # Best family for this plate (falls back to global best)
+        plt_best_fam <- ens_summary$plate_best_family[[plt]] %||% ens_summary$best_family %||% "5pl"
         
-        generated_plots[[plt]] <- assay$plot(
-          plt,
-          sample_data         = results_df
+        # Standards filtered to this plate (median-aggregated)
+        stds_plt <- stds |>
+          dplyr::filter(plateid == plt) |>
+          dplyr::group_by(concentration) |>
+          dplyr::summarise(mfi = median(mfi, na.rm = TRUE), .groups = "drop") |>
+          dplyr::filter(!is.na(mfi)) |>
+          as.data.frame()
+        
+        # Posterior prediction grid from Stan draws
+        curve_grid_live <- compute_live_curve_grid(assay, plt, plt_best_fam, stds_plt)
+        if (is.null(curve_grid_live)) stop("compute_live_curve_grid returned NULL")
+        
+        # Assemble a synthetic curve_row from computed profile data
+        cdan_info <- cdan_list[[plt]]
+        lrdl_info <- lrdl_list[[plt]]
+        urdl_info <- urdl_list[[plt]]
+        infl_info <- infl_list[[plt]]
+        lod_info  <- lod_list[[plt]]
+        
+        curve_row_live <- list(
+          plateid       = plt,
+          curve_family  = plt_best_fam,
+          lloq          = cdan_info$lloq_20  %||% NA_real_,
+          uloq          = cdan_info$uloq_20  %||% NA_real_,
+          lloq_15       = cdan_info$lloq_15  %||% NA_real_,
+          uloq_15       = cdan_info$uloq_15  %||% NA_real_,
+          lrdl          = lrdl_info$lrdl     %||% NA_real_,
+          urdl          = urdl_info$urdl     %||% NA_real_,
+          inflect_x     = infl_info$inflection_x %||% infl_info$inflect_x %||% NA_real_,
+          lod           = lod_info$lod       %||% NA_real_,
+          lod_y         = lod_info$threshold_mfi_median %||% NA_real_
         )
+        
+        # CDAN grid (log10_conc + smoothed_cv)
+        cdan_grid_live <- if (!is.null(cdan_info$profile) && nrow(cdan_info$profile) > 0) {
+          cdan_info$profile[, c("log10_conc", "smoothed_cv"), drop = FALSE]
+        } else { NULL }
+        
+        # Adapt sample results to expected column names
+        samp_df_live <- adapt_live_samples_df(results_df, plt)
+        
+        generated_plots[[plt]] <- build_bayes_plot_from_db(
+          curve_row    = curve_row_live,
+          curve_grid   = curve_grid_live,
+          cdan_grid    = cdan_grid_live,
+          standards_df = if (nrow(stds_plt) > 0) stds_plt else NULL,
+          samples_df   = samp_df_live
+        )
+        
       }, error = function(e) {
         message(sprintf("[bayes] plot(%s) failed: %s", plt, e$message))
       })
@@ -5642,6 +6159,8 @@ output$bayes_modal_plate_params_tbl <- renderTable({
     # Live fit mode: extract from Stan
   } else if (!is.null(bayes_state$assay)) {
     assay <- bayes_state$assay
+    # bayes_state_v <<- bayes_state
+    # bayes_assay <<- assay
     families <- names(assay$ensemble$fits)
     
     rows <- lapply(families, function(fam) {
@@ -5805,4 +6324,3 @@ make_comparison_overlay <- function(p_freq, p_bayes,
   
   pb_f
 }
-

@@ -1,3 +1,18 @@
+filter_by_curve_id <- function(loaded_data, curve_id,
+                               target_names = c("standards", "blanks",
+                                                "samples", "curve_id_lookup"),
+                               verbose = FALSE) {
+  filtered <- loaded_data
+  filtered$curve_id_whole_lookup <- filtered$curve_id_lookup
+  filtered$whole_standards        <- filtered$standards
+  filtered[target_names] <- lapply(filtered[target_names], function(df) {
+    if (!is.data.frame(df) || nrow(df) == 0 || !"curve_id" %in% names(df)) return(df)
+    df[as.character(df$curve_id) == as.character(curve_id), , drop = FALSE]
+  })
+  filtered
+}
+
+
 ## Quality Control extensions to the curveRfreq package
 compute_dil_series_se <- function(
     standards_data,
@@ -831,6 +846,7 @@ plot_ISPI_standard_curve <- function(best_fit,
                                 is_display_log_response,
                                 is_display_log_independent,
                                 pcov_threshold,
+                                curve_id_lookup,
                                 response_variable = "mfi",
                                 independent_variable = "concentration",
                                 mcmc_samples = NULL,
@@ -926,7 +942,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   log_response_status <- isTRUE(as.logical(safe_glance("is_log_response", FALSE)))
   if (log_response_status && !isTRUE(is_display_log_response)) {
     best_fit$best_data[[response_variable]] <- 10^best_fit$best_data[[response_variable]]
-    best_fit$best_pred$yhat               <- 10^best_fit$best_pred$yhat
+    best_fit$best_pred$yhat_response               <- 10^best_fit$best_pred$yhat_response
     best_fit$best_fit_summary$llod             <- 10^safe_glance("llod")
     best_fit$best_fit_summary$ulod             <- 10^safe_glance("ulod")
     best_fit$best_fit_summary$lloq_y           <- 10^safe_glance("lloq_y")
@@ -948,7 +964,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   log_x_status <- isTRUE(as.logical(safe_glance("is_log_x", FALSE)))
   if (log_x_status && !isTRUE(is_display_log_independent)) {
     best_fit$best_data$concentration       <- 10^best_fit$best_data$concentration
-    best_fit$best_pred$x                   <- 10^best_fit$best_pred$x
+    best_fit$best_pred$predicted_concentration                   <- 10^best_fit$best_pred$predicted_concentration
     best_fit$best_fit_summary$lloq              <- 10^safe_glance("lloq")
     best_fit$best_fit_summary$uloq              <- 10^safe_glance("uloq")
     best_fit$best_fit_summary$inflect_x         <- 10^safe_glance("inflect_x")
@@ -1096,7 +1112,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   
   ### 5. FITTED CURVE
   p <- p %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_pred$yhat,
     name = "Fitted Curve",
     legendgroup = "fitted_curve",
@@ -1124,7 +1140,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   
   ### 6. LOD lines (horizontal)
   p <- p %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_fit_summary$ulod,
     name = paste("Upper LOD: (",
                  round(best_fit$best_fit_summary$maxdc, 3), ",",
@@ -1135,7 +1151,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   )
   
   p <- p %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_fit_summary$llod,
     name = paste("Lower LOD: (",
                  round(best_fit$best_fit_summary$mindc, 3), ",",
@@ -1220,7 +1236,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   
   ### Horizontal LOQ lines
   p <- p %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_fit_summary$uloq_y,
     name = "",
     legendgroup = "linked_uloq", showlegend = FALSE,
@@ -1228,7 +1244,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   )
   
   p <- p %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_fit_summary$lloq_y,
     name = "",
     legendgroup = "linked_lloq", showlegend = FALSE,
@@ -1267,7 +1283,7 @@ plot_ISPI_standard_curve <- function(best_fit,
   ### 8b. Sample uncertainty (y3 axis) — interpolated
   unc_col <- list(color = "#e68fac")
   p <- p %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_pred$pcov,
     name = "Measurement Uncertainty",
     yaxis = "y3",
@@ -1290,7 +1306,7 @@ plot_ISPI_standard_curve <- function(best_fit,
     hovertemplate = "%{text}<extra></extra>",
     visible = "legendonly"
   ) %>% add_lines(
-    x = best_fit$best_pred$x,
+    x = best_fit$best_pred$predicted_concentration,
     y = best_fit$best_pred$pcov_threshold,
     name = paste0("pCoV Threshold: ", best_fit$best_pred$pcov_threshold, "%"),
     yaxis = "y3",
@@ -1449,8 +1465,8 @@ plot_ISPI_standard_curve <- function(best_fit,
   p <- p %>% layout(
     title = paste(
       "Fitted", title_model_name, "Model (",
-      unique(best_fit$best_fit_summary$plate), ",",
-      unique(best_fit$best_fit_summary$antigen), ")"
+      unique(curve_id_lookup$plate), ",",
+      unique(curve_id_lookup$antigen), ")"
     ),
     xaxis = list(
       title    = x_label,

@@ -228,7 +228,7 @@ pull_data <- function(study_accession, experiment_accession, project_id, conn = 
   # Check if wavelength column exists in any of the data frames
   has_wavelength_std <- "wavelength" %in% names(standards)
   has_wavelength_blk <- "wavelength" %in% names(blanks)
-  has_wavelength_smp <- "wavelength" %in% names(samples)
+   has_wavelength_smp <- "wavelength" %in% names(samples)
   
   # Add wavelength column if not present
   if (!has_wavelength_std) standards$wavelength <- WL_NONE
@@ -2679,5 +2679,108 @@ attach_antigen_familes <- function(best_pred_all, antigen_families, default_fami
 }
 
 
-
+# ============================================================================
+# upsert_freq_results
+#
+# Persists the five freq tables produced by .run_interpolated.
+# Strategy: DELETE WHERE curve_id IN (...) + bulk INSERT inside one
+# transaction per table. This is correct because the SERIAL PKs
+# (freq_curves_id, etc.) mean there is no ON CONFLICT target — curve_id
+# is just a FK, not a unique key by itself.
+# ============================================================================
+upsert_freq_results <- function(conn, combined, schema = "madi_results",
+                                quiet = FALSE, shiny_mode = TRUE) {
+  notify <- function(msg) if (!quiet) message(Sys.time(), " - ", msg)
+  
+  if (!DBI::dbIsValid(conn)) {
+    notify("[upsert_freq_results] Invalid connection — aborting.")
+    return(invisible(FALSE))
+  }
+  
+  table_map <- list(
+    freq_curves     = combined$best_fit_summary,
+    freq_parameters = combined$best_parameters,
+    freq_samples    = combined$sample_se,
+    freq_curve_grid = combined$best_pred,
+    freq_standard   = combined$best_standard
+  )
+  
+  results <- vapply(names(table_map), function(tbl) {
+    df <- table_map[[tbl]]
+    
+    if (is.null(df) || nrow(df) == 0) {
+      notify(sprintf("[upsert_freq_results] %s — skipped (0 rows)", tbl))
+      return(FALSE)
+    }
+    
+    # Normalise curve_id to plain integer — integer64 can confuse dbWriteTable
+    df$curve_id <- as.integer(df$curve_id)
+    
+    # Drop any R-side columns the DB table doesn't have
+    tryCatch({
+      db_cols <- DBI::dbGetQuery(
+        conn,
+        sprintf("SELECT column_name FROM information_schema.columns
+                  WHERE table_schema = '%s' AND table_name = '%s'",
+                schema, tbl)
+      )$column_name
+      
+      # Always exclude the SERIAL PK — DB generates it
+      serial_pk <- paste0(tbl, "_id")
+      db_cols   <- setdiff(db_cols, serial_pk)
+      
+      extra <- setdiff(names(df), db_cols)
+      if (length(extra)) {
+        notify(sprintf("[upsert_freq_results] %s — dropping R-only cols: %s",
+                       tbl, paste(extra, collapse = ", ")))
+        df <- df[, intersect(names(df), db_cols), drop = FALSE]
+      }
+      
+      missing <- setdiff(db_cols, names(df))
+      if (length(missing)) {
+        notify(sprintf("[upsert_freq_results] %s — WARNING missing cols (will be NULL): %s",
+                       tbl, paste(missing, collapse = ", ")))
+      }
+    }, error = function(e) {
+      notify(sprintf("[upsert_freq_results] %s — column introspection failed: %s", tbl, e$message))
+    })
+    
+    curve_ids <- unique(df$curve_id)
+    schema_id <- DBI::dbQuoteIdentifier(conn, schema)
+    table_id  <- DBI::dbQuoteIdentifier(conn, tbl)
+    
+    tryCatch({
+      DBI::dbWithTransaction(conn, {
+        
+        # ── Step 1: DELETE existing rows for these curve_ids ──────────
+        id_list   <- paste(curve_ids, collapse = ", ")
+        delete_sql <- sprintf("DELETE FROM %s.%s WHERE curve_id IN (%s)",
+                              schema_id, table_id, id_list)
+        n_deleted <- DBI::dbExecute(conn, delete_sql)
+        notify(sprintf("[upsert_freq_results] %s: deleted %d existing rows for %d curve_id(s)",
+                       tbl, n_deleted, length(curve_ids)))
+        
+        # ── Step 2: Bulk INSERT via COPY ───────────────────────────────
+        if (requireNamespace("RPostgres", quietly = TRUE)) {
+          RPostgres::dbWriteTable(conn, DBI::Id(schema = schema, table = tbl),
+                                  df, append = TRUE, row.names = FALSE, copy = TRUE)
+        } else {
+          DBI::dbWriteTable(conn, DBI::Id(schema = schema, table = tbl),
+                            df, append = TRUE, row.names = FALSE)
+        }
+        notify(sprintf("[upsert_freq_results] %s: inserted %d rows", tbl, nrow(df)))
+      })
+      TRUE
+    }, error = function(e) {
+      msg <- sprintf("[upsert_freq_results] %s FAILED: %s", tbl, conditionMessage(e))
+      notify(msg)
+      if (shiny_mode && !is.null(shiny::getDefaultReactiveDomain())) {
+        showNotification(msg, type = "error", duration = 15)
+      }
+      FALSE
+    })
+  }, logical(1))
+  
+  invisible(results)
+}
 

@@ -1078,7 +1078,7 @@ get_existing_concentration_calc <- function(conn,
                                             plate_nom) {
 
   query <- glue::glue(
-    "SELECT * FROM madi_results.get_job_status2(
+    "SELECT * FROM madi_results.get_freq_status(
         {project_id},
         '{study_accession}',
         '{experiment_accession}',
