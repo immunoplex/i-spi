@@ -1786,7 +1786,7 @@ observeEvent(
     output$can_fit_standard_curve <- reactive({ can_fit_standard_curve() })
     outputOptions(output, "can_fit_standard_curve", suspendWhenHidden = FALSE)
     
-    
+     
     output$freq_fit_status_ui <- renderUI({
       cid <- tryCatch(selected_curve_id(), error = function(e) NULL)
       
@@ -3139,6 +3139,8 @@ observeEvent(
           all_results$sample_se[[i]]        <- res$sample_se
           all_results$best_pred[[i]]        <- res$best_pred
           all_results$best_standard[[i]]    <- res$best_standard
+          all_results$candidate_parameters[[i]] <- res$candidate_parameters
+          all_results$candidate_residuals[[i]] <- res$candidate_residuals
           #  all_results$best_curve_id[[i]]    <- res$best_curve_id
           
           message(sprintf("[test_batch] %d/%d  curve_id=%s  antigen=%s  OK",
@@ -3968,6 +3970,8 @@ lapply(c("study", "experiment", "plate"), function(s) {
         all_results$sample_se[[i]]        <- res$sample_se
         all_results$best_pred[[i]]        <- res$best_pred
         all_results$best_standard[[i]]    <- res$best_standard
+        all_results$candidate_parameters[[i]] <- res$candidate_parameters
+        all_results$candidate_residuals[[i]] <- res$candidate_residuals
         
         message(sprintf("[interp_batch] %d/%d  curve_id=%s  antigen=%s  OK",
                         i, n_total, cid, cur_antigen))
@@ -3989,8 +3993,16 @@ lapply(c("study", "experiment", "plate"), function(s) {
       else if ("mfi" %in% names(df))     names(df)[names(df) == "mfi"]        <- "assay_response"
       df
     }
+    rename_conf_model <- function(df) {
+      if ("conf.low" %in% names(df)) names(df)[names(df) == "conf.low"] <- "conf_lower"
+      if ("conf.high" %in% names(df)) names(df)[names(df) == "conf.high"] <- "conf_upper"
+      if ("model" %in% names(df)) names(df)[names(df) == "model"] <- "model_name"
+      df
+    }
     combined$sample_se     <- rename_response(combined$sample_se)
     combined$best_standard <- rename_response(combined$best_standard)
+    combined$candidate_parameters <- rename_conf_model(combined$candidate_parameters)
+    combined$candidate_residuals <- rename_conf_model(combined$candidate_residuals)
     
     n_ok <- sum(vapply(all_results$best_fit_summary, Negate(is.null), logical(1)))
     
