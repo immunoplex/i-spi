@@ -2704,7 +2704,8 @@ upsert_freq_results <- function(conn, combined, schema = "madi_results",
     freq_curve_grid = combined$best_pred,
     freq_standard   = combined$best_standard,
     freq_candidate_parameters = combined$candidate_parameters,
-    freq_candidate_residuals = combined$candidate_residuals
+    freq_candidate_residuals = combined$candidate_residuals,
+    freq_second_derivative  = combined$second_derivative
   )
   
   results <- vapply(names(table_map), function(tbl) {

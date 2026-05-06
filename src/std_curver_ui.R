@@ -3972,6 +3972,7 @@ lapply(c("study", "experiment", "plate"), function(s) {
         all_results$best_standard[[i]]    <- res$best_standard
         all_results$candidate_parameters[[i]] <- res$candidate_parameters
         all_results$candidate_residuals[[i]] <- res$candidate_residuals
+        all_results$second_derivative[[i]] <- res$second_derivative
         
         message(sprintf("[interp_batch] %d/%d  curve_id=%s  antigen=%s  OK",
                         i, n_total, cid, cur_antigen))
@@ -3997,12 +3998,14 @@ lapply(c("study", "experiment", "plate"), function(s) {
       if ("conf.low" %in% names(df)) names(df)[names(df) == "conf.low"] <- "conf_lower"
       if ("conf.high" %in% names(df)) names(df)[names(df) == "conf.high"] <- "conf_upper"
       if ("model" %in% names(df)) names(df)[names(df) == "model"] <- "model_name"
+      if ("x" %in% names(df)) names(df)[names(df) == "x"] <- "concentration"
       df
     }
     combined$sample_se     <- rename_response(combined$sample_se)
     combined$best_standard <- rename_response(combined$best_standard)
     combined$candidate_parameters <- rename_conf_model(combined$candidate_parameters)
     combined$candidate_residuals <- rename_conf_model(combined$candidate_residuals)
+    combined$second_derivative <- rename_conf_model(combined$second_derivative)
     
     n_ok <- sum(vapply(all_results$best_fit_summary, Negate(is.null), logical(1)))
     
