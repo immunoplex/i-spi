@@ -107,8 +107,8 @@ RUN R -e "install.packages('bit64')"
 RUN R -e "install.packages('shinycssloaders')"
 
 
-# Install stanassay from public GitHub (immunoplex/stanassay)
-RUN R -e "remotes::install_github('immunoplex/stanassay', upgrade='never')"
+# stanassay removed (calib refactor): all curve fitting runs in the
+# i-spi-compute worker; the app no longer loads stanassay.
 
 RUN rm -rf /srv/shiny-server/*
 

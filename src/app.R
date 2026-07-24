@@ -1115,17 +1115,47 @@ server <- function(input, output, session) {
       source("blank_control_ui.R", local = TRUE)
       source('propagate_functions.R', local = TRUE)
 
-      source("std_curver_ui.R", local = TRUE)
+      # REMOVED (calib refactor): std_curver_ui.R -> dead/. The tab is rendered
+      # by stdCurveModule (override below); this also excises all stanassay code.
       source("std_curve_functions.R", local = TRUE)
       source("db_functions.R", local = TRUE)
       source("model_functions.R", local = TRUE)
       # source("se_x_robust_fix.R", local = TRUE)
       source("plot_functions.R", local = TRUE)
-      source("bayes_concentration_functions.R", local = T)
-      source("batch_fit_functions.R", local = TRUE)
+      # REMOVED (calib refactor): bayes_concentration_functions.R,
+      # batch_fit_functions.R -> dead/ (no external consumers; live fitting now
+      # runs only in the i-spi-compute worker).
 
       source("std_curver_summary_ui.R", local = TRUE)
       source("std_curver_summary_functions.R", local = TRUE)
+
+      # =====================================================================
+      # calib_* standard-curve module  (restructured; reads worker results,
+      # does NO live fitting). std_curver_ui.R / batch_fit_functions.R /
+      # bayes_concentration_functions.R have now been removed (above). Still
+      # sourced because non-std-curve tabs use them: std_curve_functions.R,
+      # model_functions.R, propagate_functions.R, plot_functions.R.
+      #
+      # FOLLOW-UP (next slice): migrate std_curver_summary / study_overview /
+      # dilution_linearity / plot_functions off the local curve math (Y4.., d2x*,
+      # compute_concentration, ...) to fetch_calib_*, then drop those too.
+      # =====================================================================
+      source("calib_data_access.R",  local = TRUE)
+      source("compute_api_client.R", local = TRUE)
+      source("std_curve_module.R",   local = TRUE)
+
+      # Session-scoped DB handle for the module's calib_* reads (matches the
+      # app's per-connection pattern; closed when the session ends). A pool
+      # would be more robust for production -- swap conn here if you adopt one.
+      sc_conn <- get_db_connection()
+      session$onSessionEnded(function() try(DBI::dbDisconnect(sc_conn), silent = TRUE))
+
+      # Override the legacy render; start the module server ONCE (this block is
+      # already guarded by app_logic_initialized so it runs a single time).
+      output$std_curver_ui <- renderUI({ stdCurveModuleUI("std_curve") })
+      stdCurveServer("std_curve", conn = sc_conn, api = compute_api_client())
+      # (Optional later: pass scope = reactive(list(project_id = <current>,
+      #  source = <current>)) to filter the module to the app's selected project.)
 
       source("outliers.R", local = TRUE)
       source("outlier_ui1.R", local = TRUE)
