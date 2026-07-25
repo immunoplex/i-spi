@@ -868,6 +868,10 @@ server <- function(input, output, session) {
 
       refresh_data_trigger <- reactiveVal(0) # trigger to refresh data
       refresh_experiment_trigger <- reactiveVal(0) # trigger to refresh the experiment list
+      # Shared reload trigger for the calib_* tabs (Data tab, standard curve).
+      # Bumped by experiment change, the Data tab Refresh button, and (later) a
+      # mask save -- the single seam that keeps the static snapshots current.
+      reload_trigger <- reactiveVal(0)
       stored_plates_data <- reactiveValues()
       storedlong_plates_data <- reactiveValues()
       selected_studyexpplate <- reactiveValues()
@@ -1093,7 +1097,7 @@ server <- function(input, output, session) {
       source("study_overview_ui.R", local = TRUE)
       source("antigen_family_ui.R", local = TRUE)
       source("split_plates_nominal_sample_dilution.R", local = TRUE)
-      source("load_previous_stored_data.R", local=TRUE)
+      source("plate_ops.R", local=TRUE)  # was load_previous_stored_data.R (retired -> dead/); wide-format loader/bundle/renderers removed, plate-ops + validators kept
 
       source("plate_validator_functions.R", local = TRUE)
       source("generate_layout_template_ref.R", local = TRUE)
@@ -1143,19 +1147,31 @@ server <- function(input, output, session) {
       source("calib_data_access.R",  local = TRUE)
       source("compute_api_client.R", local = TRUE)
       source("std_curve_module.R",   local = TRUE)
+      source("data_dictionary.R",    local = TRUE)
+      source("data_tab_module.R",    local = TRUE)
 
-      # Session-scoped DB handle for the module's calib_* reads (matches the
-      # app's per-connection pattern; closed when the session ends). A pool
-      # would be more robust for production -- swap conn here if you adopt one.
-      sc_conn <- get_db_connection()
-      session$onSessionEnded(function() try(DBI::dbDisconnect(sc_conn), silent = TRUE))
+      # Shared read scope + reload trigger for the calib_* tabs. reload_trigger is
+      # bumped on experiment change, the Data tab's Refresh button, and (later) a
+      # mask save -- the one seam that keeps the static snapshots current.
+      calib_scope <- reactive(list(
+        study      = input$readxMap_study_accession,
+        experiment = input$readxMap_experiment_accession,
+        project_id = userWorkSpaceID()
+      ))
+      observeEvent(input$readxMap_experiment_accession, {
+        reload_trigger(isolate(reload_trigger()) + 1)
+      }, ignoreInit = TRUE)
 
-      # Override the legacy render; start the module server ONCE (this block is
-      # already guarded by app_logic_initialized so it runs a single time).
+      # Standard-curve tab: module renders into the existing slot. Uses the pool.
       output$std_curver_ui <- renderUI({ stdCurveModuleUI("std_curve") })
-      stdCurveServer("std_curve", conn = sc_conn, api = compute_api_client())
-      # (Optional later: pass scope = reactive(list(project_id = <current>,
-      #  source = <current>)) to filter the module to the app's selected project.)
+      stdCurveServer("std_curve", conn = db_pool, api = compute_api_client())
+
+      # Data tab: flat controller (un-namespaced, so plate-ops keep their
+      # stored_header_rows_selected / stored_plates_data contract). Reads via the
+      # pool; mirrors raw frames into stored_plates_data for plate-ops.
+      dataTabServer(input, output, session, conn = db_pool,
+                    scope = calib_scope, reload_trigger = reload_trigger,
+                    stored_plates_data = stored_plates_data)
 
       source("outliers.R", local = TRUE)
       source("outlier_ui1.R", local = TRUE)

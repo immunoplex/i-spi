@@ -569,58 +569,7 @@ output$dynamic_data_ui <- renderUI({
     input$study_level_tabs == "Experiments" &&
     input$main_tabs == "view_files_tab"
   ) {
-    tagList(
-      actionButton(
-        inputId = "refresh_data_button",
-        label = "Refresh Data",
-        icon = icon("refresh")
-      ),
-      downloadButton(
-        outputId = "download_rdata_bundle",
-        label = "R Data Bundle",
-        icon = icon("download")
-      ) |> tagAppendAttributes(
-        title = "Downloads an RData file containing plates, standards, blanks, controls, samples, and sample QC dataframes."
-      ),
-    tabsetPanel(
-      id = "dataCollapse",
-      tabPanel(
-        title = "Plates",
-        DT::dataTableOutput("stored_header"),
-        downloadButton("download_stored_header"),
-        uiOutput("header_actions"),
-        uiOutput("split_plate_nominal_UI"),
-        uiOutput("wavelength_subtraction_UI")
-       # uiOutput("split_button_ui")
-      ),
-      tabPanel(
-        title = "Standards",
-        DT::dataTableOutput("swide_standard"),
-        downloadButton("download_stored_standard")
-      ),
-      tabPanel(
-        title = "Controls",
-        DT::dataTableOutput("swide_control"),
-        downloadButton("download_stored_control")
-      ),
-      tabPanel(
-        title = "Blanks",
-        DT::dataTableOutput("swide_buffer"),
-        downloadButton("download_stored_buffer")
-      ),
-      tabPanel(
-        title = "Samples",
-        DT::dataTableOutput("swide_sample"),
-        downloadButton("download_stored_sample")
-      ),
-      tabPanel(
-        title = "Samples QC",
-        DT::dataTableOutput("stored_best_sample_se"),
-        downloadButton("download_stored_best_sample_se")
-
-      )
-    )
-    )
+    dataTabUI()
   } else {
     NULL  # Removes the bsCollapse completely
   }

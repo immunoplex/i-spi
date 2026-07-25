@@ -11,7 +11,7 @@ library(shinyjs);
 library(shinyalert); library(shinydashboard);
 library(shinyWidgets); library(shinyFiles);
 library(shinybusy); library(shinyBS); library(readxl); library(openxlsx);
-library(RPostgres); library(glue); library(DBI); library(DT); library(sqldf);
+library(RPostgres); library(glue); library(DBI); library(DT); library(sqldf); library(pool);
 library(datamods); library(data.table); library(stringi); library(stringr);
 library(tidyverse); library(tidyr); library(plyr); library(modelr); library(robustbase);
 library(broom); library(rhandsontable); library(sendmailR);
@@ -202,6 +202,30 @@ get_db_connection <- function() {
             options = "-c search_path=madi_results"
   )
 }
+
+# App-level connection pool (shared across sessions). Preferred over holding a
+# per-session connection open: it reuses connections (no per-query handshake),
+# revalidates/reconnects stale ones (kills "server closed the connection" errors
+# on long, bursty sessions), evicts idle ones (frees max_connections slots), and
+# caps total usage. Passed as `conn` to the calib_* readers, which call
+# dbGetQuery(conn, ...) -- DBI dispatches on a Pool exactly as on a connection.
+# For multi-statement writes (the coming masking slice) use
+# pool::poolWithTransaction(db_pool, function(c) { ... }) so they share one conn.
+db_pool <- pool::dbPool(
+  RPostgres::Postgres(),
+  dbname   = Sys.getenv("db"),
+  host     = Sys.getenv("db_host"),
+  port     = Sys.getenv("db_port", "5432"),
+  user     = Sys.getenv("db_userid_x"),
+  password = Sys.getenv("db_pwd_x"),
+  sslmode  = "require",
+  options  = "-c search_path=madi_results",
+  minSize  = 1,
+  maxSize  = 8,
+  idleTimeout        = 60 * 1000,  # ms: drop idle connections after 60s
+  validationInterval = 30          # s: re-check a connection at most every 30s
+)
+shiny::onStop(function() try(pool::poolClose(db_pool), silent = TRUE))
 
 # Returns a plain list of connection parameters (no live connection object)
 get_db_connection_args <- function() {
