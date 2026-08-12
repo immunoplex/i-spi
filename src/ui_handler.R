@@ -59,7 +59,7 @@ getProjectName <- function(conn, current_user){
 }
 
 # returns a data frame for the experiment in the study and project and return ELISA or bead_assy
-# used to determine if it is a bead based assay or not. 
+# used to determine if it is a bead based assay or not.
 get_exp_assay_type <- function(conn, project_id, study_accession, experiment_accession) {
   query <- glue::glue("SELECT
     project_id,
@@ -79,7 +79,7 @@ GROUP BY
     experiment_accession,
     assay_type
 LIMIT 1;")
-  
+
   result <- dbGetQuery(conn, query)
   return(result)
 }
@@ -174,29 +174,13 @@ output$study_sidebar <- renderUI({
       menuItem("Import Plate Data", tabName = "import_tab", icon = icon("file")),
       menuItem("View, Process, and Export Data", tabName = "view_files_tab", icon = icon("dashboard")),
       menuItem("Change Study Settings", tabName = "study_settings", icon = icon("cog")),
-      menuItem("Delete Study Data", tabName = "delete_study", icon = icon("delete-left"))
+      menuItem("Study Overview", tabName = "study_overview", icon = icon("chart-line"))
     )
   } else {
-    # disabled visual: mimic menu appearance but not interactive
-    # You can customize CSS further to grey them out; this is a simple, accessible version.
+    # Hidden until a study is selected (#5): show only a prompt, no menu items.
     tags$div(style = "padding: 10px; color: #888;",
-             tags$strong("Study options are disabled"),
-             tags$p("Select or create a study to enable these actions."),
-             tags$ul(class = "sidebar-menu",
-                     tags$li(class = "treeview disabled",
-                             tags$a(href = "#", icon("file"), "Import Plate Data")
-                     ),
-                     tags$li(class = "treeview disabled",
-                             tags$a(href = "#", icon("dashboard"), "View, Process, and Export Data")
-                     ),
-                     tags$li(class = "treeview disabled",
-                             tags$a(href = "#", icon("cog"), "Change Study Settings")
-                     ),
-                     tags$li(class = "treeview disabled",
-                             tags$a(href = "#", icon("delete-left"), "Delete Study Data")
-                     )
-             )
-    )
+             tags$strong("Study options are hidden"),
+             tags$p("Select or create a study to show Import; View, Process, and Export; Study Configuration; and Study Overview."))
   }
 })
 
@@ -208,7 +192,7 @@ observeEvent(input$readxMap_study_accession, {
                     choices = c("Click here" = "Click here"),
                     selected = "Click here"
   )
-  
+
   val <- input$readxMap_study_accession
   enabled <- !is.null(val) && nzchar(trimws(val)) && val != "Click here"
 
@@ -261,8 +245,8 @@ output$landing_page_ui <- renderUI({
             tags$p("If you need to change a study’s settings, click Change Study Settings in the sidebar.")
           ),
           tags$li(
-            tags$p("Delete Study Data"),
-            tags$p("If you need to remove all ofa study's data, click Delete Study Data in the sidebar.")
+            tags$p("Delete Study Components"),
+            tags$p("To delete a single experiment or a whole study, click Delete Study Components in the sidebar.")
           ),
           tags$li(
             tags$p("Conduct Analyses"),
@@ -307,7 +291,7 @@ output$body_tabs <- renderUI({
       tabItem(tabName = "study_settings", uiOutput("studyParameters_UI")),
       tabItem(tabName = "import_tab", uiOutput("readxMapData")),
       tabItem(tabName = "manage_project_tab", uiOutput("manage_project_ui")),
-      tabItem(tabName = "delete_study", uiOutput("delete_study_ui"))
+      tabItem(tabName = "study_overview", studyOverviewUI("study_overview"))
     )
    # dynamic_tabs  # append dynamic tabs here
   ))
@@ -423,7 +407,7 @@ output$view_stored_experiments_ui <- renderUI({
 
 # if (input$readxMap_study_accession != "Click here") {
    stored_plate_title <- paste("View, Process, and Export", input$readxMap_study_accession, "Data", sep = " ")
-   
+
 
   tagList(
     fluidPage(
@@ -472,7 +456,7 @@ output$view_stored_experiments_ui <- renderUI({
                           radioGroupButtons(
                             inputId = "qc_component",
                             label = "",
-                            choices = c("Bead Count", "Standard Curve",  "Standard Curve Summary"),
+                            choices = c("Bead Count", "Standard Curve"),
                             selected = character(0)
                           ),
                           conditionalPanel(
@@ -484,8 +468,8 @@ output$view_stored_experiments_ui <- renderUI({
                             condition = "input.qc_component == 'Bead Count' && output.exp_assay_type_js == 'ELISA'",
                             uiOutput("bead_not_available_ui")
                           ),
-                          
-                          
+
+
                           # conditionalPanel(
                           #   condition = "input.qc_component == 'Standard Curve'",
                           #  uiOutput("sc_fit_module_ui")
@@ -493,61 +477,59 @@ output$view_stored_experiments_ui <- renderUI({
                           conditionalPanel(
                             condition = "input.qc_component == 'Standard Curve'",
                             uiOutput("std_curver_ui")
-                          ),
+                          )
 
                           # conditionalPanel(
                           #   condition = "input.qc_component == 'Standard Curve Summary'",
                           #   uiOutput("standardCurveSummaryUI")
                           # ),
-                          conditionalPanel(
-                            condition = "input.qc_component == 'Standard Curve Summary'",
-                            uiOutput("std_curver_summary_ui")
-                          )
+                          # conditionalPanel(
+                          #   condition = "input.qc_component == 'Standard Curve Summary'",
+                          #   uiOutput("std_curver_summary_ui")
+                          # )
                         ),
 
-                        tabPanel(
-                          id = "advance_qc",
-                          title = "Advanced Diagnostics",
-                          radioGroupButtons(
-                            inputId = "advanced_qc_component",
-                            label = "Advanced QC Phase",
-                            choices = c("Dilution Analysis", "Dilutional Linearity",
-                                        "Outliers", "Subgroup Detection", "Subgroup Detection Summary"),
-                            selected = character(0)
-                          ),
-
-                          # Conditional panels for advanced QC only
-                          conditionalPanel(
-                            condition = "input.advanced_qc_component == 'Dilution Analysis'",
-                           uiOutput("dilutionAnalysisUI")
-                          ),
-                          conditionalPanel(
-                            condition = "input.advanced_qc_component == 'Dilutional Linearity'",
-                           uiOutput("dilutional_linearity_mod_ui")
-                          ),
-                          conditionalPanel(
-                            condition = "input.advanced_qc_component == 'Outliers'",
-                             uiOutput("outlierTab")
-                          ),
-                          conditionalPanel(
-                            condition = "input.advanced_qc_component == 'Subgroup Detection'",
-                            uiOutput("subgroupDetectionUI")
-                          ),
-                          conditionalPanel(
-                            condition = "input.advanced_qc_component == 'Subgroup Detection Summary'",
-                            uiOutput("subgroup_summary_UI")
-                          )
-                        )
-                      ),
+                        # tabPanel(
+                        #   id = "advance_qc",
+                        #   title = "Advanced Diagnostics",
+                        #   radioGroupButtons(
+                        #     inputId = "advanced_qc_component",
+                        #     label = "Advanced QC Phase",
+                        #     choices = c("Dilution Analysis", "Dilutional Linearity",
+                        #                 "Outliers", "Subgroup Detection", "Subgroup Detection Summary"),
+                        #     selected = character(0)
+                        #   ),
+                        #
+                        #   # Conditional panels for advanced QC only
+                        #   conditionalPanel(
+                        #     condition = "input.advanced_qc_component == 'Dilution Analysis'",
+                        #    uiOutput("dilutionAnalysisUI")
+                        #   ),
+                        #   conditionalPanel(
+                        #     condition = "input.advanced_qc_component == 'Dilutional Linearity'",
+                        #    uiOutput("dilutional_linearity_mod_ui")
+                        #   ),
+                        #   conditionalPanel(
+                        #     condition = "input.advanced_qc_component == 'Outliers'",
+                        #      uiOutput("outlierTab")
+                        #   ),
+                        #   conditionalPanel(
+                        #     condition = "input.advanced_qc_component == 'Subgroup Detection'",
+                        #     uiOutput("subgroupDetectionUI")
+                        #   ),
+                        #   conditionalPanel(
+                        #     condition = "input.advanced_qc_component == 'Subgroup Detection Summary'",
+                        #     uiOutput("subgroup_summary_UI")
+                        #   )
+                        # )
+                      )
+                      # ,
                     )
                    #)
                    ),
-          ),
-          # Study Overview Tab
-          tabPanel("Study Overview",
-                   id = "study_overview_tab",
-                   uiOutput("study_overview_page")
-          ),# end TabsetPanel
+          )
+          # Study Overview moved to the main sidebar (tabName "study_overview");
+          # rendered via body_tabs + study_overview_ui.R (input$study_tabs).
         #) # end study level tabs
       ) # end  Study Level Content
       ) # end fluidPage
@@ -580,7 +562,7 @@ exp_assay_info <- reactive({
   req(input$readxMap_study_accession,
       input$readxMap_experiment_accession,
       userWorkSpaceID())
-  
+
   # Query the DB – returns a data.frame with column "assay_type"
   res <- get_exp_assay_type(
     conn                 = conn,
@@ -589,7 +571,7 @@ exp_assay_info <- reactive({
     experiment_accession = input$readxMap_experiment_accession
   )
   assay_type <- if (nrow(res) == 0) NA_character_ else res$assay_type[1]
-  
+
   list(
     assay_type          = assay_type,
     study_accession     = input$readxMap_study_accession,
@@ -605,14 +587,14 @@ output$exp_assay_type_js <- renderText({
   } else {
     info$assay_type
   }
-  
+
 })
 
 output$bead_not_available_ui <- renderUI({
   info <- exp_assay_info()
   # Show the box only for ELISA assays
   if (info$assay_type != "ELISA") return(NULL)
-  
+
   txt <- sprintf(
     "Current Study: <strong>%s</strong><br>
      Current Experiment: <strong>%s</strong><br>
@@ -629,7 +611,7 @@ output$bead_count_available_ui <- renderUI({
   info <- exp_assay_info()
   # Show the box only for bead assays assays
   if (info$assay_type != "bead_assay") return(NULL)
-  
+
   txt <- sprintf(
     "Current Study: <strong>%s</strong><br>
      Current Experiment: <strong>%s</strong><br>
@@ -642,8 +624,8 @@ output$bead_count_available_ui <- renderUI({
 })
 
 
-  
-  
+
+
 # Keep it alive even when the UI element that uses it is hidden
 outputOptions(output, "exp_assay_type_js", suspendWhenHidden = FALSE)
 
@@ -662,322 +644,7 @@ output$split_button_ui <- renderUI({
 })
 
 # In Plates tab
-output$split_plate_nominal_UI <- renderUI({
-  req(input$stored_header_rows_selected)
-  if ((split_by_nominal_dilution())) {
-    actionButton("split_plates_nominal", "Split Plate by Nominal Sample Dilution")
-  } else {
-    NULL
-  }
-})
-
-output$wavelength_subtraction_UI <- renderUI({
-  req(input$stored_header_rows_selected)
-  if ((show_wavelength_subtraction())) {
-    actionButton("wavelength_subtraction", "Subtract Wavelengths")
-  } else {
-    NULL
-  }
-})
-
-observeEvent(input$split_plates_nominal,{
-  cat("split plates by nominal_sample dilution")
-  header_row_selected <- stored_plates_data$stored_header[input$stored_header_rows_selected,]
-
-  print(header_row_selected)
-  split_plate_nominal_sample_dilution(
-    study_accession = header_row_selected$study_accession,
-    experiment_accession = header_row_selected$experiment_accession,
-    plateid = header_row_selected$plateid,
-    conn = conn
-  )
-})
-
-## wavelength subtraction
-observeEvent(input$wavelength_subtraction, {
-  cat("starting subtraction\n")
-  
-  showNotification(id = "subtract_wavelength_notify", 
-                   HTML("Subtracting wavelengths<span class='dots'>"), 
-                   duration = NULL, type = "message")
-  
-  header_row_selected <- stored_plates_data$stored_header[input$stored_header_rows_selected, ]
-  
-  args <- list(
-    study_accession         = header_row_selected$study_accession,
-    experiment_accession    = header_row_selected$experiment_accession,
-    plate                   = header_row_selected$plate,
-    nominal_sample_dilution = header_row_selected$nominal_sample_dilution,
-    wavelengths             = header_row_selected$wavelengths
-  )
-  
-  std_ctrl_buf_join_keys <- c(
-    "project_id", "study_accession", "experiment_accession",
-    "well", "sampleid", "antigen", "dilution",
-    "feature", "source", "stype",
-    "nominal_sample_dilution", "plate"
-  )
-  
-  sample_join_keys <- c(
-    "project_id", "study_accession", "experiment_accession",
-    "well", "sampleid", "patientid", "timeperiod",
-    "antigen", "feature", "stype", "dilution"
-  )
-  
-  delta_standard <- do.call(subtract_wavelength_mfi, c(
-    list(df = stored_plates_data$stored_standard, join_keys = std_ctrl_buf_join_keys), args))
-  
-  delta_control <- do.call(subtract_wavelength_mfi, c(
-    list(df = stored_plates_data$stored_control, join_keys = std_ctrl_buf_join_keys), args))
-  
-  delta_buffer <- do.call(subtract_wavelength_mfi, c(
-    list(df = stored_plates_data$stored_buffer, join_keys = std_ctrl_buf_join_keys), args))
-  
-  
-  # delta_standard <- do.call(subtract_wavelength_mfi, c(list(df = stored_plates_data$stored_standard), args))
-  # delta_control  <- do.call(subtract_wavelength_mfi, c(list(df = stored_plates_data$stored_control),  args))
-  # delta_buffer   <- do.call(subtract_wavelength_mfi, c(list(df = stored_plates_data$stored_buffer),   args))
-  
-  delta_sample <- do.call(subtract_wavelength_mfi, c(
-    list(df = stored_plates_data$stored_sample, join_keys = sample_join_keys),
-    args
-  ))
-  
-  # for (tbl in c("xmap_standard", "xmap_control", "xmap_buffer", "xmap_sample", "xmap_header")) {
-  #   cat("\n---", tbl, "---\n")
-  #   col_sql <- glue::glue("
-  #   SELECT column_name, column_default, is_nullable
-  #   FROM information_schema.columns
-  #   WHERE table_schema = 'madi_results'
-  #     AND table_name = '{tbl}'
-  #   ORDER BY ordinal_position;
-  # ")
-  #   print(DBI::dbGetQuery(conn, col_sql))
-  # }
-  
-  
-  if (!is.null(delta_standard) && nrow(delta_standard) > 0) {
-    showNotification(id = "subtract_wavelength_notify",
-                     HTML("Subtracting wavelengths.. saving standards<span class='dots'>"),
-                     duration = NULL, type = "message")
-    insert_delta_sql(conn, "madi_results", "xmap_standard", delta_standard)
-  }
-
-  if (!is.null(delta_control) && nrow(delta_control) > 0) {
-    showNotification(id = "subtract_wavelength_notify",
-                     HTML("Subtracting wavelengths... saving controls<span class='dots'>"),
-                     duration = NULL, type = "message")
-    insert_delta_sql(conn, "madi_results", "xmap_control", delta_control)
-  }
-
-  if (!is.null(delta_buffer) && nrow(delta_buffer) > 0) {
-    showNotification(id = "subtract_wavelength_notify",
-                     HTML("Subtracting wavelengths... saving blanks<span class='dots'>"),
-                     duration = NULL, type = "message")
-    insert_delta_sql(conn, "madi_results", "xmap_buffer", delta_buffer)
-  }
-
-  if (!is.null(delta_sample) && nrow(delta_sample) > 0) {
-    showNotification(id = "subtract_wavelength_notify",
-                     HTML("Subtracting wavelengths... saving samples<span class='dots'>"),
-                     duration = NULL, type = "message")
-    insert_delta_sql(conn, "madi_results", "xmap_sample", delta_sample)
-  }
-
-  # Insert delta header
-  delta_header <- header_row_selected
-  delta_header$experiment_accession <- paste0(header_row_selected$experiment_accession, "|D")
-  delta_header$wavelengths <- "delta"
-  insert_delta_sql(conn, "madi_results", "xmap_header", delta_header)
-
-  #show_wavelength_subtraction(FALSE)
-  
-  # Copy antigen family settings from base experiment to delta experiment
-  delta_experiment <- paste0(header_row_selected$experiment_accession, "|D")
-  base_experiment  <- header_row_selected$experiment_accession
-  
-  antigen_family_base <- DBI::dbGetQuery(conn, glue::glue("
-    SELECT * FROM madi_results.xmap_antigen_family
-    WHERE study_accession      = '{header_row_selected$study_accession}'
-      AND experiment_accession = '{base_experiment}'
-      AND project_id           = {header_row_selected$project_id}
-      AND NOT EXISTS (
-        SELECT 1 FROM madi_results.xmap_antigen_family tgt
-        WHERE tgt.study_accession      = '{header_row_selected$study_accession}'
-          AND tgt.experiment_accession = '{delta_experiment}'
-          AND tgt.antigen              = xmap_antigen_family.antigen
-          AND tgt.project_id           = {header_row_selected$project_id}
-      );
-  "))
-  
-  if (nrow(antigen_family_base) > 0) {
-    antigen_family_base$experiment_accession <- delta_experiment
-    # remove the pkey 
-    antigen_family_base <- antigen_family_base[, !names(antigen_family_base) %in% "xmap_antigen_family_id"]
-    insert_delta_sql(conn, "madi_results", "xmap_antigen_family", antigen_family_base)
-    cat("antigen family rows copied to delta experiment:", nrow(antigen_family_base), "\n")
-  } else {
-    cat("no antigen family rows to copy\n")
-  }
-  
-  showNotification(id = "subtract_wavelength_notify",
-                   "Wavelength subtraction complete!",
-                   duration = NULL, type = "message")
-  removeNotification(id = "subtract_wavelength_notify")
-
-  cat("all delta inserts complete\n")
-})
-
-
-# observeEvent(input$wavelength_subtraction, {
-#   cat("starting subtraction\n")
-#   showNotification(id = "subtract_wavelength_notify", HTML("Subtracting Wavelength for the selected plate<span class = 'dots'>"), duration = NULL)
-#   header_row_selected <- stored_plates_data$stored_header[input$stored_header_rows_selected, ]
-#   
-#   args <- list(
-#     study_accession         = header_row_selected$study_accession,
-#     experiment_accession    = header_row_selected$experiment_accession,
-#     plate                   = header_row_selected$plate,
-#     nominal_sample_dilution = header_row_selected$nominal_sample_dilution,
-#     wavelengths             = header_row_selected$wavelengths
-#   )
-#   
-#   delta_standard <<- do.call(subtract_wavelength_mfi, c(list(df = stored_plates_data$stored_standard), args))
-#   delta_control  <<- do.call(subtract_wavelength_mfi, c(list(df = stored_plates_data$stored_control),  args))
-#   delta_buffer   <<-  do.call(subtract_wavelength_mfi, c(list(df = stored_plates_data$stored_buffer),   args))
-#   
-#   sample_join_keys <- c(
-#     "project_id",
-#     "study_accession", 
-#     "experiment_accession",
-#     "well",
-#     "sampleid",
-#     "patientid",
-#     "timeperiod", 
-#     "antigen",
-#     "feature",
-#     "stype",
-#     "dilution"
-#   )
-#   
-#   delta_sample <<- do.call(subtract_wavelength_mfi, c(
-#     list(df = stored_plates_data$stored_sample, join_keys = sample_join_keys),
-#     args
-#   ))
-#   
-#   # # --- Insert delta results to DB ---
-#   # cat("inserting delta results to DB\n")
-#   # 
-#   # if (!is.null(delta_standard) && nrow(delta_standard) > 0) {
-#   #   update_db(
-#   #     operation  = "insert",
-#   #     schema     = "madi_results",
-#   #     table_name = "xmap_standard",
-#   #     data       = delta_standard
-#   #   )
-#   #   cat("delta_standard inserted:", nrow(delta_standard), "rows\n")
-#   # } else {
-#   #   cat("delta_standard empty, skipping insert\n")
-#   # }
-#   # 
-#   # if (!is.null(delta_control) && nrow(delta_control) > 0) {
-#   #   update_db(
-#   #     operation  = "insert",
-#   #     schema     = "madi_results",
-#   #     table_name = "xmap_control",
-#   #     data       = delta_control
-#   #   )
-#   #   cat("delta_control inserted:", nrow(delta_control), "rows\n")
-#   # } else {
-#   #   cat("delta_control empty, skipping insert\n")
-#   # }
-#   # 
-#   # if (!is.null(delta_buffer) && nrow(delta_buffer) > 0) {
-#   #   update_db(
-#   #     operation  = "insert",
-#   #     schema     = "madi_results",
-#   #     table_name = "xmap_buffer",
-#   #     data       = delta_buffer
-#   #   )
-#   #   cat("delta_buffer inserted:", nrow(delta_buffer), "rows\n")
-#   # } else {
-#   #   cat("delta_buffer empty, skipping insert\n")
-#   # }
-#   # 
-#   # if (!is.null(delta_sample) && nrow(delta_sample) > 0) {
-#   #   update_db(
-#   #     operation  = "insert",
-#   #     schema     = "madi_results",
-#   #     table_name = "xmap_sample",
-#   #     data       = delta_sample
-#   #   )
-#   #   cat("delta_sample inserted:", nrow(delta_sample), "rows\n")
-#   # } else {
-#   #   cat("delta_sample empty, skipping insert\n")
-#   # }
-#   # 
-#   cat("all delta inserts complete\n")
-# 
-#   cat("subtract completed\n")
-#   removeNotification("subtract_wavelength_notify")
-#   
-# })
-# observeEvent(input$wavelength_subtraction, {
-#   cat("starting subtraction")
-#   header_row_selected <- stored_plates_data$stored_header[input$stored_header_rows_selected, ]
-#   print(header_row_selected)
-#   print(str(stored_plates_data$stored_standard))
-#   
-#   delta_standard <<- subtract_wavelength_mfi(
-#     df                   = stored_plates_data$stored_standard,
-#     study_accession      = header_row_selected$study_accession,
-#     experiment_accession = header_row_selected$experiment_accession,
-#     plate              = header_row_selected$plate,
-#     nominal_sample_dilution = header_row_selected$nominal_sample_dilution,
-#     wavelengths          = header_row_selected$wavelengths
-#   )
-#   
-#   delta_control <<- subtract_wavelength_mfi(
-#     df                   = stored_plates_data$stored_control,
-#     study_accession      = header_row_selected$study_accession,
-#     experiment_accession = header_row_selected$experiment_accession,
-#     plate                 = header_row_selected$plate,
-#     nominal_sample_dilution = header_row_selected$nominal_sample_dilution,
-#     wavelengths          = header_row_selected$wavelengths
-#   )
-#   
-#   delta_buffer <<- subtract_wavelength_mfi(
-#     df                   = stored_plates_data$stored_buffer,
-#     study_accession      = header_row_selected$study_accession,
-#     experiment_accession = header_row_selected$experiment_accession,
-#     plate              = header_row_selected$plate,
-#     nominal_sample_dilution = header_row_selected$nominal_sample_dilution,
-#     wavelengths          = header_row_selected$wavelengths
-#   )
-#   
-#   delta_sample <<- subtract_wavelength_mfi(
-#     df                   = stored_plates_data$stored_sample,
-#     study_accession      = header_row_selected$study_accession,
-#     experiment_accession = header_row_selected$experiment_accession,
-#     plate                 = header_row_selected$plate,
-#     nominal_sample_dilution = header_row_selected$nominal_sample_dilution,
-#     wavelengths          = header_row_selected$wavelengths
-#   )
-#   
-#   cat("subtract completed")
-#   
-#   # perform_wavelength_subtraction(
-#   #   header_row_selected  = header_row_selected,
-#   #   delta_standard       = delta_standard,
-#   #   delta_control        = delta_control,
-#   #   delta_buffer         = delta_buffer,
-#   #   delta_sample         = delta_sample,
-#   #   conn                 = conn,
-#   #   refresh_data_trigger = refresh_data_trigger
-#   # )
-# })
-# 
-
+# --- [11.7] moved to derived_experiments.R ---
 observeEvent(input$optimize_plates, {
   split_optimization_plates(study_accession = input$readxMap_study_accession, experiment_accession = input$readxMap_experiment_accession )
 })
@@ -1133,50 +800,41 @@ observeEvent(input$study_level_tabs, {
 
 load_project <- function(conn, project_id, current_user){
     if (project_id != "") {
-      dbBegin(conn)
+      # `conn` is the pool (db_pool after the app.R flip); check out one
+      # connection for the transaction via poolWithTransaction. Control-flow
+      # rollbacks become stop()s mapped back to notifications in the handler.
       tryCatch({
-        result <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as user_count FROM madi_lumi_users.project_users WHERE project_id = {project_id} AND user_id = '{current_user}'"))
-        if (result$user_count > 0) {
-          # Retrieve the project name for the given project_id
+        pool::poolWithTransaction(conn, function(conn) {
+          result <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as user_count FROM madi_lumi_users.project_users WHERE project_id = {project_id} AND user_id = '{current_user}'"))
+          if (result$user_count <= 0) stop("no_access")
           project_name_query <- glue::glue("SELECT project_name FROM madi_lumi_users.projects WHERE project_id = {project_id}")
           project_name_result <- dbGetQuery(conn, project_name_query)
+          if (nrow(project_name_result) == 0) stop("not_found")
+          project_name <- project_name_result$project_name[1]
 
-          if (nrow(project_name_result) > 0) {
-            project_name <- project_name_result$project_name[1]
-
-            query_check <- sprintf("SELECT 1 FROM madi_results.xmap_users WHERE auth0_user = %s", dbQuoteLiteral(conn, current_user))
-            exists <- dbGetQuery(conn, query_check)
-
-            # Insert or update the user record
-            if (nrow(exists) == 0) {
-
-              query_insert <- glue::glue("INSERT INTO madi_results.xmap_users (auth0_user, project_name, workspace_id) VALUES ({dbQuoteLiteral(conn, current_user)}, {dbQuoteLiteral(conn, project_name)}, {project_id})")
-              dbExecute(conn, query_insert)
-              message("New user inserted in xmap.")
-            } else {
-
-              query_update <- glue::glue("UPDATE madi_results.xmap_users SET project_name = {dbQuoteLiteral(conn, project_name)}, workspace_id = {project_id} WHERE auth0_user = {dbQuoteLiteral(conn, current_user)}")
-              dbExecute(conn, query_update)
-
-              message("User updated in xmap.")
-            }
-
-            dbCommit(conn)
-            showNotification(glue::glue("Project {project_id} loaded successfully!"), type = "message")
+          query_check <- sprintf("SELECT 1 FROM madi_results.xmap_users WHERE auth0_user = %s", dbQuoteLiteral(conn, current_user))
+          exists <- dbGetQuery(conn, query_check)
+          if (nrow(exists) == 0) {
+            query_insert <- glue::glue("INSERT INTO madi_results.xmap_users (auth0_user, project_name, workspace_id) VALUES ({dbQuoteLiteral(conn, current_user)}, {dbQuoteLiteral(conn, project_name)}, {project_id})")
+            dbExecute(conn, query_insert); message("New user inserted in xmap.")
           } else {
-            dbRollback(conn)
-            showNotification("Project not found.", type = "error")
+            query_update <- glue::glue("UPDATE madi_results.xmap_users SET project_name = {dbQuoteLiteral(conn, project_name)}, workspace_id = {project_id} WHERE auth0_user = {dbQuoteLiteral(conn, current_user)}")
+            dbExecute(conn, query_update); message("User updated in xmap.")
           }
-        } else {
-          dbRollback(conn)
-          showNotification("You do not have access to the project you are trying to load.", type = "error")
-        }
+        })
+        showNotification(glue::glue("Project {project_id} loaded successfully!"), type = "message")
       }, error = function(e) {
-        dbRollback(conn)
-        showNotification(glue::glue("Failed to load project '{project_id}'. Error: {e$message}"), type = "error")
+        msg <- conditionMessage(e)
+        if (identical(msg, "no_access"))
+          showNotification("You do not have access to the project you are trying to load.", type = "error")
+        else if (identical(msg, "not_found"))
+          showNotification("Project not found.", type = "error")
+        else
+          showNotification(glue::glue("Failed to load project '{project_id}'. Error: {msg}"), type = "error")
       })
     }
-  source("import_lumifile.R", local=TRUE)
+  # 11.10: import UI is now the assay-import module (mounted once in app.R and
+  # reactive to the workspace); no per-project re-source of import_lumifile.R.
 }
 
 observeEvent(userWorkSpaceID(), {

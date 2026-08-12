@@ -1,0 +1,72 @@
+===== where is get_db_connection defined + called? =====
+global.R:179:get_db_connection <- function() {
+global.R:220:get_db_connection_args <- function() {
+global.R:231:get_db_connection_from_args <- function(host, port, dbname, user, pass) {
+app.R:859:      conn <- get_db_connection()
+
+===== app.R: context around the global creation (859) + who uses conn after =====
+859:      conn <- get_db_connection()
+1249:      dataTabServer(input, output, session, conn = db_pool,
+
+===== files that reference bare conn but DEFINE no conn param and have NO
+      poolWithTransaction wrapper -> these read a FREE (global) conn ========
+  FREE-conn?  app.R                              uses=3  (no conn param, no poolWithTransaction)
+  FREE-conn?  bead_count_analysis_ui.R           uses=3  (no conn param, no poolWithTransaction)
+  FREE-conn?  plate_management.R                 uses=30  (no conn param, no poolWithTransaction)
+  FREE-conn?  plate_ops.R                        uses=2  (no conn param, no poolWithTransaction)
+  FREE-conn?  settings_cascade_access.R          uses=1  (no conn param, no poolWithTransaction)
+  FREE-conn?  study_configuration_ui.R           uses=1  (no conn param, no poolWithTransaction)
+  FREE-conn?  study_overview.R                   uses=1  (no conn param, no poolWithTransaction)
+  FREE-conn?  user_management.R                  uses=22  (no conn param, no poolWithTransaction)
+  FREE-conn?  user.R                             uses=3  (no conn param, no poolWithTransaction)
+
+===== the 7 Bucket-E call sites, with 6 lines of context each =====
+--- db_functions.R:140 ---
+      df
+    }
+    
+    pull_data <- function(study_accession, experiment_accession, project_id, conn = conn) {
+      plates <- fetch_db_header(study_accession = study_accession,
+                                experiment_accession = experiment_accession,
+--- db_functions.R:665 ---
+      ##
+      ## Run diagnostics before any DB operations
+      ##
+      diag <- diagnose_upsert_data(df, table, conn = conn, schema = schema)
+    
+      ##
+--- assay_import_backend.R:153 ---
+              cat(sprintf("[commit] %s: duplicate-plate check\n", exp_acc))
+              plate_ids <- unique(header$plate_id)
+              existing  <- tryCatch(
+                check_existing_plates(conn = conn, project_id = project_id,
+                                      study_accession = study,
+                                      experiment_accession = exp_acc,
+--- assay_import_backend.R:193 ---
+              counts$standards <- counts$standards + nrow(standards)
+    
+              cat(sprintf("[commit] %s: register_curve_lookup\n", exp_acc))
+              cl <- register_curve_lookup(conn = conn, standards_df = standards,
+                                          project_id = project_id)
+              if (!isTRUE(cl$success))
+--- assay_import_backend.R:368 ---
+      }
+    
+      existing <- get_existing_visits(conn, study_accession)
+      insert_new_rows(conn = conn, schema = "madi_results", table = "xmap_planned_visit",
+                      new_data = planned, existing_data = existing,
+                      join_keys = c("study_accession", "timepoint_name"),
+--- derived_experiments.R:307 ---
+        cat("  [derived] no standards for", experiment, "-- no curves registered\n")
+        return(invisible(list(success = TRUE, rows_inserted = 0L, message = "no standards")))
+      }
+      register_curve_lookup(conn = conn, standards_df = std, project_id = project)
+    }
+    
+--- derived_experiments.R:407 ---
+        DBI::dbBegin(conn)
+        split_plate_nominal_sample_dilution(
+          study_accession = study, experiment_accession = exp,
+          plateid = hr$plateid, conn = conn)
+        register_derived_curves(conn, project = proj, study = study, experiment = exp)
+        DBI::dbCommit(conn); TRUE

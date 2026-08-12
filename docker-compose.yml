@@ -1,10 +1,10 @@
-version: '3'
-
 services:
   madi-toolset:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BUILD_STAMP: "${BUILD_STAMP:-dev}"
     env_file: .env
     environment:
       - SHINY_LOG_LEVEL=TRACE

@@ -1,0 +1,47 @@
+Candidate stale-fit functions found:
+  fetch_best_glance_all
+  fetch_best_glance_all_summary
+  fetch_best_glance_mcmc
+  fetch_best_plate_all
+  fetch_best_pred_all
+  fetch_best_pred_all_summary
+  fetch_best_pred_mcmc
+  fetch_best_pred_robust_concentrations
+  fetch_best_sample_robust_concentrations
+  fetch_best_sample_se_all
+  fetch_best_sample_se_all_summary
+  fetch_best_sample_se_mcmc
+  fetch_best_sampl_se_with_bayes
+  fetch_best_standard_all
+  fetch_best_standard_all_summary
+  fetch_best_tidy_all
+  fetch_combined_mcmc
+  update_combined_mcmc_bulk
+  upsert_best_curve
+
+function                                   verdict
+--------                                   -------
+fetch_best_glance_all                      SAFE (0 callers)
+fetch_best_glance_all_summary              SAFE (0 callers)
+fetch_best_glance_mcmc                     SAFE (0 callers)
+fetch_best_plate_all                       SAFE (0 callers)
+fetch_best_pred_all                        SAFE (0 callers)
+fetch_best_pred_all_summary                SAFE (0 callers)
+fetch_best_pred_mcmc                       SAFE (0 callers)
+fetch_best_pred_robust_concentrations      KEEP (1 caller(s))
+     -> db_functions.R:299:  mcmc_pred <- fetch_best_pred_robust_concentrations(study_accession = study_accession,
+fetch_best_sample_robust_concentrations    KEEP (1 caller(s))
+     -> db_functions.R:292:  mcmc_samples <- fetch_best_sample_robust_concentrations(study_accession = study_accession,
+fetch_best_sample_se_all                   SAFE (0 callers)
+fetch_best_sample_se_all_summary           SAFE (0 callers)
+fetch_best_sample_se_mcmc                  SAFE (0 callers)
+fetch_best_sampl_se_with_bayes             SAFE (0 callers)
+fetch_best_standard_all                    SAFE (0 callers)
+fetch_best_standard_all_summary            SAFE (0 callers)
+fetch_best_tidy_all                        SAFE (0 callers)
+fetch_combined_mcmc                        SAFE (0 callers)
+update_combined_mcmc_bulk                  SAFE (0 callers)
+upsert_best_curve                          SAFE (0 callers)
+
+SAFE-to-remove set:
+   fetch_best_glance_all fetch_best_glance_all_summary fetch_best_glance_mcmc fetch_best_plate_all fetch_best_pred_all fetch_best_pred_all_summary fetch_best_pred_mcmc fetch_best_sample_se_all fetch_best_sample_se_all_summary fetch_best_sample_se_mcmc fetch_best_sampl_se_with_bayes fetch_best_standard_all fetch_best_standard_all_summary fetch_best_tidy_all fetch_combined_mcmc update_combined_mcmc_bulk upsert_best_curve

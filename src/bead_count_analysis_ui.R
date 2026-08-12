@@ -214,7 +214,7 @@ beadCountServer <- function(id, selected_study, selected_experiment,currentuser)
     # }
 
     ## Load study configuration
-    study_configuration <- fetch_study_configuration(study_accession = selected_study() , user = currentuser())
+    study_configuration <- fetch_study_configuration(db_pool, study = selected_study(), project_id = userWorkSpaceID())
     failed_well_criteria <- study_configuration[study_configuration$param_name == "failed_well_criteria",]$param_character_value
     upper_bc_threshold <- study_configuration[study_configuration$param_name == "upper_bc_threshold",]$param_integer_value
     lower_bc_threshold <-  study_configuration[study_configuration$param_name == "lower_bc_threshold",]$param_integer_value

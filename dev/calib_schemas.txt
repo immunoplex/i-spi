@@ -1,0 +1,222 @@
+postgres=# \d madi_results.calib_fit\d madi_results.calib_param\d madi_results.calib_samples\d madi_results.calib_standards\d madi_resul
+ts.calib_diagnostics\d madi_results.calib_gate
+                         Table "madi_results.calib_fit"
+       Column        |           Type           | Collation | Nullable | Default
+---------------------+--------------------------+-----------+----------+---------
+ curve_id            | bigint                   |           | not null |
+ method              | text                     |           | not null |
+ model_name          | text                     |           | not null |
+ package             | text                     |           |          |
+ version             | text                     |           |          |
+ converged           | boolean                  |           |          |
+ eligible            | boolean                  |           |          |
+ is_best             | boolean                  |           | not null | false
+ is_fallback         | boolean                  |           |          |
+ criterion           | text                     |           |          |
+ score_type          | text                     |           |          |
+ selection_score     | numeric                  |           |          |
+ selection_weight    | numeric                  |           |          |
+ dynamic_range_log10 | numeric                  |           |          |
+ n_params            | integer                  |           |          |
+ job_id              | character varying(64)    |           |          |
+ created_at          | timestamp with time zone |           |          | now()
+Indexes:
+    "calib_fit_pkey" PRIMARY KEY, btree (curve_id, method, model_name)
+    "idx_calib_fit_best" btree (curve_id, method) WHERE is_best
+Check constraints:
+    "calib_fit_method_check" CHECK (method = ANY (ARRAY['frequentist'::text, 'bayesian'::text]))
+    "calib_fit_score_type_check" CHECK (score_type = ANY (ARRAY['aic'::text, 'loo_elpd'::text]))
+Foreign-key constraints:
+    "calib_fit_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_lookup(curve_id) ON DELETE CASCADE
+Referenced by:
+    TABLE "madi_results.calib_gate" CONSTRAINT "calib_gate_curve_id_method_model_name_fkey" FOREIGN KEY (curve_id, method, model_name) R
+EFERENCES madi_results.calib_fit(curve_id, method, model_name) ON DELETE CASCADE
+    TABLE "madi_results.calib_loo" CONSTRAINT "calib_loo_curve_id_method_model_name_fkey" FOREIGN KEY (curve_id, method, model_name) REF
+ERENCES madi_results.calib_fit(curve_id, method, model_name) ON DELETE CASCADE
+    TABLE "madi_results.calib_param" CONSTRAINT "calib_param_curve_id_method_model_name_fkey" FOREIGN KEY (curve_id, method, model_name)
+ REFERENCES madi_results.calib_fit(curve_id, method, model_name) ON DELETE CASCADE
+
+
+           Table "madi_results.calib_param"
+   Column   |  Type   | Collation | Nullable | Default
+------------+---------+-----------+----------+---------
+ curve_id   | bigint  |           | not null |
+ method     | text    |           | not null |
+ model_name | text    |           | not null |
+ term       | text    |           | not null |
+ estimate   | numeric |           |          |
+ std_error  | numeric |           |          |
+ q_lo       | numeric |           |          |
+ q_med      | numeric |           |          |
+ q_hi       | numeric |           |          |
+ job_id     | text    |           |          |
+Indexes:
+    "calib_param_pkey" PRIMARY KEY, btree (curve_id, method, model_name, term)
+Foreign-key constraints:
+    "calib_param_curve_id_method_model_name_fkey" FOREIGN KEY (curve_id, method, model_name) REFERENCES madi_results.calib_fit(curve_id,
+ method, model_name) ON DELETE CASCADE
+
+
+                                    Table "madi_results.calib_samples"
+         Column          |           Type           | Collation | Nullable |            Default
+-------------------------+--------------------------+-----------+----------+-------------------------------
+ curve_id                | bigint                   |           | not null |
+ method                  | text                     |           | not null |
+ sampleid                | character varying(128)   |           | not null |
+ patientid               | character varying(128)   |           | not null | '__none__'::character varying
+ timeperiod              | character varying(64)    |           | not null | '__none__'::character varying
+ dilution                | character varying(64)    |           | not null | '__none__'::character varying
+ predicted_concentration | numeric                  |           |          |
+ final_concentration     | numeric                  |           |          |
+ se_concentration        | numeric                  |           |          |
+ pcov                    | numeric                  |           |          |
+ pcov_rmse               | numeric                  |           |          |
+ pcov_pass               | boolean                  |           |          |
+ job_id                  | character varying(64)    |           |          |
+ created_at              | timestamp with time zone |           |          | now()
+Indexes:
+    "calib_samples_pkey" PRIMARY KEY, btree (curve_id, method, sampleid, patientid, timeperiod, dilution)
+    "idx_calib_samples_patient" btree (curve_id, patientid)
+Foreign-key constraints:
+    "calib_samples_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_lookup(curve_id) ON DELETE CASCADE
+
+
+                               Table "madi_results.calib_standards"
+       Column        |           Type           | Collation | Nullable |          Default
+---------------------+--------------------------+-----------+----------+---------------------------
+ curve_id            | bigint                   |           | not null |
+ method              | character varying(20)    |           | not null |
+ well                | character varying(16)    |           | not null |
+ dilution            | numeric                  |           | not null |
+ concentration       | numeric                  |           |          |
+ log10_concentration | numeric                  |           |          |
+ response_model      | numeric                  |           |          |
+ assay_response_raw  | numeric                  |           |          |
+ included            | boolean                  |           | not null |
+ exclusion_reason    | character varying(20)    |           | not null | 'none'::character varying
+ job_id              | text                     |           |          |
+ created_at          | timestamp with time zone |           | not null | now()
+ mask_reason         | character varying        |           |          |
+Indexes:
+    "calib_standards_pkey" PRIMARY KEY, btree (curve_id, method, well, dilution)
+    "ix_calib_standards_cm" btree (curve_id, method)
+
+
+                      Table "madi_results.calib_diagnostics"
+        Column        |           Type           | Collation | Nullable | Default
+----------------------+--------------------------+-----------+----------+---------
+ curve_id             | bigint                   |           | not null |
+ method               | text                     |           | not null |
+ model_name           | text                     |           |          |
+ lloq_log10           | numeric                  |           |          |
+ uloq_log10           | numeric                  |           |          |
+ lloq_conc            | numeric                  |           |          |
+ uloq_conc            | numeric                  |           |          |
+ shape_lloq_log10     | numeric                  |           |          |
+ shape_uloq_log10     | numeric                  |           |          |
+ shape_lloq_conc      | numeric                  |           |          |
+ shape_uloq_conc      | numeric                  |           |          |
+ inflect_x            | numeric                  |           |          |
+ inflect_y            | numeric                  |           |          |
+ inflect_x_lower      | numeric                  |           |          |
+ inflect_x_upper      | numeric                  |           |          |
+ lower_lod_response   | numeric                  |           |          |
+ upper_lod_response   | numeric                  |           |          |
+ lower_lod_log10_conc | numeric                  |           |          |
+ upper_lod_log10_conc | numeric                  |           |          |
+ lower_lod_conc       | numeric                  |           |          |
+ upper_lod_conc       | numeric                  |           |          |
+ mdc_lower_log10      | numeric                  |           |          |
+ mdc_upper_log10      | numeric                  |           |          |
+ mdc_lower_conc       | numeric                  |           |          |
+ mdc_upper_conc       | numeric                  |           |          |
+ rdl_lower_log10      | numeric                  |           |          |
+ rdl_upper_log10      | numeric                  |           |          |
+ rdl_lower_conc       | numeric                  |           |          |
+ rdl_upper_conc       | numeric                  |           |          |
+ pcov_threshold       | numeric                  |           |          |
+ cv_x_max             | numeric                  |           |          |
+ alpha                | numeric                  |           |          |
+ job_id               | character varying(64)    |           |          |
+ created_at           | timestamp with time zone |           |          | now()
+Indexes:
+    "calib_diagnostics_pkey" PRIMARY KEY, btree (curve_id, method)
+Foreign-key constraints:
+    "calib_diagnostics_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_lookup(curve_id) ON DELETE CASCADE
+
+
+            Table "madi_results.calib_gate"
+   Column   |  Type   | Collation | Nullable | Default
+------------+---------+-----------+----------+---------
+ curve_id   | bigint  |           | not null |
+ method     | text    |           | not null |
+ model_name | text    |           | not null |
+ gate       | text    |           | not null |
+ passed     | boolean |           |          |
+ detail     | text    |           |          |
+ job_id     | text    |           |          |
+Indexes:
+    "calib_gate_pkey" PRIMARY KEY, btree (curve_id, method, model_name, gate)
+Foreign-key constraints:
+    "calib_gate_curve_id_method_model_name_fkey" FOREIGN KEY (curve_id, method, model_name) REFERENCES madi_results.calib_fit(curve_id,
+method, model_name) ON DELETE CASCADE
+
+postgres=# \d madi_results.curve_lookup
+                                     Table "madi_results.curve_lookup"
+         Column          |           Type           | Collation | Nullable |            Default
+-------------------------+--------------------------+-----------+----------+-------------------------------
+ curve_id                | bigint                   |           | not null | generated always as identity
+ project_id              | integer                  |           | not null | 0
+ study_accession         | character varying(15)    |           | not null |
+ experiment_accession    | character varying(15)    |           | not null |
+ plateid                 | character varying(100)   |           | not null |
+ plate                   | character varying(40)    |           | not null |
+ nominal_sample_dilution | character varying(128)   |           | not null |
+ feature                 | character varying(15)    |           | not null | '__none__'::character varying
+ antigen                 | character varying(64)    |           | not null | '__none__'::character varying
+ source                  | character varying(25)    |           | not null | '__none__'::character varying
+ wavelength              | character varying(15)    |           | not null | '__none__'::character varying
+ created_at              | timestamp with time zone |           |          | now()
+ masked                  | boolean                  |           | not null | false
+ mask_reason             | text                     |           |          |
+ multiplate_group_id     | uuid                     |           | not null |
+Indexes:
+    "curve_lookup_pkey" PRIMARY KEY, btree (curve_id)
+    "curve_lookup_multiplate_group_idx" btree (multiplate_group_id)
+    "curve_lookup_nk" UNIQUE CONSTRAINT, btree (project_id, study_accession, experiment_accession, plateid, plate, nominal_sample_diluti
+on, source, wavelength, antigen, feature)
+    "ix_curve_lookup_group" btree (multiplate_group_id)
+    "ix_curve_lookup_scope" btree (project_id, study_accession, experiment_accession)
+Check constraints:
+    "curve_lookup_real_project_chk" CHECK (project_id >= 16)
+Referenced by:
+    TABLE "madi_results.bayes_curves" CONSTRAINT "bayes_curves_curve_lookup_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_l
+ookup(curve_id)
+    TABLE "madi_results.calib_diagnostics" CONSTRAINT "calib_diagnostics_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.c
+urve_lookup(curve_id) ON DELETE CASCADE
+    TABLE "madi_results.calib_fit" CONSTRAINT "calib_fit_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_lookup(curv
+e_id) ON DELETE CASCADE
+    TABLE "madi_results.calib_grid" CONSTRAINT "calib_grid_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_lookup(cu
+rve_id) ON DELETE CASCADE
+    TABLE "madi_results.calib_samples" CONSTRAINT "calib_samples_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_loo
+kup(curve_id) ON DELETE CASCADE
+    TABLE "madi_results.freq_candidate_parameters" CONSTRAINT "freq_candidate_parameters_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCE
+S madi_results.curve_lookup(curve_id)
+    TABLE "madi_results.freq_candidate_residuals" CONSTRAINT "freq_candidate_residuals_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES
+madi_results.curve_lookup(curve_id)
+    TABLE "madi_results.freq_curve_grid" CONSTRAINT "freq_curve_grid_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve
+_lookup(curve_id)
+    TABLE "madi_results.freq_curves" CONSTRAINT "freq_curves_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_lookup(
+curve_id)
+    TABLE "madi_results.freq_parameters" CONSTRAINT "freq_parameters_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve
+_lookup(curve_id)
+    TABLE "madi_results.freq_samples" CONSTRAINT "freq_samples_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_looku
+p(curve_id)
+    TABLE "madi_results.freq_second_derivative" CONSTRAINT "freq_second_derivative_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi
+_results.curve_lookup(curve_id)
+    TABLE "madi_results.freq_standard" CONSTRAINT "freq_standard_curve_id_fkey" FOREIGN KEY (curve_id) REFERENCES madi_results.curve_loo
+kup(curve_id)
+Triggers:
+    trg_curve_lookup_set_multiplate_group_id BEFORE INSERT OR UPDATE OF project_id, study_accession, experiment_accession, nominal_sampl
+e_dilution, source, wavelength, antigen, feature ON madi_results.curve_lookup FOR EACH ROW EXECUTE FUNCTION madi_results.trg_set_multipl
+ate_group_id()

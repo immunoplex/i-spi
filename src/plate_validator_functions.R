@@ -1203,6 +1203,62 @@ upload_specimen_data <- function(conn, plates_map, specimen_type, combined_plate
 }
 
 
+# 11.9a -- shared: write imported antigen fit-settings into the settings cascade.
+# The fitting worker reads settings ONLY from the cascade (resolve_settings), so
+# imported values must land there. Derives the (feature, antigen) pairs from the
+# curves already registered for this experiment (register_curve_lookup runs before
+# every antigen write), then set_setting()s each captured param at full scope depth
+# (project/study/experiment/feature/antigen). Called by ELISA (via
+# upload_antigen_family), bead (import_lumifile) and flow (flowjo_reader) so all
+# three assays route settings identically. Runs on the import transaction conn.
+write_antigen_settings_to_cascade <- function(conn, antigen_df, project_id,
+                                              study_accession, experiment_accession,
+                                              user = "import") {
+  if (is.null(antigen_df) || !nrow(antigen_df) || !"antigen" %in% names(antigen_df))
+    return(invisible(0L))
+  params <- intersect(c("standard_curve_concentration", "l_asy_min_constraint",
+                        "l_asy_max_constraint", "l_asy_constraint_method"),
+                      names(antigen_df))
+  if (!length(params)) return(invisible(0L))
+
+  fa <- tryCatch(DBI::dbGetQuery(conn,
+    "SELECT DISTINCT feature, antigen FROM madi_results.curve_lookup
+      WHERE project_id = $1 AND study_accession = $2 AND experiment_accession = $3
+        AND feature IS NOT NULL AND antigen IS NOT NULL",
+    params = list(project_id, study_accession, experiment_accession)),
+    error = function(e) NULL)
+  if (is.null(fa) || !nrow(fa)) {
+    message("    (no registered curves for ", experiment_accession,
+            "; antigen settings not written to cascade)")
+    return(invisible(0L))
+  }
+
+  n <- 0L
+  for (i in seq_len(nrow(antigen_df))) {
+    ant <- as.character(antigen_df$antigen[i])
+    if (is.na(ant) || !nzchar(ant)) next
+    feats <- unique(fa$feature[fa$antigen == ant])
+    if (!length(feats)) next
+    for (p in params) {
+      val <- antigen_df[[p]][i]
+      if (length(val) != 1 || is.na(val) ||
+          (is.character(val) && !nzchar(trimws(val)))) next
+      for (ft in feats) {
+        ok <- tryCatch({
+          set_setting(conn, project_id, study_accession, p, val, user,
+                      experiment = experiment_accession, feature = ft, antigen = ant)
+          TRUE
+        }, error = function(e) {
+          message(sprintf("      (set_setting %s / %s / %s failed: %s)",
+                          ant, ft, p, conditionMessage(e))); FALSE })
+        if (isTRUE(ok)) n <- n + 1L
+      }
+    }
+  }
+  cat("    \u2192 antigen settings written to cascade:", n, "\n")
+  invisible(n)
+}
+
 #' Upload antigen family data with deduplication
 #'
 #' @param conn Database connection
@@ -1212,12 +1268,12 @@ upload_specimen_data <- function(conn, plates_map, specimen_type, combined_plate
 #' @param experiment_accession Experiment accession ID
 #'
 #' @return Number of rows inserted
-upload_antigen_family <- function(conn, antigen_import_list, project_id, study_accession, experiment_accession) {
+upload_antigen_family <- function(conn, antigen_import_list, project_id, study_accession, experiment_accession, user = "import") {
 
   antigen_family_df <- prepare_batch_antigen_family(antigen_import_list)
   existing_antigens <- get_existing_antigens(conn, study_accession, experiment_accession)
 
-  insert_new_rows(
+  n <- insert_new_rows(
     conn = conn,
     schema = "madi_results",
     table = "xmap_antigen_family",
@@ -1226,6 +1282,12 @@ upload_antigen_family <- function(conn, antigen_import_list, project_id, study_a
     join_keys = c("study_accession", "experiment_accession", "antigen"),
     label = "antigen family"
   )
+
+  # 11.9a: also route the imported fit-settings into the settings cascade (the
+  # xmap_antigen_family write above is kept for annotations / editor / view).
+  write_antigen_settings_to_cascade(conn, antigen_family_df, project_id,
+                                    study_accession, experiment_accession, user)
+  n
 }
 
 

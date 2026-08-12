@@ -1,0 +1,22 @@
+# .Renviron.example  --  copy to .Renviron (gitignored) and fill in real values.
+# R reads .Renviron automatically at startup; the app pulls everything via
+# Sys.getenv(). NEVER commit the real .Renviron -- secrets stay out of git.
+
+# ---- i-spi-compute API (replaces the retired BATCH_API_URL / BATCH_API_KEY) --
+# Base URL includes the /i-spi-compute root path; do NOT append /jobs.
+ISPI_COMPUTE_URL=https://madi-preprod.dartmouth.edu/i-spi-compute
+# From the sealed secret `i-spi-compute`, key API_KEY. Placeholder here:
+ISPI_COMPUTE_API_KEY=REPLACE_ME
+
+# ---- Database (unchanged) ----------------------------------------------------
+db=REPLACE_ME
+db_host=REPLACE_ME
+db_port=5432
+db_userid_x=REPLACE_ME
+db_pwd_x=REPLACE_ME
+# Optional: 'require' to force TLS for the read-only DB diagnostic connection.
+db_sslmode=
+
+# ---- Dev toggles -------------------------------------------------------------
+# LOCAL_DEV=1 disables Dex OIDC auth for local runs.
+LOCAL_DEV=0

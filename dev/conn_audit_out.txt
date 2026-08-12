@@ -1,0 +1,363 @@
+############################################################
+# conn audit over /srv/shiny-server
+############################################################
+
+===== (1) conn CREATION / ASSIGNMENT sites (delete these LAST) =====
+plate_validator_functions.R:1194:    conn = conn,
+plate_validator_functions.R:1277:    conn = conn,
+plate_validator_functions.R:1307:    conn = conn,
+plate_validator_functions.R:1387:    conn                = conn,
+plate_validator_functions.R:1405:    conn                = conn,
+plate_validator_functions.R:1452:            conn         = conn,
+plate_validator_functions.R:1484:    conn                = conn,
+plate_validator_functions.R:1499:    conn                = conn,
+plate_validator_functions.R:1514:    conn                 = conn,
+plate_validator_functions.R:1523:    conn            = conn,
+db_functions.R:224:diagnose_upsert_data <- function(df, table, conn = NULL, schema = "madi_results") {
+app.R:862:      conn <- db_pool
+app.R:1252:      dataTabServer(input, output, session, conn = db_pool,
+assay_import_backend.R:111:          conn = conn, timepoint_map = timepoint_map, study_accession = study
+assay_import_backend.R:153:            check_existing_plates(conn = conn, project_id = project_id,
+assay_import_backend.R:193:          cl <- register_curve_lookup(conn = conn, standards_df = standards,
+assay_import_backend.R:226:            conn = conn, antigen_import_list = antigens,
+assay_import_backend.R:293:    conn = conn, schema = "madi_results", table = "xmap_antigen_family",
+assay_import_backend.R:368:  insert_new_rows(conn = conn, schema = "madi_results", table = "xmap_planned_visit",
+derived_experiments.R:307:  register_curve_lookup(conn = conn, standards_df = std, project_id = project)
+derived_experiments.R:407:        plateid = hr$plateid, conn = conn)
+ui_handler.R:568:    conn                 = conn,
+
+===== (2) conn USES that are NOT assignments (the work to migrate) =====
+bead_count_analysis_ui.R:16:  sample_df  <- dbGetQuery(conn, query)
+bead_count_analysis_ui.R:28:buffer_data <- dbGetQuery(conn, query)
+bead_count_analysis_ui.R:41:  standard_df  <- dbGetQuery(conn, query)
+plate_management.R:54:", .con = conn)
+plate_management.R:56:  study_header <- dbGetQuery(conn, header_query)
+plate_management.R:148:  	AND plate_id = {selected_plate_id}", .con = conn)
+plate_management.R:150:    original_header <- dbGetQuery(conn, original_header_query)
+plate_management.R:158:                                            AND plate_id = {selected_plate_id}", .con = conn)
+plate_management.R:160:         dbExecute(conn, update_plateid_query)
+plate_management.R:174:  	AND plate_id = {selected_plate_id}", .con = conn)
+plate_management.R:176:  original_header <- dbGetQuery(conn, original_header_query)
+plate_management.R:183:                                            AND plate_id = {selected_plate_id}", .con = conn)
+plate_management.R:185:    dbExecute(conn, update_plate_query)
+plate_management.R:198:  	AND plate_id = {selected_plate_id}", .con = conn)
+plate_management.R:200:  original_header <- dbGetQuery(conn, original_header_query)
+plate_management.R:207:                                                      AND plate_id = {selected_plate_id}", .con = conn)
+plate_management.R:209:      dbExecute(conn, update_sample_dilution_query)
+plate_management.R:227:	", .con = conn)
+plate_management.R:229: original_standards <- dbGetQuery(conn, original_standards_query)
+plate_management.R:236:  AND source = {selected_source};", .con = conn)
+plate_management.R:238:   dbExecute(conn, update_standard_curve_source_plate_query)
+plate_validator_functions.R:911:check_existing_plates <- function(conn, project_id, study_accession, experiment_accession, plateids) {
+plate_validator_functions.R:915:  quoted_plateids <- sapply(plateids, function(x) DBI::dbQuoteString(conn, x))
+plate_validator_functions.R:941:  ", .con = conn)
+plate_validator_functions.R:945:  existing_plates <- DBI::dbGetQuery(conn, existing_plate_query)
+plate_validator_functions.R:957:get_existing_antigens <- function(conn, study_accession, experiment_accession) {
+plate_validator_functions.R:964:  ", .con = conn)
+plate_validator_functions.R:966:  DBI::dbGetQuery(conn, query)
+plate_validator_functions.R:975:get_existing_visits <- function(conn, study_accession) {
+plate_validator_functions.R:981:  ", .con = conn)
+plate_validator_functions.R:983:  DBI::dbGetQuery(conn, query)
+plate_validator_functions.R:997:insert_new_rows <- function(conn, schema, table, new_data, existing_data, join_keys, label) {
+plate_validator_functions.R:1002:    DBI::dbAppendTable(conn, DBI::Id(schema = schema, table = table), to_insert)
+plate_validator_functions.R:1022:insert_to_table <- function(conn, schema, table, data, label, required_cols = NULL) {
+plate_validator_functions.R:1068:    DBI::dbAppendTable(conn, DBI::Id(schema = schema, table = table), data)
+plate_validator_functions.R:1093:upload_specimen_data <- function(conn, plates_map, specimen_type, combined_plate_data,
+plate_validator_functions.R:1214:write_antigen_settings_to_cascade <- function(conn, antigen_df, project_id,
+plate_validator_functions.R:1224:  fa <- tryCatch(DBI::dbGetQuery(conn,
+plate_validator_functions.R:1248:          set_setting(conn, project_id, study_accession, p, val, user,
+plate_validator_functions.R:1271:upload_antigen_family <- function(conn, antigen_import_list, project_id, study_accession, experiment_accession, user = "import") {
+plate_validator_functions.R:1274:  existing_antigens <- get_existing_antigens(conn, study_accession, experiment_accession)
+plate_validator_functions.R:1288:  write_antigen_settings_to_cascade(conn, antigen_family_df, project_id,
+plate_validator_functions.R:1301:upload_planned_visits <- function(conn, timepoint_map, study_accession) {
+plate_validator_functions.R:1304:  existing_visits <- get_existing_visits(conn, study_accession)
+plate_validator_functions.R:1328:upload_batch_to_database <- function(conn, batch_plates, metadata_batch,
+plate_validator_functions.R:1374:    conn, "madi_results", "xmap_header", upload_metadata_df, "header",
+plate_ops.R:48:  plate_list <- dbGetQuery(conn, num_plates_query)
+plate_ops.R:68:  n_dilution_per_antigen_df <- dbGetQuery(conn, n_dilutions_query)
+clone_study_components.R:75:.clone_target_exists <- function(conn, proj, study) {
+clone_study_components.R:76:  n <- function(tb) tryCatch(as.integer(DBI::dbGetQuery(conn, sprintf(
+clone_study_components.R:83:count_clone_source <- function(conn, srcproj, srcstudy) {
+clone_study_components.R:84:  cnt <- function(tb) tryCatch(as.integer(DBI::dbGetQuery(conn, sprintf(
+clone_study_components.R:92:clone_study_components <- function(conn, srcproj, srcstudy, newproj, newstudy, auth0_user = NA_character_) {
+clone_study_components.R:140:  if (inherits(conn, "Pool")) {
+clone_study_components.R:141:    co <- pool::poolCheckout(conn); on.exit(pool::poolReturn(co), add = TRUE)
+clone_study_components.R:142:  } else co <- conn
+delete_study_components.R:61:count_study_components <- function(conn, project, study, experiment = NULL) {
+delete_study_components.R:65:    res <- if (length(params)) DBI::dbGetQuery(conn, sql, params = params)
+delete_study_components.R:66:           else               DBI::dbGetQuery(conn, sql)
+delete_study_components.R:71:  cids <- DBI::dbGetQuery(conn, sprintf("SELECT curve_id FROM %s WHERE %s",
+delete_study_components.R:105:delete_study_components <- function(conn, project, study, experiment = NULL) {
+delete_study_components.R:154:  if (inherits(conn, "Pool")) {
+delete_study_components.R:155:    co <- pool::poolCheckout(conn); on.exit(pool::poolReturn(co), add = TRUE)
+delete_study_components.R:156:  } else co <- conn
+db_functions.R:12:fetch_study_parameters <- function(study_accession, param_user, param_group = "standard_curve_options", project_id = userWorkSpaceID(), conn) {
+db_functions.R:21:  study_parameters <- dbGetQuery(conn, query)
+db_functions.R:32:fetch_antigen_parameters <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:50:  antigen_constraints <- dbGetQuery(conn, query)
+db_functions.R:54:fetch_db_header <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:62:  header_data <- dbGetQuery(conn, query)
+db_functions.R:67:fetch_db_header_experiments <- function(study_accession, conn, verbose = TRUE) {
+db_functions.R:73:  header_data <- dbGetQuery(conn, query)
+db_functions.R:78:fetch_db_standards <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:85:  standard_df  <- dbGetQuery(conn, query)
+db_functions.R:90:fetch_db_buffer <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:98:  blank_data <- dbGetQuery(conn, query)
+db_functions.R:103:fetch_db_controls <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:111:  control_data <- dbGetQuery(conn, query)
+db_functions.R:117:fetch_db_samples <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:126:  sample_data <- dbGetQuery(conn, query)
+db_functions.R:316:  if (!is.null(conn) && DBI::dbIsValid(conn) && length(present_nk) > 0) {
+db_functions.R:332:      existing_n <- DBI::dbGetQuery(conn, check_sql)$n
+db_functions.R:363:build_sql_components_pk <- function(conn, schema, table, cols, nk, pk) {
+db_functions.R:364:  schema_id <- as.character(DBI::dbQuoteIdentifier(conn, schema))
+db_functions.R:365:  table_id <- as.character(DBI::dbQuoteIdentifier(conn, table))
+db_functions.R:368:    as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:372:    as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:375:  pk_quoted <- as.character(DBI::dbQuoteIdentifier(conn, pk))
+db_functions.R:385:    col_quoted <- as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:395:      as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:408:    as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:441:upsert_batch_pk <- function(conn, df, table, sql_parts, use_copy, notify,
+db_functions.R:445:    DBI::dbWithTransaction(conn, {
+db_functions.R:447:      tmp_id   <- as.character(DBI::dbQuoteIdentifier(conn, tmp_name))
+db_functions.R:455:                        as.character(DBI::dbQuoteIdentifier(conn, x)), character(1)),
+db_functions.R:459:      DBI::dbExecute(conn, create_sql)
+db_functions.R:465:          conn, tmp_name, df_temp,
+db_functions.R:469:        DBI::dbWriteTable(conn, tmp_name, df_temp,
+db_functions.R:474:      DBI::dbExecute(conn, sprintf("ANALYZE %s", tmp_id))
+db_functions.R:485:        as.character(DBI::dbQuoteIdentifier(conn, x)), character(1), USE.NAMES = FALSE)
+db_functions.R:500:      n_deleted <- DBI::dbExecute(conn, delete_sql)
+db_functions.R:517:      n_inserted <- DBI::dbExecute(conn, insert_sql)
+db_functions.R:557:upsert_batch_on_conflict <- function(conn, df, table, sql_parts, use_copy, notify) {
+db_functions.R:559:    DBI::dbWithTransaction(conn, {
+db_functions.R:561:      tmp_id <- as.character(DBI::dbQuoteIdentifier(conn, tmp_name))
+db_functions.R:570:                      vapply(temp_cols, function(x) as.character(DBI::dbQuoteIdentifier(conn, x)), character(1)),
+db_functions.R:574:      DBI::dbExecute(conn, create_sql)
+db_functions.R:578:          conn, tmp_name, df_temp,
+db_functions.R:582:        DBI::dbWriteTable(conn, tmp_name, df_temp, append = TRUE, row.names = FALSE)
+db_functions.R:585:      DBI::dbExecute(conn, sprintf("ANALYZE %s", tmp_id))
+db_functions.R:593:        as.character(DBI::dbQuoteIdentifier(conn, x)), character(1), USE.NAMES = FALSE)
+db_functions.R:598:          as.character(DBI::dbQuoteIdentifier(conn, x)), character(1), USE.NAMES = FALSE)
+db_functions.R:617:        DBI::dbQuoteIdentifier(conn, constraint_name),
+db_functions.R:620:      n_upserted <- DBI::dbExecute(conn, upsert_sql)
+db_functions.R:685:build_upsert_sql_glue <- function(conn, schema, table, tmp_name, cols, nk) {
+db_functions.R:688:  schema_id <- DBI::dbQuoteIdentifier(conn, schema)
+db_functions.R:689:  table_id <- DBI::dbQuoteIdentifier(conn, table)
+db_functions.R:690:  tmp_id <- DBI::dbQuoteIdentifier(conn, tmp_name)
+db_functions.R:694:    as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:698:    as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:711:      as.character(DBI::dbQuoteIdentifier(conn, x))
+db_functions.R:731:    .con = conn
+db_functions.R:1170:fetch_current_sc_options_wide <- function(currentuser, study_accession, project_id, conn) {
+db_functions.R:1188:    .con = conn
+db_functions.R:1192:  dbGetQuery(conn, query)
+global.R:206:getProjectName <- function(conn, current_user) {
+global.R:207:  query <- glue::glue("SELECT project_name, workspace_id FROM madi_results.xmap_users pu WHERE pu.auth0_user = {dbQuoteLiteral(conn, current_user)}")
+global.R:208:  result <- dbGetQuery(conn, query)
+global.R:219:reloadReactive <- function(conn, userWorkSpaceID) {
+global.R:232:  query_result <- dbGetQuery(conn, select_query, params = list(userWorkSpaceID))
+curve_lookup_functions.R:139:upsert_curve_lookup <- function(conn, candidates) {
+curve_lookup_functions.R:165:    fetch_existing_curve_lookup(conn, candidates),
+curve_lookup_functions.R:213:        DBI::dbQuoteLiteral(conn, r$project_id),
+curve_lookup_functions.R:214:        DBI::dbQuoteLiteral(conn, r$study_accession),
+curve_lookup_functions.R:215:        DBI::dbQuoteLiteral(conn, r$experiment_accession),
+curve_lookup_functions.R:216:        DBI::dbQuoteLiteral(conn, r$plateid),
+curve_lookup_functions.R:217:        DBI::dbQuoteLiteral(conn, r$plate),
+curve_lookup_functions.R:218:        DBI::dbQuoteLiteral(conn, r$nominal_sample_dilution),
+curve_lookup_functions.R:219:        DBI::dbQuoteLiteral(conn, r$source),
+curve_lookup_functions.R:220:        DBI::dbQuoteLiteral(conn, r$wavelength),
+curve_lookup_functions.R:221:        DBI::dbQuoteLiteral(conn, r$antigen),
+curve_lookup_functions.R:222:        DBI::dbQuoteLiteral(conn, r$feature)
+curve_lookup_functions.R:246:      rows_affected  <- DBI::dbExecute(conn, sql)
+curve_lookup_functions.R:281:fetch_existing_curve_lookup <- function(conn, candidates) {
+curve_lookup_functions.R:304:      .con = conn
+curve_lookup_functions.R:306:    DBI::dbGetQuery(conn, q)
+curve_lookup_functions.R:331:register_curve_lookup <- function(conn, standards_df, project_id) {
+curve_lookup_functions.R:333:  upsert_curve_lookup(conn, candidates)
+user_management.R:8:        pool::poolWithTransaction(db_pool, function(conn) {
+user_management.R:9:          result <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as user_count FROM madi_lumi_users.project_users WHERE project_id = {project_id} AND user_id = '{current_user}'"))
+user_management.R:13:          project_name_result <- dbGetQuery(conn, project_name_query)
+user_management.R:18:          query_check <- sprintf("SELECT 1 FROM madi_results.xmap_users WHERE auth0_user = %s", dbQuoteLiteral(conn, current_user))
+user_management.R:19:          exists <- dbGetQuery(conn, query_check)
+user_management.R:21:            query_insert <- glue::glue("INSERT INTO madi_results.xmap_users (auth0_user, project_name, workspace_id) VALUES ({dbQuoteLiteral(conn, current_user)}, {dbQuoteLiteral(conn, project_name)}, {project_id})")
+user_management.R:22:            dbExecute(conn, query_insert); message("New user inserted in xmap.")
+user_management.R:24:            query_update <- glue::glue("UPDATE madi_results.xmap_users SET project_name = {dbQuoteLiteral(conn, project_name)}, workspace_id = {project_id} WHERE auth0_user = {dbQuoteLiteral(conn, current_user)}")
+user_management.R:25:            dbExecute(conn, query_update); message("User updated in xmap.")
+user_management.R:50:      pool::poolWithTransaction(db_pool, function(conn) {
+user_management.R:51:        dbExecute(conn, glue::glue("INSERT INTO madi_lumi_users.projects (project_name, creation_date) VALUES ('{project_name}', CURRENT_TIMESTAMP)"))
+user_management.R:52:        new_project_id <- dbGetQuery(conn, "SELECT currval(pg_get_serial_sequence('madi_lumi_users.projects', 'project_id')) AS project_id")[1, 'project_id']
+user_management.R:53:        dbExecute(conn, glue::glue("INSERT INTO madi_lumi_users.project_users (project_id, user_id, is_owner, joined_date) VALUES ({new_project_id}, '{current_user}', TRUE, CURRENT_TIMESTAMP)"))
+user_management.R:75:      result <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as project_count FROM madi_lumi_users.project_access_keys WHERE project_id = {project_number} AND access_key = {dbQuoteLiteral(conn, access_id)}"))
+user_management.R:78:        user_check <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as user_count FROM madi_lumi_users.project_users WHERE project_id = {project_number} AND user_id = {dbQuoteLiteral(conn, current_user)}"))
+user_management.R:81:          dbExecute(conn, glue::glue("INSERT INTO madi_lumi_users.project_users (project_id, user_id, is_owner, joined_date) VALUES ({project_number}, {dbQuoteLiteral(conn, current_user)}, FALSE, CURRENT_TIMESTAMP)"))
+assay_import_backend.R:102:    pool::poolWithTransaction(pool, function(conn) {
+assay_import_backend.R:169:          .insert_or_die(conn, "xmap_header", header,
+assay_import_backend.R:178:          .insert_or_die(conn, "xmap_sample", samples,
+assay_import_backend.R:187:          .insert_or_die(conn, "xmap_standard", standards,
+assay_import_backend.R:206:          .insert_or_die(conn, "xmap_buffer", blanks,
+assay_import_backend.R:213:          .insert_or_die(conn, "xmap_control", controls,
+assay_import_backend.R:264:land_antigen_family <- function(conn, antigen_import_list, project_id,
+assay_import_backend.R:273:    DBI::dbGetQuery(conn,
+assay_import_backend.R:299:  write_antigen_settings_to_cascade(conn, family_df, project_id,
+assay_import_backend.R:311:.table_columns <- function(conn, schema, table) {
+assay_import_backend.R:313:    DBI::dbGetQuery(conn,
+assay_import_backend.R:320:.insert_or_die <- function(conn, table, data, required_cols, label) {
+assay_import_backend.R:337:    tcols <- .table_columns(conn, "madi_results", table)
+assay_import_backend.R:343:  res <- insert_to_table(conn, "madi_results", table, data, label,
+assay_import_backend.R:354:land_planned_visits <- function(conn, timepoint_map, study_accession) {
+assay_import_backend.R:359:  tcols <- .table_columns(conn, "madi_results", "xmap_planned_visit")
+assay_import_backend.R:367:  existing <- get_existing_visits(conn, study_accession)
+data_tab_module.R:145:dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
+user.R:34:  current_project_details <- getProjectName(conn, currentuser())
+user.R:49:  ;", .con = conn)
+user.R:51:  query_result <- dbGetQuery(conn, select_query)
+derived_experiments.R:22:get_insertable_cols <- function(conn, schema, table_name) {
+derived_experiments.R:37:  DBI::dbGetQuery(conn, col_sql)$column_name
+derived_experiments.R:40:insert_delta_sql <- function(conn, schema, table_name, df) {
+derived_experiments.R:47:  insert_cols <- get_insertable_cols(conn, schema, table_name)
+derived_experiments.R:73:  DBI::dbExecute(conn, sql)
+derived_experiments.R:83:subtract_wavelength_sql <- function(conn, schema, table_name,
+derived_experiments.R:91:  cols <- get_insertable_cols(conn, schema, table_name)
+derived_experiments.R:97:  qs <- function(x) DBI::dbQuoteString(conn, x)
+derived_experiments.R:128:  n <- DBI::dbExecute(conn, sql)
+derived_experiments.R:139:    conn
+derived_experiments.R:175:  nominal_vals <- DBI::dbGetQuery(conn, get_nominal)$nominal_sample_dilution
+derived_experiments.R:196:    cols <- DBI::dbGetQuery(conn, col_sql)$column_name
+derived_experiments.R:210:    pk_cols <- DBI::dbGetQuery(conn, pk_sql)$column_name
+derived_experiments.R:250:      DBI::dbExecute(conn, sql)
+derived_experiments.R:294:register_derived_curves <- function(conn, project, study, experiment) {
+derived_experiments.R:295:  std <- DBI::dbGetQuery(conn, glue::glue_sql(
+derived_experiments.R:302:    .con = conn))
+derived_experiments.R:314:perform_wavelength_subtraction <- function(conn) {
+derived_experiments.R:335:  subtract_wavelength_sql(conn, "madi_results", "xmap_standard", study, exp, plate, nsd, wls, scb_keys)
+derived_experiments.R:336:  subtract_wavelength_sql(conn, "madi_results", "xmap_control",  study, exp, plate, nsd, wls, scb_keys)
+derived_experiments.R:337:  subtract_wavelength_sql(conn, "madi_results", "xmap_buffer",   study, exp, plate, nsd, wls, scb_keys)
+derived_experiments.R:338:  subtract_wavelength_sql(conn, "madi_results", "xmap_sample",   study, exp, plate, nsd, wls, samp_keys)
+derived_experiments.R:344:  insert_delta_sql(conn, "madi_results", "xmap_header", delta_header)
+derived_experiments.R:347:  antigen_family_base <- DBI::dbGetQuery(conn, glue::glue("
+derived_experiments.R:363:    insert_delta_sql(conn, "madi_results", "xmap_antigen_family", antigen_family_base)
+derived_experiments.R:378:    pool::poolWithTransaction(db_pool, function(conn) {
+derived_experiments.R:379:      perform_wavelength_subtraction(conn)
+derived_experiments.R:380:      register_derived_curves(conn, project = hr$project_id,
+derived_experiments.R:404:    pool::poolWithTransaction(db_pool, function(conn) {
+derived_experiments.R:408:      register_derived_curves(conn, project = proj, study = study, experiment = exp)
+derived_experiments.R:479:  already_split <- DBI::dbGetQuery(conn, already_split_sql)$already_split
+derived_experiments.R:503:    already_subtracted <- DBI::dbGetQuery(conn, already_subtracted_sql)$already_subtracted
+ui_handler.R:24:get_user_projects <- function(conn, current_user) {
+ui_handler.R:30:    WHERE pu.user_id = {dbQuoteLiteral(conn, current_user)} AND pu.is_owner = TRUE
+ui_handler.R:32:  dbGetQuery(conn, query)
+ui_handler.R:35:get_user_projects_non_owner <- function(conn, current_user) {
+ui_handler.R:41:    WHERE pu.user_id = {dbQuoteLiteral(conn, current_user)} AND pu.is_owner = FALSE
+ui_handler.R:43:  dbGetQuery(conn, query)
+ui_handler.R:46:getProjectName <- function(conn, current_user){
+ui_handler.R:47:  query <- glue::glue(" SELECT project_name, workspace_id FROM madi_results.xmap_users pu WHERE pu.auth0_user = {dbQuoteLiteral(conn, current_user)} ")
+ui_handler.R:48:  result <- dbGetQuery(conn, query)
+ui_handler.R:63:get_exp_assay_type <- function(conn, project_id, study_accession, experiment_accession) {
+ui_handler.R:83:  result <- dbGetQuery(conn, query)
+ui_handler.R:338:    user_projects <- get_user_projects(conn, currentuser())
+ui_handler.R:341:    load_project(conn, project_id, currentuser())
+ui_handler.R:342:    current_project_details <- getProjectName(conn, currentuser())
+ui_handler.R:361:    user_projects_non_owner <- get_user_projects_non_owner(conn, currentuser())
+ui_handler.R:364:    load_project(conn, project_id, currentuser())
+ui_handler.R:365:    current_project_details <- getProjectName(conn, currentuser())
+ui_handler.R:380:  user_projects <- get_user_projects(conn, currentuser())
+ui_handler.R:386:  user_projects_non_owner <- get_user_projects_non_owner(conn, currentuser())
+ui_handler.R:689:      ;", .con = conn)
+ui_handler.R:691:      query_result <- dbGetQuery(conn, select_query)
+ui_handler.R:801:load_project <- function(conn, project_id, current_user){
+ui_handler.R:807:        pool::poolWithTransaction(conn, function(conn) {
+ui_handler.R:808:          result <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as user_count FROM madi_lumi_users.project_users WHERE project_id = {project_id} AND user_id = '{current_user}'"))
+ui_handler.R:811:          project_name_result <- dbGetQuery(conn, project_name_query)
+ui_handler.R:815:          query_check <- sprintf("SELECT 1 FROM madi_results.xmap_users WHERE auth0_user = %s", dbQuoteLiteral(conn, current_user))
+ui_handler.R:816:          exists <- dbGetQuery(conn, query_check)
+ui_handler.R:818:            query_insert <- glue::glue("INSERT INTO madi_results.xmap_users (auth0_user, project_name, workspace_id) VALUES ({dbQuoteLiteral(conn, current_user)}, {dbQuoteLiteral(conn, project_name)}, {project_id})")
+ui_handler.R:819:            dbExecute(conn, query_insert); message("New user inserted in xmap.")
+ui_handler.R:821:            query_update <- glue::glue("UPDATE madi_results.xmap_users SET project_name = {dbQuoteLiteral(conn, project_name)}, workspace_id = {project_id} WHERE auth0_user = {dbQuoteLiteral(conn, current_user)}")
+ui_handler.R:822:            dbExecute(conn, query_update); message("User updated in xmap.")
+
+===== (3) per-file tally of bare-word conn occurrences (non-comment) =====
+  app.R                                    2
+  assay_import_backend.R                   23
+  bead_count_analysis_ui.R                 3
+  clone_study_components.R                 8
+  curve_lookup_functions.R                 18
+  data_tab_module.R                        1
+  db_functions.R                           62
+  delete_study_components.R                8
+  derived_experiments.R                    34
+  global.R                                 5
+  plate_management.R                       18
+  plate_ops.R                              2
+  plate_validator_functions.R              35
+  ui_handler.R                             32
+  user_management.R                        16
+  user.R                                   3
+
+===== (4) function PARAMETERS named conn (benign: local, not the global) =====
+study_overview_functions.R:159:# check_plate <- function(conn, selected_study){
+plate_validator_functions.R:911:check_existing_plates <- function(conn, project_id, study_accession, experiment_accession, plateids) {
+plate_validator_functions.R:957:get_existing_antigens <- function(conn, study_accession, experiment_accession) {
+plate_validator_functions.R:975:get_existing_visits <- function(conn, study_accession) {
+plate_validator_functions.R:997:insert_new_rows <- function(conn, schema, table, new_data, existing_data, join_keys, label) {
+plate_validator_functions.R:1022:insert_to_table <- function(conn, schema, table, data, label, required_cols = NULL) {
+plate_validator_functions.R:1093:upload_specimen_data <- function(conn, plates_map, specimen_type, combined_plate_data,
+plate_validator_functions.R:1214:write_antigen_settings_to_cascade <- function(conn, antigen_df, project_id,
+plate_validator_functions.R:1271:upload_antigen_family <- function(conn, antigen_import_list, project_id, study_accession, experiment_accession, user = "import") {
+plate_validator_functions.R:1301:upload_planned_visits <- function(conn, timepoint_map, study_accession) {
+plate_validator_functions.R:1328:upload_batch_to_database <- function(conn, batch_plates, metadata_batch,
+plate_validator_functions.R:1557:# upload_batch_to_database <- function(conn, batch_plates, metadata_batch, layout_sheets) {
+clone_study_components.R:75:.clone_target_exists <- function(conn, proj, study) {
+clone_study_components.R:83:count_clone_source <- function(conn, srcproj, srcstudy) {
+clone_study_components.R:92:clone_study_components <- function(conn, srcproj, srcstudy, newproj, newstudy, auth0_user = NA_character_) {
+delete_study_components.R:61:count_study_components <- function(conn, project, study, experiment = NULL) {
+delete_study_components.R:105:delete_study_components <- function(conn, project, study, experiment = NULL) {
+db_functions.R:32:fetch_antigen_parameters <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:54:fetch_db_header <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:67:fetch_db_header_experiments <- function(study_accession, conn, verbose = TRUE) {
+db_functions.R:78:fetch_db_standards <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:90:fetch_db_buffer <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:103:fetch_db_controls <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:117:fetch_db_samples <- function(study_accession, experiment_accession, project_id, conn) {
+db_functions.R:224:diagnose_upsert_data <- function(df, table, conn = NULL, schema = "madi_results") {
+db_functions.R:363:build_sql_components_pk <- function(conn, schema, table, cols, nk, pk) {
+db_functions.R:441:upsert_batch_pk <- function(conn, df, table, sql_parts, use_copy, notify,
+db_functions.R:557:upsert_batch_on_conflict <- function(conn, df, table, sql_parts, use_copy, notify) {
+db_functions.R:685:build_upsert_sql_glue <- function(conn, schema, table, tmp_name, cols, nk) {
+db_functions.R:1170:fetch_current_sc_options_wide <- function(currentuser, study_accession, project_id, conn) {
+global.R:206:getProjectName <- function(conn, current_user) {
+global.R:219:reloadReactive <- function(conn, userWorkSpaceID) {
+curve_lookup_functions.R:139:upsert_curve_lookup <- function(conn, candidates) {
+curve_lookup_functions.R:281:fetch_existing_curve_lookup <- function(conn, candidates) {
+curve_lookup_functions.R:331:register_curve_lookup <- function(conn, standards_df, project_id) {
+user_management.R:8:        pool::poolWithTransaction(db_pool, function(conn) {
+user_management.R:50:      pool::poolWithTransaction(db_pool, function(conn) {
+study_configuration.R:92:## connection via pool::poolWithTransaction(db_pool, function(conn) { ... }) so the
+assay_import_backend.R:102:    pool::poolWithTransaction(pool, function(conn) {
+assay_import_backend.R:264:land_antigen_family <- function(conn, antigen_import_list, project_id,
+assay_import_backend.R:311:.table_columns <- function(conn, schema, table) {
+assay_import_backend.R:320:.insert_or_die <- function(conn, table, data, required_cols, label) {
+assay_import_backend.R:354:land_planned_visits <- function(conn, timepoint_map, study_accession) {
+data_tab_module.R:145:dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
+derived_experiments.R:22:get_insertable_cols <- function(conn, schema, table_name) {
+derived_experiments.R:40:insert_delta_sql <- function(conn, schema, table_name, df) {
+derived_experiments.R:83:subtract_wavelength_sql <- function(conn, schema, table_name,
+derived_experiments.R:294:register_derived_curves <- function(conn, project, study, experiment) {
+derived_experiments.R:314:perform_wavelength_subtraction <- function(conn) {
+derived_experiments.R:378:    pool::poolWithTransaction(db_pool, function(conn) {
+derived_experiments.R:404:    pool::poolWithTransaction(db_pool, function(conn) {
+ui_handler.R:24:get_user_projects <- function(conn, current_user) {
+ui_handler.R:35:get_user_projects_non_owner <- function(conn, current_user) {
+ui_handler.R:46:getProjectName <- function(conn, current_user){
+ui_handler.R:63:get_exp_assay_type <- function(conn, project_id, study_accession, experiment_accession) {
+ui_handler.R:801:load_project <- function(conn, project_id, current_user){
+ui_handler.R:807:        pool::poolWithTransaction(conn, function(conn) {
+
+===== (5) dbConnect() calls -- where connections are actually opened =====
+global.R:187:db_pool <- pool::dbPool(
+
+############################################################
+# SUMMARY: 270 non-comment bare-word 'conn' lines across 21 file(s)
+# Clear section (2) to zero (migrate each to pool), then section (1) is
+# all that's left -- delete those to remove conn entirely.
+############################################################

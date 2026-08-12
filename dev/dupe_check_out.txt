@@ -1,0 +1,30 @@
+############################################################
+# getProjectName
+############################################################
+--- DEFINITION sites ---
+global.R:206:getProjectName <- function(conn, current_user) {
+ui_handler.R:46:getProjectName <- function(conn, current_user){
+--- CALL sites (excluding definitions) ---
+user.R:34:  current_project_details <- getProjectName(conn, currentuser())
+ui_handler.R:342:    current_project_details <- getProjectName(conn, currentuser())
+ui_handler.R:365:    current_project_details <- getProjectName(conn, currentuser())
+
+############################################################
+# load_project
+############################################################
+--- DEFINITION sites ---
+ui_handler.R:801:load_project <- function(conn, project_id, current_user){
+--- CALL sites (excluding definitions) ---
+ui_handler.R:341:    load_project(conn, project_id, currentuser())
+ui_handler.R:364:    load_project(conn, project_id, currentuser())
+
+############################################################
+# SOURCE ORDER of the two files that define getProjectName
+# (last one sourced WINS at runtime)
+############################################################
+app.R:4:source("global.R", local = TRUE)
+app.R:1095:      source("ui_handler.R", local = TRUE)
+(note: global.R is typically loaded via global.R auto-load, not source(); ui_handler.R is source()d in app.R)
+
+--- where is ui_handler.R sourced? ---
+app.R:1095:      source("ui_handler.R", local = TRUE)

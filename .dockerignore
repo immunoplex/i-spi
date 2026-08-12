@@ -1,0 +1,32 @@
+# Build-context excludes for the I-SPI image.
+# The Dockerfile COPYs ./src/ ; keep non-runtime content out of the context/image.
+
+# Retired and in-development code (moved aside during the refactor) — must not ship
+**/dead
+**/dead/**
+**/dev
+**/dev/**
+**/*.bak
+**/simulate
+**/simulate/**
+
+# Source/reference documents not served at runtime (served assets live in src/www/)
+src/references
+src/references/**
+
+# Secrets: compose reads .env via env_file at runtime; it must not enter the image
+.env
+*.env
+
+# VCS / editor / OS cruft
+.git
+.git/**
+.gitignore
+.Rproj.user
+.Rproj.user/**
+*.Rproj
+.DS_Store
+Thumbs.db
+
+# This build/test harness is not part of the app
+docker_build_test.sh

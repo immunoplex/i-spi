@@ -201,13 +201,13 @@ get_plot_data <- function(models_fit_list,
 
 
   fit_summary <- summarize_model_fits(models_fit_list, model_names)
-  fit_summary_long <- reshape2::melt(
-    fit_summary,
-    id.vars = c("model", "converged"),
-    measure.vars = c("AIC"),
-    variable.name = "criterion",
-    value.name = "value"
+  fit_summary_long <- tidyr::pivot_longer(
+    fit_summary[, c("model", "converged", "AIC")],
+    cols = "AIC",
+    names_to = "criterion",
+    values_to = "value"
   )
+  fit_summary_long <- as.data.frame(fit_summary_long, stringsAsFactors = FALSE)
   fit_summary_long <- subset(fit_summary_long, converged & is.finite(value))
   names(fit_summary_long)[names(fit_summary_long) == "criterion"] <- "parameter"
   names(fit_summary_long)[names(fit_summary_long) == "value"] <- "estimate"
@@ -315,12 +315,11 @@ plot_model_comparisons <- function(plot_data,
 
   ## 5. Optional: AIC/BIC barplot
   # fit_summary <- summarize_model_fits(models_fit_list, model_names)
-  # fit_summary_long <- reshape2::melt(
-  #   fit_summary,
-  #   id.vars = c("model", "converged"),
-  #   measure.vars = c("AIC", "BIC"),
-  #   variable.name = "criterion",
-  #   value.name = "value"
+  # fit_summary_long <- tidyr::pivot_longer(
+  #   fit_summary[, c("model", "converged", "AIC", "BIC")],
+  #   cols = c("AIC", "BIC"),
+  #   names_to = "criterion",
+  #   values_to = "value"
   # )
 
   # p_info <- ggplot(

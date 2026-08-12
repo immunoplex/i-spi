@@ -34,4 +34,5 @@ shiny-server.sock
 .Rproj
 .DS_Store
 i-spi-add-fcuploader.Rproj
-
+/dead
+/simulate

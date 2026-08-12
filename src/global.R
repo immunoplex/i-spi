@@ -9,20 +9,21 @@ library(plotly);
 library(shiny);
 library(shinyjs);
 library(shinyalert); library(shinydashboard);
-library(shinyWidgets); library(shinyFiles);
+library(shinyWidgets);
 library(shinybusy); library(shinyBS); library(readxl); library(openxlsx);
-library(RPostgres); library(glue); library(DBI); library(DT); library(sqldf); library(pool);
-library(datamods); library(data.table); library(stringi); library(stringr);
-library(tidyverse); library(tidyr); library(plyr); library(modelr); library(robustbase);
-library(broom); library(rhandsontable); library(sendmailR);
-library(reactable); library(gt); library(gtsummary); library(gtExtras); library(grid);
-library(gridExtra); library(gtable); library(gtools); library(httr2); library(auth0);
-library(moach); library(janitor); library(visNetwork); library(pdp); library(ggsci);
+library(RPostgres); library(glue); library(DBI); library(DT); library(pool);
+library(data.table); library(stringi); library(stringr);
+library(tidyverse); library(tidyr); library(plyr); library(modelr);
+library(broom); library(rhandsontable);
+library(gt); library(gtExtras); library(grid);
+library(gridExtra); library(gtable); library(httr2); library(auth0);
+library(moach); library(janitor);
 library(bslib)
-library(aplpack)
-library(weird)
+library(bsicons)   # info-circle icon for help drill-downs
+library(yaml)      # parse concept-note YAML frontmatter
+
 library(ggplot2)
-#library(gghdr)
+#
 
 ## For study parameters
 library(shinyFeedback)
@@ -33,41 +34,27 @@ library(htmltools)
 library(ggrepel)
 library(cowplot)
 
-
-
-library(ks)     # For kernel density estimation
+# For kernel density estimation
 library(scales) # For color scaling
 library(plotly) # For interactive plots
-library(sp)
 
 # For Standard Curve Fitting
-library(socviz) # round_df function here
+# round_df function here
 library(magrittr)
-library(car) # for VIF
-library(nlraa)
-library(minpack.lm)
-library(nls.multstart)
-library(Deriv)
-library(nlstools)
+# for VIF
+
 library(magrittr)
 library(shinyWidgets)
-library(formattable)
-library(drda)
-library(tmvtnorm)
 
 ## std-curver
 library(patchwork)
 library(rlang)
-library(rjags)
+
 library(bit64)
 library(shinycssloaders)
 
 # For standard curve Summary
-library(fracture)
 
-library(mgcv)
-library(cgam)
-library(extras)
 library(Polychrome)
 library(shinyjqui)
 library(future)
@@ -75,24 +62,16 @@ library(promises)
 library(progressr)
 
 # For Subgroup detection
-library(labelled)
-library(flexmix)
-library(factoextra)
-library(cluster)
 
 ## For Subgroup Detection Summary
-library(heatmaply)
-library(dendextend)
 
 ## For Dilution analysis
-library(data.tree)
-library(DiagrammeR)
+
 library(tidyr)
-library(datamods)
 library(digest)
 
 ## Dilution Linearity
-library(strex)
+
 library(purrr)
 
 library(httr2)
@@ -103,6 +82,12 @@ library(urltools)
 
 library(shiny.destroy)
 
+# verbose diagnostic switch. Set the option TRUE to see >>> traces.
+options(ispi.verbose = FALSE)   # flip to TRUE when debugging
+
+vmsg <- function(...) {
+  if (isTRUE(getOption("ispi.verbose"))) message(...)
+}
 
 # Enable progressr with shiny
 handlers(global = TRUE)
@@ -190,19 +175,7 @@ names(color_features) <- c(
   "ADCP", "ADCD"
 )
 
-# Define database connection function
-get_db_connection <- function() {
-  dbConnect(RPostgres::Postgres(),
-            dbname = Sys.getenv("db"),
-            host = Sys.getenv("db_host"),
-            port = Sys.getenv("db_port"),
-            user = Sys.getenv("db_userid_x"),
-            password = Sys.getenv("db_pwd_x"),
-            sslmode = 'require',
-            options = "-c search_path=madi_results"
-  )
-}
-
+# (legacy get_db_connection() removed -- app uses db_pool exclusively)
 # App-level connection pool (shared across sessions). Preferred over holding a
 # per-session connection open: it reuses connections (no per-query handshake),
 # revalidates/reconnects stale ones (kills "server closed the connection" errors
@@ -219,6 +192,8 @@ db_pool <- pool::dbPool(
   user     = Sys.getenv("db_userid_x"),
   password = Sys.getenv("db_pwd_x"),
   sslmode  = "require",
+  sslcert = "/nonexistent/postgresql.crt",  # absent path -> stat() ENOENT -> libpq skips
+  sslkey  = "/nonexistent/postgresql.key",  # (empty "" would NOT work: it defaults to ~/.postgresql)
   options  = "-c search_path=madi_results",
   minSize  = 1,
   maxSize  = 8,
@@ -227,44 +202,8 @@ db_pool <- pool::dbPool(
 )
 shiny::onStop(function() try(pool::poolClose(db_pool), silent = TRUE))
 
-# Returns a plain list of connection parameters (no live connection object)
-get_db_connection_args <- function() {
-  list(
-    host   = Sys.getenv("db_host"),
-    port   = as.integer(Sys.getenv("db_port", "5432")),
-    dbname = Sys.getenv("db"),
-    user   = Sys.getenv("db_userid_x"),
-    pass   = Sys.getenv("db_pwd_x")
-  )
-}
-
-# Called inside the future to open a fresh connection
-get_db_connection_from_args <- function(host, port, dbname, user, pass) {
-  DBI::dbConnect(
-    RPostgres::Postgres(),
-    host     = host,
-    port     = port,
-    dbname   = dbname,
-    user     = user,
-    password = pass,
-    sslmode = 'require',
-    options = "-c search_path=madi_results"
-  )
-
-}
-# Function to get project name
-getProjectName <- function(conn, current_user) {
-  query <- glue::glue("SELECT project_name, workspace_id FROM madi_results.xmap_users pu WHERE pu.auth0_user = {dbQuoteLiteral(conn, current_user)}")
-  result <- dbGetQuery(conn, query)
-  if (nrow(result) > 0) {
-    name <- result[1, "project_name"]
-    id <- result[1, "workspace_id"]
-  } else {
-    name <- "unknown"
-    id <- -1
-  }
-  return(list(name = name, id = id))
-}
+# (getProjectName removed from global.R -- live definition is in ui_handler.R;
+# the two were identical and ui_handler.R is sourced last, so this copy was shadowed)
 
 reloadReactive <- function(conn, userWorkSpaceID) {
   select_query <- "
@@ -283,4 +222,14 @@ reloadReactive <- function(conn, userWorkSpaceID) {
   query_result
 }
 
+
+# ---- Help/docs engine + settings concept registry (loaded ONCE per process) --
+# help_utils.R defines the parser and the render helpers; HELP_SETTINGS is the
+# concept registry the settings-cascade UI reads for Layer-3 drill-downs. Fails
+# soft: a missing help/ dir warns and disables drill-downs rather than crashing.
+# NOTE: source(local=FALSE) puts the engine functions in globalenv(); global.R
+# itself is sourced local=TRUE (into the app env), so we must assign the registry
+# into globalenv() explicitly or the engine's get0() lookup can't reach it.
+source("help_utils.R")
+assign("HELP_SETTINGS", load_help("help/settings"), envir = globalenv())
 

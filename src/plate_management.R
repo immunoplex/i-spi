@@ -252,7 +252,7 @@ WHERE study_accession = {selected_study}
     # req(input$readxMap_study_accession != "Click here",
     #     input$study_level_tabs == "Study Overview",
     #     input$main_tabs == "view_files_tab")
-    req(input$basic_qc_params == 'Plate Label Editor')
+    req(input$readxMap_study_accession, input$readxMap_study_accession != "Click here")
 
     fluidPage(
       # bsCollapse(
@@ -304,7 +304,7 @@ WHERE study_accession = {selected_study}
                       tags$div(style = "flex: 1",
                                br(),
                                br(),
-                               actionButton("delete_plate", label = "Delete Selected Plate")
+                               NULL  # [11.8] plate delete removed -> Delete Study Components tab
                       )
                 )
          )
@@ -883,57 +883,6 @@ observeEvent(input$confirm_standard_curve_source_edit, {
 
 
 
-# Delete Plate
-observeEvent(input$delete_plate, {
-
-  selected_analyte <- paste(input$selected_experiment_row, input$original_nominal_sample_dilution, sep = "_")
-  # showNotification(paste("Delete clicked for analyte", analyte_list[row_idx], "plate", plate_list[col_idx]))
-  showModal(
-    modalDialog(
-      title = paste(input$readxMap_study_accession, "Confirm Delete"),
-      paste("Are you sure you want to delete count for analyte",
-            selected_analyte, "and", input$original_plate_to_edit, "? This will delete the header,
-                buffers, controls, standards, and standard fits."),
-      footer = tagList(
-        actionButton("confirm_plate_delete", "Confirm Deletion"),
-        modalButton("Cancel")
-      ),
-      easyClose = TRUE
-    )
-  )
-
-
-}, ignoreInit = TRUE)
-
-
-observeEvent(input$confirm_plate_delete, {
-  cat("Pressed confirm delete plate")
-
-  print(input$readxMap_study_accession)
-  print(input$selected_plate_id)
-  print(input$selected_plateid_to_edit)
-  # do update
-  delete_plate(conn, selected_study = input$readxMap_study_accession,
-               selected_plate_id = input$selected_plate_id,
-               selected_plateid = input$selected_plateid_to_edit)
-
-   removeModal() # remove once click confirm
-    showNotification("Plate Deleted")
- #
-  # RELOAD plate_header data
-  updated_plate_df <- fetch_study_header(selected_study = input$readxMap_study_accession)
-
-  # # Reset UI based on the updated data
-  # updateSelectInput(session, "original_nominal_sample_dilution",
-  #                   choices = updated_plate_df$nominal_sample_dilution,
-  #                   selected = input$edit_sample_dil_factor)
-  #
-  # updateTextInput(session, "edit_sample_dil_factor", value = NULL)
-  #
-  # Refresh datatable
-  output$plate_header <- renderDT({
-    datatable(updated_plate_df, selection = "single", filter = 'top')
-  })
-  })
+# --- [11.8] removed -> consolidated in delete_study_components(.R/_ui.R) ---
 
 

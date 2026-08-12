@@ -4,9 +4,9 @@
 source("global.R", local = TRUE)
 
 # Set to 1 for local and do not push in prod
-#  Sys.setenv(LOCAL_DEV = "1")
-# # local_email_user <- "seamus.owen.stein@dartmouth.edu"
-# local_email_user <- "mscotzens@gmail.com"
+ Sys.setenv(LOCAL_DEV = "1")
+# local_email_user <- "seamus.owen.stein@dartmouth.edu"
+local_email_user <- "mscotzens@gmail.com"
 
 # Source authentication configuration (Step 1)
 # Defines DEX_*, APP_REDIRECT_URI, OIDC_SCOPES, endpoints, get_jwks(), `%||%`, dex_client
@@ -856,7 +856,10 @@ server <- function(input, output, session) {
         }))
       }
 
-      conn <- get_db_connection()
+      # conn is now the connection pool (db_pool). All read paths use it directly;
+      # transactional writers check out a connection via pool::poolWithTransaction.
+      # (Legacy get_db_connection() retained only until fully removed.)
+      conn <- db_pool
 
       userWorkSpaceID <- reactiveVal(NULL)
       userProjectName <- reactiveVal("unknown")
@@ -883,7 +886,7 @@ server <- function(input, output, session) {
       job_status <- reactiveVal(NULL)
       tabRefreshCounter <- reactiveVal(list(view_files_tab = 0, import_tab = 0, manage_project_tab = 0))
 
-      antigen_families_rv <- reactiveVal(NULL) #used in study configuration
+      # antigen_families_rv <- reactiveVal(NULL) #used in study configuration
       n_plates_standard_curve <- reactiveVal(NULL)
       mininum_dilution_count_boolean <- reactiveVal(NULL)
       luminex_features <- reactiveVal(c("Well", "Type", "Description", "Region", "Gate", "Total", "% Agg Beads", "Sampling Errors", "Rerun Status", "Device Error", "Plate ID", "Regions Selected", "RP1 Target", "Platform Heater Target", "Platform Temp (°C)", "Bead Map", "Bead Count", "Sample Size (µl)", "Sample Timeout (sec)", "Flow Rate (µl/min)", "Air Pressure (psi)", "Sheath Pressure (psi)", "Original DD Gates", "Adjusted DD Gates", "RP1 Gates", "User", "Access Level", "Acquisition Time", "acquisition_time", "Reader Serial Number", "Platform Serial Number", "Software Version", "LXR Library", "Reader Firmware", "Platform Firmware", "DSP Version", "Board Temp (°C)", "DD Temp (°C)", "CL1 Temp (°C)", "CL2 Temp (°C)", "DD APD (Volts)", "CL1 APD (Volts)", "CL2 APD (Volts)", "High Voltage (Volts)", "RP1 PMT (Volts)", "DD Gain", "CL1 Gain", "CL2 Gain", "RP1 Gain"))
@@ -1088,50 +1091,78 @@ server <- function(input, output, session) {
       ### Sourcing all the application logic files from `main`
       source("user.R", local = TRUE)
       source("user_management.R", local = TRUE)
-      source("helpers.R", local = TRUE)
+      # [moved to dead/ 2026-08-11] source("helpers.R", local = TRUE)
       source("ui_handler.R", local = TRUE)
       source("study_configuration.R", local = TRUE)
       source("study_configuration_ui.R", local = TRUE)
+
       source("plate_management.R", local = TRUE)
       source("study_overview_functions.R", local = TRUE)
       source("study_overview_ui.R", local = TRUE)
-      source("antigen_family_ui.R", local = TRUE)
-      source("split_plates_nominal_sample_dilution.R", local = TRUE)
+      # source("antigen_family_ui.R", local = TRUE)
       source("plate_ops.R", local=TRUE)  # was load_previous_stored_data.R (retired -> dead/); wide-format loader/bundle/renderers removed, plate-ops + validators kept
 
       source("plate_validator_functions.R", local = TRUE)
       source("generate_layout_template_ref.R", local = TRUE)
       source("batch_layout_functions.R", local = TRUE)
-      source("import_lumifile.R", local = TRUE)
-      source("xPonentReader.R", local = TRUE)
-      source("elisa_reader.R", local = TRUE)
-      source("elisa_diagnostic.R", local = TRUE)
-      source("elisa_wavelength_subtraction.R", local = TRUE)
       source("curve_lookup_functions.R", local = TRUE)
-      source("flowjo_reader.R", local = TRUE)
-      # source("segment_reader.R", local = TRUE)
+      source("derived_experiments.R", local = TRUE)  # 11.7: ELISA subtract + dilution split (consolidated)
+
+      # ── 11.10 assay-import subsystem (replaces import_lumifile.R, xPonentReader.R,
+      #    elisa_reader.R, elisa_diagnostic.R, flowjo_reader.R, segment_reader.R) ──
+      source("import_helpers.R", local = TRUE)                  # extract_plate_number (lifted)
+      source("flowjo_read_functions.R", local = TRUE)           # flow parsers (was sourced by flowjo_reader.R)
+      source("generate_flowjo_layout_template.R", local = TRUE) # flow template (was sourced by flowjo_reader.R)
+      source("reader_bead_xponent_parsers.R", local = TRUE)     # xPONENT parsers (lifted from xPonentReader.R)
+      source("reader_elisa_parsers.R", local = TRUE)            # ELISA parsers (lifted from elisa_reader.R)
+      source("assay_import_contract.R", local = TRUE)
+      source("assay_import_backend.R", local = TRUE)
+      source("assay_import_module.R", local = TRUE)
+      source("reader_bead.R", local = TRUE)
+      source("rbx_binary_parser.R", local = TRUE)     # Phase 5: Bio-Plex .rbx parser
+      source("reader_bead_rbx.R", local = TRUE)        # Phase 5: bead/rbx format
+      source("reader_elisa.R", local = TRUE)
+      source("reader_flow.R", local = TRUE)
+      source("descriptor_bead.R", local = TRUE)
+      source("descriptor_elisa.R", local = TRUE)
+      source("descriptor_flow.R", local = TRUE)
+      source("assay_import_mount.R", local = TRUE)
+      mount_assay_import(
+        input   = input,
+        output  = output,
+        session = session,
+        pool    = db_pool,
+        scope   = reactive(list(
+          project_id = userWorkSpaceID(),
+          study      = input$readxMap_study_accession,
+          experiment = input$readxMap_experiment_accession_import,
+          user       = currentuser()
+        )),
+        study_exp             = reactive_df_study_exp,
+        experiment_choices_rv = experiment_choices_rv
+      )
 
       source("plate_norm_server.R", local = TRUE)
       source("bead_count_analysis_ui.R", local = TRUE)
       source("bead_count_functions.R", local = TRUE)
       source("bead_count_controls_ui.R", local = TRUE)
-      source("dilution_standards_controls_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("dilution_standards_controls_ui.R", local = TRUE)
       source("blank_control_ui.R", local = TRUE)
-      source('propagate_functions.R', local = TRUE)
+      # source('propagate_functions.R', local = TRUE)
 
       # REMOVED (calib refactor): std_curver_ui.R -> dead/. The tab is rendered
       # by stdCurveModule (override below); this also excises all stanassay code.
-      source("std_curve_functions.R", local = TRUE)
+      # source("std_curve_functions.R", local = TRUE)
       source("db_functions.R", local = TRUE)
-      source("model_functions.R", local = TRUE)
+      # source("model_functions.R", local = TRUE)
       # source("se_x_robust_fix.R", local = TRUE)
       source("plot_functions.R", local = TRUE)
       # REMOVED (calib refactor): bayes_concentration_functions.R,
       # batch_fit_functions.R -> dead/ (no external consumers; live fitting now
       # runs only in the i-spi-compute worker).
 
-      source("std_curver_summary_ui.R", local = TRUE)
-      source("std_curver_summary_functions.R", local = TRUE)
+      # source("std_curver_summary_ui.R", local = TRUE)
+      # source("std_curver_summary_functions.R", local = TRUE)
 
       # =====================================================================
       # calib_* standard-curve module  (restructured; reads worker results,
@@ -1145,10 +1176,28 @@ server <- function(input, output, session) {
       # compute_concentration, ...) to fetch_calib_*, then drop those too.
       # =====================================================================
       source("calib_data_access.R",  local = TRUE)
+      source("settings_cascade_access.R", local = TRUE)
+      source("settings_cascade_ui.R", local = TRUE)
+      source("settings_export_import_ui.R", local = TRUE)
+      source("settings_export_import.R", local = TRUE)
+      source("annotation_access.R", local = TRUE)
+      source("annotation_ui.R", local = TRUE)
+      source("study_overview.R", local = TRUE)
+      source("study_overview_calib_access.R", local = TRUE)
+      source("study_overview_xmap_access.R", local = TRUE)
       source("compute_api_client.R", local = TRUE)
-      source("std_curve_module.R",   local = TRUE)
+      # source("std_curve_module.R",   local = TRUE)
+      source("std_curve_view_module.R", local = TRUE)
+      source("std_curve_calc_module.R", local = TRUE)
+      source("std_curve_compare_module.R", local = TRUE)
+      source("assay_response.R",     local = TRUE)
       source("data_dictionary.R",    local = TRUE)
       source("data_tab_module.R",    local = TRUE)
+      source("delete_study_components_ui.R", local = TRUE)
+      source("delete_study_components.R",    local = TRUE)
+      source("clone_study_components_ui.R",  local = TRUE)
+      source("clone_study_components.R",     local = TRUE)
+      source("source_alias.R",              local = TRUE)  # global source-name editor
 
       # Shared read scope + reload trigger for the calib_* tabs. reload_trigger is
       # bumped on experiment change, the Data tab's Refresh button, and (later) a
@@ -1163,9 +1212,40 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
 
       # Standard-curve tab: module renders into the existing slot. Uses the pool.
-      output$std_curver_ui <- renderUI({ stdCurveModuleUI("std_curve") })
-      stdCurveServer("std_curve", conn = db_pool, api = compute_api_client())
+      # output$std_curver_ui <- renderUI({ stdCurveModuleUI("std_curve") })
+      output$std_curver_ui <- renderUI({
+        shiny::tabsetPanel(
+          id = "std_curve_subtabs",
+          shiny::tabPanel("Explore fits", stdCurveViewUI("sc_view")),
+          shiny::tabPanel("Compute fits", stdCurveCalcUI("sc_calc")),
+          shiny::tabPanel("Compare fits", stdCurveCompareUI("sc_compare"))
+        )
+      })
 
+      # stdCurveServer("std_curve", conn = db_pool, api = compute_api_client(),
+      #                scope = calib_scope)
+      calib_dirty    <- shiny::reactiveVal(0)
+      selected_curve <- shiny::reactiveVal(NULL)
+      sc_scope <- calib_scope
+      sc_view <- stdCurveViewServer("sc_view", pool = db_pool, scope = sc_scope,
+                                      calib_dirty = calib_dirty, selected_curve = selected_curve)
+      stdCurveCalcServer("sc_calc", pool = db_pool, api = compute_api_client(),
+                         scope = sc_scope, calib_dirty = calib_dirty,
+                         selected_curve = selected_curve)
+      stdCurveCompareServer("sc_compare", pool = db_pool, scope = sc_scope,
+                            selected_curve = selected_curve)
+      settingsCascadeServer("settings", pool = db_pool, scope = calib_scope)
+      settingsExportImportServer("settings_io", pool = db_pool,
+                                 scope = calib_scope, user = currentuser)
+      annotation_server("annotations", db_pool,
+                        project_id = reactive(userWorkSpaceID()),
+                        study      = reactive(input$readxMap_study_accession),
+                        user       = currentuser)
+      studyOverviewServer("study_overview",
+                          pool    = db_pool,
+                          project = userWorkSpaceID,
+                          study   = reactive(input$readxMap_study_accession),
+                          user    = currentuser)
       # Data tab: flat controller (un-namespaced, so plate-ops keep their
       # stored_header_rows_selected / stored_plates_data contract). Reads via the
       # pool; mirrors raw frames into stored_plates_data for plate-ops.
@@ -1173,18 +1253,18 @@ server <- function(input, output, session) {
                     scope = calib_scope, reload_trigger = reload_trigger,
                     stored_plates_data = stored_plates_data)
 
-      source("outliers.R", local = TRUE)
-      source("outlier_ui1.R", local = TRUE)
-      source("dilution_analysis_ui.R", local = TRUE)
-      source("dilutional_linearity_ui.R", local = TRUE)
-      source("revised_dilution_analysis_functions.R", local = TRUE)
-      source("dilution_analysis_parameters_ui.R", local = TRUE)
-      source("dilution_linearity_functions.R", local = TRUE)
-      source("subgroup_function.R", local = TRUE)
-      source("subgroup_detection_ui.R", local = TRUE)
-      source("reference_arm_ui.R", local = TRUE)
-      source("subgroup_detection_summary_ui.R", local = TRUE)
-      source("subgroup_summary_functions.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("outliers.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("outlier_ui1.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("dilution_analysis_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("dilutional_linearity_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("revised_dilution_analysis_functions.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("dilution_analysis_parameters_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("dilution_linearity_functions.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("subgroup_function.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("subgroup_detection_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("reference_arm_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("subgroup_detection_summary_ui.R", local = TRUE)
+      # [moved to dev/ 2026-08-11] source("subgroup_summary_functions.R", local = TRUE)
 
     } else if (!isTRUE(ud$is_authenticated)) {
       if (!is.null(session$userData$app_logic_initialized) && isTRUE(session$userData$app_logic_initialized)) {

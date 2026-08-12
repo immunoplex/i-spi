@@ -14,122 +14,14 @@
 # stored_plates_data is now populated by dataTabServer (raw long frames), which
 # preserves the contract these observers rely on.
 # =============================================================================
-observeEvent(input$stored_header_rows_selected, {
-  print("in the observeEvent for header_rows_selected")
-  selected_studyexpplate$study_accession <- input$readxMap_study_accession
-  print(paste("selected study:", selected_studyexpplate$study_accession))
-  selected_studyexpplate$experiment_accession <- input$readxMap_experiment_accession
-  print(paste("selected experiment:", selected_studyexpplate$experiment_accession))
-  selected_studyexpplate$plateid <- stored_plates_data$stored_header[input$stored_header_rows_selected, c("plateid")]
-  print(paste("selected plateid:", selected_studyexpplate$plateid))
-  selected_studyexpplate$plate <- stored_plates_data$stored_header[input$stored_header_rows_selected, c("plate")]
-  print(paste("selected plate:", selected_studyexpplate$plate))
-  selected_studyexpplate$nominal_sample_dilution <- stored_plates_data$stored_header[input$stored_header_rows_selected, c("nominal_sample_dilution")]
-  print(paste("selected nominal sample dilution", selected_studyexpplate$nominal_sample_dilution))
-  selected_studyexpplate$wavelengths <- stored_plates_data$stored_header[input$stored_header_rows_selected, c("wavelengths")]
-  print(paste("selected wavelengths", selected_studyexpplate$wavelengths))
-  # header_row_selected <- stored_plates_data$stored_header[input$stored_header_rows_selected,]
-  # print(header_row_selected)
+# --- [11.7] moved to derived_experiments.R ---
 
-  plateid <- stored_plates_data$stored_header[
-    input$stored_header_rows_selected, "plateid"
-  ]
-  
-  plate_id <- stored_plates_data$stored_header[
-    input$stored_header_rows_selected, "plate_id"
-  ]
-
-  # --- Check if already split ---
-  already_split_sql <- glue::glue("
-    SELECT EXISTS (
-      SELECT 1
-      FROM madi_results.xmap_sample
-      WHERE study_accession = '{input$readxMap_study_accession}'
-        AND experiment_accession = '{input$readxMap_experiment_accession}'
-        AND plateid = '{plateid}'
-        AND nominal_sample_dilution IS NOT NULL
-        AND nominal_sample_dilution NOT LIKE '%|%'
-    ) AS already_split;
-  ")
-  already_split <- DBI::dbGetQuery(conn, already_split_sql)$already_split
-
-
-  selected_nominal_dilutions <- strsplit(selected_studyexpplate$nominal_sample_dilution, "\\|")[[1]]
-  if (!already_split && length(selected_nominal_dilutions) > 1) {
-       split_by_nominal_dilution(TRUE)
-  } else {
-    split_by_nominal_dilution(FALSE)
-  }
-  
-  ## wavelength check
-  wl_parts <- strsplit(selected_studyexpplate$wavelengths, "\\|")[[1]]
-  if (length(wl_parts) == 2) {
-    delta_experiment <- paste0(input$readxMap_experiment_accession, "|D")
-    
-    already_subtracted_sql <- glue::glue("
-      SELECT EXISTS (
-        SELECT 1
-        FROM madi_results.xmap_header
-        WHERE study_accession     = '{input$readxMap_study_accession}'
-          AND experiment_accession = '{delta_experiment}'
-          AND plate_id              = '{plate_id}'
-      ) AS already_subtracted;
-    ")
-    already_subtracted <- DBI::dbGetQuery(conn, already_subtracted_sql)$already_subtracted
-    
-    if (!already_subtracted) {
-      show_wavelength_subtraction(TRUE)
-    } else {
-      show_wavelength_subtraction(FALSE)
-    }
-  } else {
-    show_wavelength_subtraction(FALSE)
-  }
-  
-
-
-  # output$selected_plate_text = renderText({
-  #   paste0("Selected Plate: ", selected_studyexpplate$plateid)
-  # })
-
-  ## identify if the standard curve data is present and store
-  # check_standard <- stored_plates_data$stored_standard[ ,"plateid"]
-  # selected_studyexpplate$nrows_standard <- length(check_standard[check_standard == selected_studyexpplate$plateid])
-  # print(paste(selected_studyexpplate$plateid," nrows_standard:", selected_studyexpplate$nrows_standard))
-  #
-  # ## identify if the 4 parameter standard curve is calculated and store
-  # check_fits <- stored_plates_data$stored_fits[ ,"plateid"]
-  # selected_studyexpplate$nrows_fits <- length(check_fits[check_fits == selected_studyexpplate$plateid])
-  # print(paste(selected_studyexpplate$plateid," nrows_fits:", selected_studyexpplate$nrows_fits))
-  #
-  # ## identify if the buffer data is available and store
-  # check_buffer <- stored_plates_data$stored_buffer[ ,"plateid"]
-  # selected_studyexpplate$nrows_buffer <- length(check_buffer[check_buffer == selected_studyexpplate$plateid])
-  # print(paste(selected_studyexpplate$plateid," nrows_buffer:", selected_studyexpplate$nrows_buffer))
-  #
-  # ## identify if the control data is available and store
-  # check_control <- stored_plates_data$stored_control[ , c("plateid")]
-  # selected_studyexpplate$nrows_control <- length(check_control[check_control == selected_studyexpplate$plateid])
-  # print(paste(selected_studyexpplate$plateid," nrows_control:", selected_studyexpplate$nrows_control))
-})
-
-observeEvent(input$readxMap_study_accession, {
-
-  if (input$readxMap_study_accession != "Click here") {
-  initial_source <- obtain_initial_source(input$readxMap_study_accession)
-  # std <<- stored_plates_data$stored_standard
-  # initial_source <<- unique(stored_plates_data$stored_standard$source)[1]
-
-  # Initialize study parameters for a user and study
-  study_user_params_nrow <- nrow(fetch_study_configuration(study_accession = input$readxMap_study_accession
-                                                           , user = currentuser()))
-  if (study_user_params_nrow == 0) {
-    intitialize_study_configurations(study_accession = input$readxMap_study_accession,
-                                     user = currentuser(), initial_source = initial_source)
-
-  }
-  }
-})
+# observeEvent(input$readxMap_study_accession, {
+#
+#   if (input$readxMap_study_accession != "Click here") {
+#   initial_source <- obtain_initial_source(input$readxMap_study_accession)
+#   }
+# })
 
 
 check_nsample_plate <- function(df, plate_column){
@@ -175,17 +67,6 @@ count_n_dilutions_per_antigen <- function(study_accession, experiment_accession)
 
   n_dilution_per_antigen_df <- dbGetQuery(conn, n_dilutions_query)
   return(n_dilution_per_antigen_df)
-  # record_count <<- table(n_dilution_per_antigen_df$antigen)
-  #
-  # # Find antigens with fewer than 5 records
-  # if (any(record_count < 5)) {
-  #   # Return FALSE if there are antigens with fewer than 5 records
-  #   result <- FALSE
-  # } else {
-  #   # Return TRUE if all antigens have at least 5 records
-  #   result <- TRUE
-  # }
-  # return(result)
 }
 
 validate_plate_data <- function(stored_plates_data){
