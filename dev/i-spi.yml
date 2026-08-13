@@ -1,0 +1,156 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  annotations:
+    sealedsecrets.bitnami.com/cluster-wide: "true"
+  creationTimestamp: null
+  name: madi-lumi-reader
+spec:
+  encryptedData:
+    AUTH0_KEY: AgBA5mSgpNW5dW6PqH7ODJF1S4mmAJ6gtl8BiGxEXD7Ll8sx9MfsWkL1M+zhVZXjDXkVmMSAAiMtjuvPXWjuhdg0E+6p+KRjZKs9Acze3J+UFornmd4Gs67iYJl8aFalJyWJlpwM3gDWvtDmnPtggIlbeQ6TjFjSY1wJ5b+J5oyPbQUq2iZx0hxbjCWtIkkFwIrghAJSgxGRJ9vfik0HUtRkJxOHZg0nQiM7pbeUr5nTYNgnJelq+8m6VzHWbjFBFqZTZtcVIR4NHo4SJAWHiWadsYlwKDYMpdbCV8BPw7z4EcZkQrmZuUXqeVYmRyHS6kA+Lxsg0TliTYfBE5obj6fEhE0x0caEdxf2acirVypA+kFBPDmK/gau7h4+8b0+DLoY38mjxYx8s1RKL6MOETJLP+Uafm3iXxUFwxCfWigYZacGYTKzoGnPwTOvnVzqvskCPp9snVn6Z8akiiy08Y6LzT5NaqRxXRvcoY+xRfWVy+Ol1ncrdLPZQHP2nXJcuZT1S/etkt2PRE0/dCDPioG4cVv16+NU/pORe/Y3kTbodD16YlW6Xc9+Me++6tuFDdU6HuVZhEZrKMLaFdS7rFqI04rTSlTT4kDAUNkM77tz1svg2EPzsXzqzruSN9n9XDWKWXOcQnVUQcm6I03CgFyNzpGWyVYaQGYCCSM83YOMBhoAKGcfWGjQF1Q3I6yVJBD+/KHMwb9Znu5OcTKTRunsebkrAmlck4m0A6TsvsdvbQ==
+    AUTH0_SECRET: AgBSS5RIgpxe+T9nbPOcH2fNVnKr9ryNFmxsdYmlxL4g4Q2r0ssyfMO61DjWYr2x1O9HredJJPTL6KA+ML/ly3Fnh0GNbGujRM4AuYRZdeD0rOhs+8jP+1aVZGyfCNJWlfEAIwg2s6laJflatTdKRmcfeHtGoyA9NRR8pXKcqU9jsxM27KP4IHc3ovONteI6G/zQNoMdTgmWLQCkkmPp0t4LxcaQOzu2DymnXXpSHrlBk8D7tj7IvE6ecYfbc/DGEZfSj7rZ0ZSPjdhFyC7xrhoAzx61+GY9rhW0S6rKZSCYhns4kl0enWPTU9MOE6X8GPjALeeqtYJgYuYdtsION74GuNL0Cgnsc+4hl4YzxCPxmVPx5iGj1+7lZVHlYacUx960ohEDDUm2didbtKvBgcfup9O10czCQ1Sic1KyBeHjkKzVdtFfDZcgf0hmC9IO+er5kFlbz0+1vAL1j9H5n/JzEVjPpR2KIICMjbfX+YSFohmRyL6RTDfUIkRiIa4xRpY+KEJNONEWawSERb2ieMGWEtqfyz1KMY1M/UnwBTQDJtUksklk4eto1biNP48lDyY/t31yeY0I1YS4OOwBWO9x2ufsY7KokPfAQMqMPj8AIiorzY/PTTx3y7Ya0mT8f/k5LTtpFTMgEKwUV6Se7dfQLkGr/rCE6848xoTBscbxkWkqtFJlcM1Xeb5FIRxt+9mp1X2m2JyAqRcMgpUcfDN4c0EntrXh+23LrHVz+077nM1J380v1QO2lGF1j0lh3DWdyHnvxxzrB8GReeIXfb9Z
+    db_pwd_x: AgBd9sTNTMbMS7Z3Q8hDa2j0aKZ7wQDJTwlytUrg9v4X8asG3OEsNYkYZizTO2oPsNkuNBJuZiaukQYOxD6QC5QlOCZU7HSTfxkOYFDkueWzv2+JS+flcbRpFZYQkeHYxxc5va9wUCas2Ab2JVLHm34p+lp4d/k4PJ6joYzzNRpLFl6mFibETSIL0eXJYgcY1cdvlXFJYsMvV8jl/c/B/obj2qnTFo3EkjtwgL+2dP1sl7eng5EiH+U0fL2wI+S30qA3QflzhvCskivDiql7sQXqoqisjqYhvuupTARD8Z9DVW9UfUVv7P1F/zwgA6PdoArN7cAooea7b9PaizbjPeFpwyb+GrHut/JoEFmET0s9fkE4F2vci2UC2kPLvA9kVCXpYzK1sgkfJaQQXtDSXwnkaGpOqF4bxDETSh3RQBxKLxbRA1hzs2p7vN6S6dyPFridYB8CjmzckmDPwIS4wPVmtA+y4lk7rD8JdM+0F/5klUxItLoBgotjMmsUoZVcPwTmtJR9lRinI3vQ2oHEAuVMMHFz/jwta87+7sOuHGjqidjtaQVycBwk5rrkZ7zp4Qd9wMLFW4/t5Zztcednl5basLhovPVLE59fV0K+PEAP8V0mWc3eq5E6dgTkQ5Ad8GoH1pT9dL3zR7wOLQJ4lYhAPZ/VucUTh3ssAJJn4wTlqYGu5HyyxmNpYj161JRGgNARHa1qR+Q=
+  template:
+    metadata:
+      annotations:
+        sealedsecrets.bitnami.com/cluster-wide: "true"
+      creationTimestamp: null
+      name: madi-lumi-reader
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: i-spi
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: I-SPI-stripprefix@file
+spec:
+  rules:
+  - http:
+      paths:
+      - pathType: Prefix
+        path: "/I-SPI"
+        backend:
+          service:
+            name: i-spi
+            port:
+              number: 3838
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: i-spi
+  labels:
+    app: i-spi
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3838
+  selector:
+    app: i-spi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: i-spi
+  labels:
+    app: i-spi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: i-spi
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: i-spi
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+      - name: regcred
+      containers:
+        - image: ghcr.io/immunoplex/i-spi:main
+          imagePullPolicy: Always
+          name: i-spi
+          # readinessProbe:
+          #   exec:
+          #     command:
+          #     - sh
+          #     - -c
+          #     - 'curl -s http://localhost/ | grep "Welcome to nginx"'
+          #   initialDelaySeconds: 5
+          #   periodSeconds: 30
+          #command: ["R", "-e", "auth0::shinyAppAuth0('/usr/bin/shiny-server', host = '0.0.0.0', port = 3838)"]
+          #workingDir: /srv/shiny-server
+          env:
+            - name: db
+              value: "postgres"
+            - name: db_host
+              value: "mlr-c3d7-db.c.dartmouth.edu"
+            - name: db_port
+              value: "5432"
+            - name: db_userid_x
+              value: "d78039e"
+            - name: db_pwd_x
+              valueFrom:
+                secretKeyRef:
+                  name: madi-lumi-reader
+                  key: db_pwd_x
+            - name: AUTH0_USER
+              value: "dev-dwgc2s48mde2re45.us"
+            - name: AUTH0_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: madi-lumi-reader
+                  key: AUTH0_KEY
+            - name: AUTH0_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: madi-lumi-reader
+                  key: AUTH0_SECRET
+            - name: AUTH0_REMOTE_URL
+              value: "https://i-spi-preprod.dartmouth.edu/"
+            # i-spi-compute (api+redis+worker) job API. Replaces the retired
+            # BATCH_API_URL/BATCH_API_KEY batch-calculator client. The app's
+            # compute_api_client.R reads these two vars and POSTs to <URL>/jobs
+            # with header X-API-Key: <ISPI_COMPUTE_API_KEY>.
+            #   - ISPI_COMPUTE_URL is the base URL INCLUDING the /i-spi-compute
+            #     root path and NO trailing /jobs; Traefik strips /i-spi-compute
+            #     so the API (ROOT_PATH=/i-spi-compute) sees /jobs.
+            #   - ISPI_COMPUTE_API_KEY comes from the i-spi-compute SealedSecret
+            #     key API_KEY -- the SAME value the API enforces, so client and
+            #     server can never drift.
+            - name: ISPI_COMPUTE_URL
+              value: "https://madi-preprod.dartmouth.edu/i-spi-compute"
+            - name: ISPI_COMPUTE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: i-spi-compute
+                  key: API_KEY
+            # - name: ISPI_COMPUTE_VERBOSE   # set "TRUE" to log each request/response
+            #   value: "FALSE"
+            - name: SHINY_LOG_LEVEL
+              value: DEBUG
+            - name: SHINY_LOG_STDERR
+              value: "1"
+            - name: REDIRECT_URL
+              value: "https://madiproject_11.org"
+            - name: PGSSLCERT
+              value: "/tmp/postgresql.crt"
+            - name: DEX_ISSUER
+              value: "https://madi-preprod.dartmouth.edu/dex"
+            - name: DEX_CLIENT_ID
+              value: "5MGz5KrECFxiHMdnUeHYDhCRK63Nun74"
+            - name: DEX_CLIENT_SECRET
+              value: "wrbSLdm2OiTnCL5IKS92GizhBx2ic9HC"
+            - name: APP_REDIRECT_URI
+              value: https://i-spi-preprod.dartmouth.edu/
+          ports:
+          - containerPort: 3838
+            name: shiny
