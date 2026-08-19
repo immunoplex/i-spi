@@ -1282,4 +1282,5 @@ server <- function(input, output, session) {
 # ==============================================================
 options(shiny.host = "127.0.0.1")
 options(shiny.port = 8080)
+options(ispi.calc_job_diag = FALSE)
 shinyApp(ui = ui, server = server)
