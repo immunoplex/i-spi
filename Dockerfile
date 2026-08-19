@@ -9,16 +9,10 @@ RUN sed -i 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' \
     /etc/apt/sources.list 2>/dev/null || true
 
 # Install any needed packages specified in requirements.txt
-RUN apt-get update && apt-get install -y \
-    sudo \
-    gdebi-core \
-    pandoc \
-    libcurl4-gnutls-dev \
-    libcairo2-dev \
-    libxt-dev \
-    xtail \
-    wget \
-    vim
+RUN apt-get update && apt-get install -y --fix-missing \
+    -o Acquire::Retries=5 \
+    sudo gdebi-core pandoc libcurl4-gnutls-dev libcairo2-dev \
+    libxt-dev xtail wget vim
 RUN apt-get install libpq-dev -y
 
 # Install Shiny server
