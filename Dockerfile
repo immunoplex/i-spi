@@ -35,35 +35,20 @@ RUN R -e "install.packages(c('tidyr', 'plyr', 'modelr', 'broom', 'rhandsontable'
 RUN R -e "install.packages(c('grid', 'gridExtra', 'gtable', 'httr2', 'auth0', 'janitor', 'bslib'))"
 RUN R -e "install.packages(c('bsicons', 'yaml'))"
 
-
 RUN R -e "install.packages('remotes')"
 RUN R -e "remotes::install_github('biolabntua/moach')"
 
-
 RUN R -e "install.packages(c('scales'))"
-
-
-
-
-
 
 RUN R -e "install.packages('Polychrome')"
 
 RUN R -e "install.packages(c('magrittr', 'shinyWidgets', 'future', 'promises'), repos='http://cran.rstudio.com/')"
 
-
 RUN R -e "remotes::install_github('hardikguptadartmouth/shinyjqui')"
-
 
 RUN R -e "install.packages(c('progressr'))"
 
-
-
-
 RUN R -e "install.packages(c('tidyr'))"
-
-
-
 
 RUN R -e "install.packages('shinyFeedback')"
 
@@ -78,7 +63,6 @@ RUN R -e "install.packages('patchwork')"
 RUN R -e "install.packages('digest')"
 RUN R -e "install.packages('bit64')"
 RUN R -e "install.packages('shinycssloaders')"
-
 
 # stanassay removed (calib refactor): all curve fitting runs in the
 # i-spi-compute worker; the app no longer loads stanassay.

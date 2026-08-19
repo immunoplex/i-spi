@@ -107,6 +107,40 @@ family_short <- function(model_name) {
   df
 }
 
+# ---------------------------------------------------------------------------
+# curve_lookup <-> raw xmap join, SENTINEL-SAFE (shared by every function that
+# matches a raw xmap_* row to its curve: fetch_standard_points, standards_support,
+# the mask resolvers, and the blank fan-out).
+#
+# curve_lookup stores the '__none__' string sentinel (CALIB_NONE) for absent
+# natural-key fields (see build_curve_lookup_candidates / .decode_none), whereas
+# the raw xmap_* tables store real NULL (or '') for those same fields. A plain
+# `cl.col IS NOT DISTINCT FROM s.col` therefore FAILS on any sentinel column --
+# e.g. for a bead array wavelength = '__none__' in curve_lookup but NULL in
+# xmap_standard, and '__none__' IS NOT DISTINCT FROM NULL is FALSE. That silently
+# returned an EMPTY join, which surfaced downstream as "Nothing resolved to mask."
+#
+# Normalising the sentinel and '' to NULL on BOTH sides makes NULL, '' and the
+# sentinel all compare equal, so the key matches whichever representation each
+# table happens to use. `cols` is the natural-key subset to join on. project_id
+# is numeric and is compared directly (NULLIF against a text literal is a type
+# error).
+.nk_join_on <- function(cols, cl = "cl", s = "s") {
+  none_lit <- sprintf("'%s'", gsub("'", "''", CALIB_NONE))  # safe SQL literal for the sentinel
+  side <- function(alias, col)
+    if (identical(col, "project_id")) sprintf("%s.%s", alias, col)
+    else sprintf("NULLIF(NULLIF(%s.%s, %s), '')", alias, col, none_lit)
+  paste(vapply(cols, function(col)
+    sprintf("%s IS NOT DISTINCT FROM %s", side(cl, col), side(s, col)),
+    character(1)), collapse = "\n        AND ")
+}
+
+# The full standard-curve natural key (== CALIB_NK_COLS; order is irrelevant in
+# an ANDed ON clause). Blanks join on the SAME key MINUS source, because a
+# blank's source differs from the curve it feeds.
+STD_NK_JOIN_COLS <- CALIB_NK_COLS
+BLK_NK_JOIN_COLS <- setdiff(CALIB_NK_COLS, "source")
+
 
 # 0b. Fitting configuration: what to fit (per antigen/feature settings)
 # -----------------------------------------------------------------------------
@@ -616,20 +650,11 @@ fetch_standard_points <- function(pool, curve_id) {
   .calib_q(pool, sprintf(
     "SELECT s.well, s.dilution, s.antibody_mfi AS assay_response,
             s.wavelength, s.masked, s.mask_reason
-       FROM %s s
-       JOIN %s cl
-         ON  cl.study_accession        =                   s.study_accession
-        AND cl.experiment_accession    =                   s.experiment_accession
-        AND cl.plateid                 =                   s.plateid
-        AND cl.plate                   =                   s.plate
-        AND cl.antigen                 =                   s.antigen
-        AND cl.feature                 IS NOT DISTINCT FROM s.feature
-        AND cl.source                  IS NOT DISTINCT FROM s.source
-        AND cl.wavelength              IS NOT DISTINCT FROM s.wavelength
-        AND cl.nominal_sample_dilution IS NOT DISTINCT FROM s.nominal_sample_dilution
-        AND cl.project_id              IS NOT DISTINCT FROM s.project_id
+       FROM %s s JOIN %s cl ON %s
       WHERE cl.curve_id = $1
-      ORDER BY s.dilution", .tbl("xmap_standard"), .tbl("curve_lookup")),
+      ORDER BY s.dilution",
+    .tbl("xmap_standard"), .tbl("curve_lookup"),
+    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
     params = list(curve_id))
 }
 
@@ -637,6 +662,8 @@ fetch_standard_points <- function(pool, curve_id) {
 # MASKING resolvers (read-only). Turn staged plot points into the exact
 # xmap_standard / xmap_buffer rows, and compute the calib_* delete blast radius
 # for the affected multiplate_group. NO writes here -- these back the dry-run.
+# The curve_lookup <-> raw xmap join uses the shared, sentinel-safe .nk_join_on()
+# / *_NK_JOIN_COLS defined up top.
 
 
 # All curve_ids fit jointly with `curve_id` (its whole multiplate_group). A mask
@@ -664,20 +691,13 @@ curve_ids_for_blanks <- function(pool, buffer_ids) {
     "WITH fed AS (
        SELECT DISTINCT cl.multiplate_group_id
          FROM %s b
-         JOIN %s cl
-           ON  cl.study_accession        =                   b.study_accession
-          AND cl.experiment_accession    =                   b.experiment_accession
-          AND cl.plateid                 =                   b.plateid
-          AND cl.plate                   =                   b.plate
-          AND cl.antigen                 =                   b.antigen
-          AND cl.feature                 IS NOT DISTINCT FROM b.feature
-          AND cl.wavelength              IS NOT DISTINCT FROM b.wavelength
-          AND cl.nominal_sample_dilution IS NOT DISTINCT FROM b.nominal_sample_dilution
-          AND cl.project_id              IS NOT DISTINCT FROM b.project_id
+         JOIN %s cl ON %s
         WHERE b.xmap_buffer_id IN (%s))
      SELECT c.curve_id
        FROM %s c JOIN fed USING (multiplate_group_id)",
-    .tbl("xmap_buffer"), .tbl("curve_lookup"), idlist, .tbl("curve_lookup")))
+    .tbl("xmap_buffer"), .tbl("curve_lookup"),
+    .nk_join_on(BLK_NK_JOIN_COLS, cl = "cl", s = "b"),
+    idlist, .tbl("curve_lookup")))
   if (!nrow(df)) integer(0) else as.integer(df$curve_id)
 }
 
@@ -701,25 +721,30 @@ calib_group_rowcounts <- function(pool, curve_ids) {
 
 # Resolve staged STANDARD points (keys "std|well|dilution") to xmap_standard_id
 # via the curve's NK (source-IN, dilution used). Mirrors fetch_standard_points.
-resolve_std_mask_ids <- function(pool, curve_id, wells, dilutions) {
+resolve_std_mask_ids <- function(pool, curve_id, wells, dilutions = NULL) {
   if (!length(wells)) return(integer(0))
   df <- .calib_q(pool, sprintf(
     "SELECT s.xmap_standard_id, s.well, s.dilution, s.masked
-       FROM %s s JOIN %s cl
-         ON  cl.study_accession        =                   s.study_accession
-        AND cl.experiment_accession    =                   s.experiment_accession
-        AND cl.plateid                 =                   s.plateid
-        AND cl.plate                   =                   s.plate
-        AND cl.antigen                 =                   s.antigen
-        AND cl.feature                 IS NOT DISTINCT FROM s.feature
-        AND cl.source                  IS NOT DISTINCT FROM s.source
-        AND cl.wavelength              IS NOT DISTINCT FROM s.wavelength
-        AND cl.nominal_sample_dilution IS NOT DISTINCT FROM s.nominal_sample_dilution
-        AND cl.project_id              IS NOT DISTINCT FROM s.project_id
-      WHERE cl.curve_id = $1", .tbl("xmap_standard"), .tbl("curve_lookup")),
+       FROM %s s JOIN %s cl ON %s
+      WHERE cl.curve_id = $1",
+    .tbl("xmap_standard"), .tbl("curve_lookup"),
+    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
     params = list(curve_id))
   if (!nrow(df)) return(integer(0))
-  keep <- paste(df$well, df$dilution) %in% paste(wells, dilutions)
+  # Match on WELL alone. The join already pins ONE curve (a single plate /
+  # antigen / source / wavelength / nominal-dilution), and xmap_standard has one
+  # row per standard well within that scope, so `well` uniquely identifies the
+  # point -- exactly as resolve_blk_mask_ids() keys blanks on `well`.
+  #
+  # We deliberately do NOT also require the staged `dilution` to string-equal
+  # xmap_standard.dilution. The staged value originates in calib_standards
+  # (worker output) and can differ in representation from the raw xmap_standard
+  # value -- numeric vs text, scientific notation (1e+05 vs 100000), or simply
+  # absent, in which case the staged key's trailing "|<dil>" segment is empty and
+  # strsplit() drops it. That extra equality made every standard fail to resolve,
+  # surfacing as the misleading "Nothing resolved to mask." The `dilutions`
+  # argument is retained for call-site compatibility but is no longer a filter.
+  keep <- as.character(df$well) %in% as.character(wells)
   as.integer(df$xmap_standard_id[keep])
 }
 
@@ -729,20 +754,68 @@ resolve_blk_mask_ids <- function(pool, curve_id, wells) {
   if (!length(wells)) return(integer(0))
   df <- .calib_q(pool, sprintf(
     "SELECT b.xmap_buffer_id, b.well, b.masked
-       FROM %s b JOIN %s cl
-         ON  cl.study_accession        =                   b.study_accession
-        AND cl.experiment_accession    =                   b.experiment_accession
-        AND cl.plateid                 =                   b.plateid
-        AND cl.plate                   =                   b.plate
-        AND cl.antigen                 =                   b.antigen
-        AND cl.feature                 IS NOT DISTINCT FROM b.feature
-        AND cl.wavelength              IS NOT DISTINCT FROM b.wavelength
-        AND cl.nominal_sample_dilution IS NOT DISTINCT FROM b.nominal_sample_dilution
-        AND cl.project_id              IS NOT DISTINCT FROM b.project_id
-      WHERE cl.curve_id = $1", .tbl("xmap_buffer"), .tbl("curve_lookup")),
+       FROM %s b JOIN %s cl ON %s
+      WHERE cl.curve_id = $1",
+    .tbl("xmap_buffer"), .tbl("curve_lookup"),
+    .nk_join_on(BLK_NK_JOIN_COLS, cl = "cl", s = "b")),
     params = list(curve_id))
   if (!nrow(df)) return(integer(0))
   as.integer(df$xmap_buffer_id[df$well %in% wells])
+}
+
+
+# Read-only DIAGNOSTIC for the masking UI. Explains, in one structured object,
+# exactly what the standard/blank resolvers see for a given curve + staged wells,
+# so a failed resolution can be understood from the modal instead of guessed at.
+# It runs the SAME sentinel-safe NK join as the resolvers, but ALSO reports the
+# raw row counts, the wells the join exposes, the wells calib_standards holds
+# (i.e. what the plot/staging is built from), and the intersection the resolver
+# would actually keep. This separates the two failure modes cleanly:
+#   * join_rows == 0            -> the NK join itself finds nothing in-app
+#                                  (stale build, param binding, or curve_id miss)
+#   * join_rows > 0 but no match -> the staged `well` strings differ from the raw
+#                                  xmap `well` strings (representation mismatch)
+# NO writes. Types coerced to character so int64/int/text all compare cleanly.
+diagnose_mask_resolution <- function(pool, curve_id, std_wells = character(0),
+                                     blk_wells = character(0)) {
+  chr <- function(x) if (length(x)) sort(unique(as.character(x))) else character(0)
+  wells_of <- function(df) if (!is.null(df) && nrow(df) && "well" %in% names(df))
+                             chr(df$well) else character(0)
+
+  std_join <- .calib_q(pool, sprintf(
+    "SELECT s.xmap_standard_id, s.well
+       FROM %s s JOIN %s cl ON %s
+      WHERE cl.curve_id = $1",
+    .tbl("xmap_standard"), .tbl("curve_lookup"),
+    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
+    params = list(curve_id))
+  blk_join <- .calib_q(pool, sprintf(
+    "SELECT b.xmap_buffer_id, b.well
+       FROM %s b JOIN %s cl ON %s
+      WHERE cl.curve_id = $1",
+    .tbl("xmap_buffer"), .tbl("curve_lookup"),
+    .nk_join_on(BLK_NK_JOIN_COLS, cl = "cl", s = "b")),
+    params = list(curve_id))
+  cl_row <- .calib_q(pool, sprintf(
+    "SELECT curve_id FROM %s WHERE curve_id = $1 LIMIT 1", .tbl("curve_lookup")),
+    params = list(curve_id))
+  cs_wells <- .calib_q(pool, sprintf(
+    "SELECT DISTINCT well FROM %s WHERE curve_id = $1", .tbl("calib_standards")),
+    params = list(curve_id))
+
+  std_wells <- chr(std_wells); blk_wells <- chr(blk_wells)
+  list(
+    curve_id         = as.character(curve_id),
+    curve_in_lookup  = nrow(cl_row) > 0,
+    std_join_rows    = nrow(std_join),
+    std_join_wells   = wells_of(std_join),
+    calib_std_wells  = wells_of(cs_wells),
+    staged_std_wells = std_wells,
+    std_matched      = intersect(std_wells, wells_of(std_join)),
+    blk_join_rows    = nrow(blk_join),
+    blk_join_wells   = wells_of(blk_join),
+    staged_blk_wells = blk_wells,
+    blk_matched      = intersect(blk_wells, wells_of(blk_join)))
 }
 
 
@@ -831,20 +904,11 @@ standards_support <- function(pool, project, study, experiment) {
             count(DISTINCT s.dilution)       AS n_levels,
             count(*)::numeric
               / NULLIF(count(DISTINCT s.dilution),0) AS avg_reps
-       FROM %s cl JOIN %s s
-         ON  cl.study_accession        =                   s.study_accession
-        AND cl.experiment_accession    =                   s.experiment_accession
-        AND cl.plateid                 =                   s.plateid
-        AND cl.plate                   =                   s.plate
-        AND cl.antigen                 =                   s.antigen
-        AND cl.feature                 IS NOT DISTINCT FROM s.feature
-        AND cl.source                  IS NOT DISTINCT FROM s.source
-        AND cl.wavelength              IS NOT DISTINCT FROM s.wavelength
-        AND cl.nominal_sample_dilution IS NOT DISTINCT FROM s.nominal_sample_dilution
-        AND cl.project_id              IS NOT DISTINCT FROM s.project_id
+       FROM %s cl JOIN %s s ON %s
       WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
       GROUP BY cl.curve_id",
-    .tbl("curve_lookup"), .tbl("xmap_standard")),
+    .tbl("curve_lookup"), .tbl("xmap_standard"),
+    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
     params = list(project, study, experiment))
 }
 

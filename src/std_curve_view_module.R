@@ -26,6 +26,7 @@ stdCurveViewUI <- function(id) {
         shiny::uiOutput(ns("current_experiment_label")),
         shiny::uiOutput(ns("scope_debug")),
         shiny::uiOutput(ns("antigen_ui")),
+        shiny::uiOutput(ns("source_ui")),
         shiny::uiOutput(ns("curve_ui")),
         shiny::tags$hr(),
         shiny::uiOutput(ns("method_ui")),
@@ -110,18 +111,70 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       shiny::selectizeInput(session$ns("antigen"), "Antigen", choices = ags, selected = sel)
     })
 
-    matching_curves <- shiny::reactive({
+    # Pretty-print the `source` natural-key value: the '__none__' sentinel (and
+    # blanks) mean "no source recorded".
+    src_label <- function(x) {
+      x <- as.character(x)
+      ifelse(is.na(x) | x %in% c("__none__", ""), "(no source)", x)
+    }
+
+    # All curves for the selected antigen, BEFORE any source narrowing. `source`
+    # is part of the 10-column curve natural key, so one antigen can carry
+    # several curves that differ only by source; those are indistinguishable in
+    # the Curve dropdown without the dedicated selector below.
+    antigen_curves <- shiny::reactive({
       shiny::req(input$antigen)
       lk <- lookup()
+      if (is.null(lk) || !nrow(lk)) return(lk[0, , drop = FALSE])
       lk[lk$antigen == input$antigen, , drop = FALSE]
     })
+
+    # Distinct standard-curve sources present for the current antigen.
+    antigen_sources <- shiny::reactive({
+      ac <- antigen_curves()
+      if (is.null(ac) || !nrow(ac)) character(0)
+      else sort(unique(as.character(ac$source)))
+    })
+
+    # Source selector -- rendered ONLY when the antigen actually has more than
+    # one source to choose between (a lone source needs no picker).
+    output$source_ui <- shiny::renderUI({
+      srcs <- antigen_sources()
+      if (length(srcs) < 2) return(NULL)
+      choices <- stats::setNames(srcs, src_label(srcs))
+      keep <- shiny::isolate(input$source)
+      sel  <- if (!is.null(keep) && keep %in% srcs) keep else srcs[[1]]
+      shiny::selectizeInput(session$ns("source"), "Standard curve source",
+                            choices = choices, selected = sel)
+    })
+
+    # Curves for the selected antigen AND source. With >1 source we pin to the
+    # chosen one (defaulting to the first until the selector initialises); with a
+    # single source the antigen set is used unchanged.
+    matching_curves <- shiny::reactive({
+      ac <- antigen_curves()
+      if (is.null(ac) || !nrow(ac)) return(ac)
+      srcs <- antigen_sources()
+      if (length(srcs) >= 2) {
+        ssel <- input$source
+        if (is.null(ssel) || !(ssel %in% srcs)) ssel <- srcs[[1]]
+        ac <- ac[as.character(ac$source) == ssel, , drop = FALSE]
+      }
+      ac
+    })
+
     output$curve_ui <- shiny::renderUI({
       mc <- matching_curves()
       if (is.null(mc) || !nrow(mc))
         return(shiny::selectizeInput(session$ns("curve"), "Curve", choices = character(0)))
-      labels <- with(mc, paste0(
-        "plate=", plateid, " | feat=", feature,
-        " | dil=", nominal_sample_dilution, " | \u03bb=", wavelength))
+      # Fold source into the label too, so curves stay distinguishable even when
+      # the source picker is hidden (single source) or ignored.
+      labels <- with(mc, {
+        base <- paste0("plate=", plateid, " | feat=", feature,
+                       " | dil=", nominal_sample_dilution, " | \u03bb=", wavelength)
+        has_src <- !(is.na(source) | source %in% c("__none__", ""))
+        ifelse(has_src, paste0(base, " | src=", source), base)
+      })
       choices <- setNames(as.character(mc$curve_id), labels)
       keep <- shiny::isolate(input$curve)
       sel <- if (!is.null(keep) && keep %in% choices) keep
@@ -573,6 +626,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           "Reason (required) \u2014 applies to all points in this save",
           placeholder = "e.g. plate-edge contamination; implausible replicate", rows = 2),
         shiny::uiOutput(session$ns("mask_dryrun")),
+        shiny::uiOutput(session$ns("mask_diag")),
         footer = shiny::tagList(
           shiny::modalButton("Cancel"),
           shiny::actionButton(session$ns("mask_apply"), "Apply mask (delete fits)",
@@ -624,6 +678,42 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           shiny::tags$em("After applying, this curve's fit is removed and its group shows ",
                          shiny::tags$b("needs calculation"),
                          ". Recompute on the Compute-fits tab to get a revised fit.")))
+    })
+
+    # Read-only diagnostic panel: shows exactly what the resolvers see, so a
+    # "Nothing resolved to mask." can be understood at a glance. Compares the raw
+    # NK-join wells (from xmap_*) against the staged wells and the calib_standards
+    # wells the plot was built from. Remove once masking is confirmed stable.
+    output$mask_diag <- shiny::renderUI({
+      sel <- staged(); cid <- tryCatch(curve_id(), error = function(e) NULL)
+      if (!length(sel) || is.null(cid)) return(NULL)
+      keys <- lapply(sel, parse_key)
+      is_blk <- vapply(keys, function(p) identical(p[1], "blk"), logical(1))
+      std_w <- vapply(keys[!is_blk], function(p) p[2], character(1))
+      blk_w <- vapply(keys[is_blk],  function(p) p[2], character(1))
+      d <- tryCatch(diagnose_mask_resolution(pool, cid, std_w, blk_w),
+                    error = function(e) list(error = conditionMessage(e)))
+      fmt <- function(v) if (!length(v)) "(none)" else paste(v, collapse = ", ")
+      lines <- if (!is.null(d$error)) paste("diagnostic error:", d$error) else c(
+        sprintf("curve_id staged ............ %s", d$curve_id),
+        sprintf("curve_id in curve_lookup ... %s", if (isTRUE(d$curve_in_lookup)) "yes" else "NO"),
+        "",
+        sprintf("STANDARDS staged wells ..... %s", fmt(d$staged_std_wells)),
+        sprintf("  xmap NK-join rows ........ %d", d$std_join_rows),
+        sprintf("  xmap join wells .......... %s", fmt(d$std_join_wells)),
+        sprintf("  calib_standards wells .... %s", fmt(d$calib_std_wells)),
+        sprintf("  -> matched (will mask) ... %s", fmt(d$std_matched)),
+        "",
+        sprintf("BLANKS staged wells ........ %s", fmt(d$staged_blk_wells)),
+        sprintf("  xmap NK-join rows ........ %d", d$blk_join_rows),
+        sprintf("  xmap join wells .......... %s", fmt(d$blk_join_wells)),
+        sprintf("  -> matched (will mask) ... %s", fmt(d$blk_matched)))
+      shiny::tagList(
+        shiny::tags$hr(),
+        shiny::tags$strong("Mask resolution diagnostic"),
+        shiny::tags$pre(
+          style = "font-size:11px;background:#f6f6f6;padding:6px;border:1px solid #ddd;white-space:pre-wrap;",
+          paste(lines, collapse = "\n")))
     })
 
     # -- MASKING step 3: APPLY (the one destructive step) ------------------
