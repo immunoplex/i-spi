@@ -23,6 +23,20 @@ DEFAULT_BAYES_SAMPLING <- 1500L
 DEFAULT_BAYES_CHAINS   <- 4L
 DEFAULT_BAYES_WARMUP   <- 1000L
 
+# ---------------------------------------------------------------------------
+# TEMPORARY submit/queue diagnostics, rendered into the job-status box under the
+# Submit / Check-now buttons. Set to FALSE (or delete this constant, the
+# `job_batch`/`job_diag` reactives, and the diag block in output$job_status) once
+# the "stuck in queued / never runs" issue is resolved.
+#   * standard_for_fit row count for THIS job's curve_ids -- the worker exits
+#     BEFORE it ever writes 'running' when this is 0 (worker_curveR.R line 329),
+#     so a 0 here with the job stuck in 'queued' pinpoints the empty-view path.
+#   * blank_/sample_for_fit counts, the full JobStatus fields, and a service-wide
+#     queued/running snapshot (rows-present + 0 running => block is the consumer).
+# Mirrors the worker's own schema-qualified view names exactly.
+JOB_DIAG_VERBOSE     <- isTRUE(getOption("ispi.calc_job_diag", TRUE))
+JOB_DIAG_FIT_SCHEMA  <- getOption("ispi.calib_schema", "madi_results")
+
 stdCurveCalcUI <- function(id) {
   ns <- shiny::NS(id)
   shiny::fluidRow(
@@ -247,6 +261,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
     job_detail     <- shiny::reactiveVal(NULL)  # last full JobStatus from the API
     job_checked_at <- shiny::reactiveVal(NULL)  # when we last polled (for display)
     queue_pos      <- shiny::reactiveVal(NULL)  # list(pos,total) while queued
+    job_batch      <- shiny::reactiveVal(NULL)  # data.frame(curve_id, ...) we submitted (diag)
 
     # Escalating poll cadence keyed off elapsed time since the job started:
     #   < 2 min -> 10s,  2-10 min -> 30s,  > 10 min -> 60s.
@@ -321,6 +336,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       if (!is.null(res)) {
         jid <- if (!is.null(res$job_id)) res$job_id else res$id
         job_id(jid)
+        job_batch(batch)                    # remember curve_ids for the diagnostic
         job_started_at(Sys.time())
         ng <- length(unique(batch$multiplate_group_id))
         job_state(sprintf("queued: %d curve%s in %d group%s",
@@ -363,6 +379,32 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       }
       invisible()
     }
+
+    # TEMPORARY: gather the submit/queue diagnostics for the status box. Depends
+    # on the poll stamp + detail so it refreshes every tick and on "Check now".
+    # Fully error-guarded (returns NA fields) so it can never freeze the box.
+    job_diag <- shiny::reactive({
+      if (!isTRUE(JOB_DIAG_VERBOSE)) return(NULL)
+      job_checked_at(); job_detail(); job_batch()      # refresh triggers
+      d <- job_detail()
+      cids <- job_batch()$curve_id %||% suppressWarnings(as.integer(unlist(d$curve_ids)))
+      cids <- cids[is.finite(cids)]
+      out <- list(curve_ids = cids)
+      if (length(cids)) {
+        idlist <- paste(cids, collapse = ",")
+        cnt <- function(v) tryCatch(as.integer(DBI::dbGetQuery(pool, sprintf(
+          "SELECT count(*) AS n FROM %s.%s WHERE curve_id IN (%s)",
+          JOB_DIAG_FIT_SCHEMA, v, idlist))$n), error = function(e) NA_integer_)
+        out$std_rows <- cnt("standard_for_fit")
+        out$blk_rows <- cnt("blank_for_fit")
+        out$smp_rows <- cnt("sample_for_fit")
+      }
+      out$n_queued  <- tryCatch(length(api$list_jobs(status = "queued")$jobs),
+                                error = function(e) NA_integer_)
+      out$n_running <- tryCatch(length(api$list_jobs(status = "running")$jobs),
+                                error = function(e) NA_integer_)
+      out
+    })
 
     # Tiered poll -- interval grows with elapsed time (see poll_interval_ms).
     # The timer is re-armed BEFORE poll_once() and the terminal/elapsed checks
@@ -471,6 +513,41 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       if (!is.null(ck))
         rows <- c(rows, list(shiny::div(style = "color:#787878;font-size:11px;margin-top:3px;",
                  sprintf("checked %s", format(ck, "%H:%M:%S")))))
+
+      # TEMPORARY verbose diagnostic (see JOB_DIAG_VERBOSE up top).
+      if (isTRUE(JOB_DIAG_VERBOSE)) {
+        dg <- job_diag()
+        if (!is.null(dg)) {
+          n <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "?" else as.character(x[1])
+          ncid <- length(dg$curve_ids)
+          cid_show <- if (ncid) paste(utils::head(dg$curve_ids, 20), collapse = ",") else "(none)"
+          if (ncid > 20) cid_show <- paste0(cid_show, ", \u2026 (+", ncid - 20, ")")
+          dl <- c(
+            sprintf("job_id ............. %s", jid),
+            sprintf("status ............. %s", s),
+            sprintf("curve_ids (%d) ..... %s", ncid, cid_show),
+            sprintf("standard_for_fit ... %s row(s)   <- worker exits before 'running' if 0",
+                    n(dg$std_rows)),
+            sprintf("blank_for_fit ...... %s row(s)", n(dg$blk_rows)),
+            sprintf("sample_for_fit ..... %s row(s)", n(dg$smp_rows)),
+            sprintf("service queue ...... %s queued / %s running",
+                    n(dg$n_queued), n(dg$n_running)))
+          if (!is.null(d)) {
+            flds <- c("progress", "percentage", "current_group", "eta_display",
+                      "created_at", "started_at", "output_path", "error")
+            dl <- c(dl, "JobStatus fields:",
+                    vapply(flds, function(f) sprintf("  %-14s %s", f, chr(d[[f]])),
+                           character(1)))
+          }
+          rows <- c(rows, list(
+            shiny::tags$hr(style = "margin:6px 0;"),
+            shiny::tags$div(style = "font-size:10px;color:#a33;font-weight:bold;",
+                            "VERBOSE job diagnostic (temporary)"),
+            shiny::tags$pre(
+              style = "font-size:10px;background:#f6f6f6;padding:6px;border:1px solid #ddd;white-space:pre-wrap;margin-top:3px;",
+              paste(dl, collapse = "\n"))))
+        }
+      }
       do.call(shiny::div, c(list(class = "well", style = style), rows))
     })
 
