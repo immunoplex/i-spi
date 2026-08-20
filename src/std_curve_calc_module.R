@@ -37,6 +37,12 @@ DEFAULT_BAYES_WARMUP   <- 1000L
 JOB_DIAG_VERBOSE     <- isTRUE(getOption("ispi.calc_job_diag", TRUE))
 JOB_DIAG_FIT_SCHEMA  <- getOption("ispi.calib_schema", "madi_results")
 
+# Queue-panel refresh cadence (ms) while the Compute-fits tab is visible. The
+# job-status renderUI is suspended on hidden tabs, so this only polls the API
+# while the panel is actually on screen. Override with
+# options(ispi.calc_queue_poll_ms = <ms>).
+QUEUE_POLL_MS <- as.integer(getOption("ispi.calc_queue_poll_ms", 15000L))
+
 stdCurveCalcUI <- function(id) {
   ns <- shiny::NS(id)
   shiny::fluidRow(
@@ -107,6 +113,110 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
                                selected_curve = shiny::reactiveVal(NULL)) {
   shiny::moduleServer(id, function(input, output, session) {
     `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+
+    # --- queue-panel helpers -------------------------------------------------
+    # Formatting + a queue-wide snapshot so the status box can report the job
+    # that is actually RUNNING on the worker (whoever submitted it) plus the
+    # jobs waiting behind it -- not just this session's own submission. All the
+    # fields we need (job_id, script_type, n_curves, status, eta_display) ride
+    # on every JobStatus returned by GET /jobs (see app.py JobStatus).
+    chr0 <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "" else as.character(x[1])
+    short_id <- function(x) { x <- chr0(x); if (nchar(x) > 10) paste0(substr(x, 1, 8), "\u2026") else x }
+    approach_label <- function(x) {
+      a <- tolower(chr0(x))
+      if (identical(a, "bayesian")) "Bayesian"
+      else if (identical(a, "frequentist")) "Frequentist"
+      else if (nzchar(a)) a else "?"
+    }
+    n_curve_ids <- function(j) {
+      n <- suppressWarnings(as.integer(j$n_curves %||% NA))
+      if (is.na(n)) n <- length(unlist(j$curve_ids %||% list()))
+      if (is.na(n)) 0L else n
+    }
+    n_curves_phrase <- function(j) {
+      k <- n_curve_ids(j); sprintf("%d curve%s", k, if (k == 1L) "" else "s")
+    }
+
+    # Pull running + queued jobs from the compute service. Error-guarded so a
+    # transient API blip renders an empty snapshot rather than freezing the box.
+    # Queued jobs are ordered FIFO by created_at (the worker consumes the Redis
+    # list in submission/rpush order), which is the true wait order.
+    fetch_queue_view <- function() {
+      running <- tryCatch(api$list_jobs(status = "running")$jobs, error = function(e) NULL) %||% list()
+      queued  <- tryCatch(api$list_jobs(status = "queued")$jobs,  error = function(e) NULL) %||% list()
+      if (length(queued) > 1) {
+        key <- vapply(queued, function(j) {
+          t <- .parse_iso(chr0(j$created_at)); if (is.null(t)) Inf else as.numeric(t)
+        }, numeric(1))
+        queued <- queued[order(key)]
+      }
+      list(running = running, queued = queued, at = Sys.time())
+    }
+
+    # Build the "This compute queue" section: each running job with its
+    # approach, curve count, progress and ETA, then the ordered list of jobs
+    # waiting behind it. `mine` (this session's job_id, possibly NULL) is
+    # flagged so a user can pick their own submission out of the queue.
+    render_queue_block <- function(qv, mine = NULL) {
+      if (is.null(qv)) return(list())
+      running <- qv$running %||% list()
+      queued  <- qv$queued  %||% list()
+      mine <- chr0(mine)
+      tag_mine <- function(id) {
+        if (nzchar(mine) && identical(chr0(id), mine))
+          shiny::tags$span(style = "color:#1b5e20;font-weight:bold;", " (yours)")
+        else NULL
+      }
+
+      out <- list(shiny::div(style = "font-weight:bold;margin-top:2px;", "This compute queue"))
+
+      # ---- running (usually 0 or 1; loops in case of multiple workers) ------
+      if (!length(running)) {
+        out <- c(out, list(shiny::div(style = "color:#787878;", "No job running.")))
+      } else {
+        for (j in running) {
+          prog <- chr0(j$progress)
+          pct  <- suppressWarnings(as.numeric(j$percentage %||% NA))
+          eta  <- chr0(j$eta_display)
+          det  <- paste0(
+            if (nzchar(prog) || is.finite(pct))
+              sprintf(" \u2014 %s%s", prog,
+                      if (is.finite(pct)) sprintf(" (%.0f%%)", pct) else "") else "",
+            if (nzchar(eta)) sprintf(" \u00b7 ETA %s", eta) else "")
+          out <- c(out, list(shiny::div(
+            shiny::tags$span(style = "color:#b26a00;font-weight:bold;", "\u25b6 running "),
+            sprintf("%s \u00b7 %s \u00b7 %s",
+                    short_id(j$job_id), approach_label(j$script_type), n_curves_phrase(j)),
+            tag_mine(j$job_id),
+            shiny::tags$span(style = "color:#555;", det))))
+        }
+      }
+
+      # ---- queued (ordered, each with id / approach / curve count) ----------
+      out <- c(out, list(shiny::div(style = "margin-top:4px;font-weight:bold;",
+                                    sprintf("Queued (%d)", length(queued)))))
+      if (!length(queued)) {
+        out <- c(out, list(shiny::div(style = "color:#787878;", "No jobs waiting.")))
+      } else {
+        items <- lapply(queued, function(j)
+          shiny::tags$li(
+            sprintf("%s \u00b7 %s \u00b7 %s",
+                    short_id(j$job_id), approach_label(j$script_type), n_curves_phrase(j)),
+            tag_mine(j$job_id)))
+        out <- c(out, list(shiny::tags$ol(style = "margin:2px 0 2px 20px;padding:0;", items)))
+      }
+      out
+    }
+
+    # Queue-wide snapshot reactive. invalidateLater lives INSIDE the reactive so
+    # it only re-polls while something consumes it -- i.e. while
+    # output$job_status is visible (the renderUI is suspended on hidden subtabs).
+    # Also refreshes immediately on Submit and on "Check now".
+    queue_view <- shiny::reactive({
+      input$submit; input$refresh_status      # refresh right away on these
+      shiny::invalidateLater(QUEUE_POLL_MS, session)
+      fetch_queue_view()
+    })
 
     is_valid_sel <- function(x) !is.null(x) && length(x) && !is.na(x[1]) &&
                                 nzchar(x[1]) && !(x[1] %in% c("Click here"))
@@ -481,41 +591,56 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
     })
 
     output$job_status <- shiny::renderUI({
-      s <- job_state(); if (is.null(s)) return(NULL)
-      jid <- job_id(); if (is.null(jid)) jid <- "?"
-      d <- job_detail()
+      qv  <- queue_view()                  # ALWAYS: queue-wide snapshot (running + queued)
+      s   <- job_state()                   # YOUR job's status (NULL until you submit/resume)
+      jid <- job_id()
+      jid_disp <- if (is.null(jid)) "?" else jid
+      d   <- job_detail()
       running <- !is.null(s) && !is_terminal_status(s)
       style <- if (running) "background:#fff8e1;"
                else if (identical(s, "failed") || identical(s, "cancelled")) "background:#fde8e8;"
                else "background:#eef7ee;"
-      short <- if (nchar(jid) > 10) paste0(substr(jid, 1, 8), "\u2026") else jid
       chr <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "" else as.character(x[1])
-      rows <- list(shiny::strong(sprintf("Compute job %s: %s", short, s)))
-      if (!is.null(d)) {
-        prog <- chr(d$progress)
-        pct  <- suppressWarnings(as.numeric(d$percentage %||% NA))
-        if (nzchar(prog) || is.finite(pct))
-          rows <- c(rows, list(shiny::div(sprintf("progress: %s%s", prog,
-                   if (is.finite(pct)) sprintf("  (%.0f%%)", pct) else ""))))
-        if (running && nzchar(chr(d$eta_display)))
-          rows <- c(rows, list(shiny::div(sprintf("ETA: %s", chr(d$eta_display)))))
-        if (running && nzchar(chr(d$current_group)))
-          rows <- c(rows, list(shiny::div(sprintf("fitting group: %s", chr(d$current_group)))))
-        if (nzchar(chr(d$error)))
-          rows <- c(rows, list(shiny::div(style = "color:#b71c1c;",
-                   sprintf("error: %s", chr(d$error)))))
+
+      rows <- list()
+
+      # ---- YOUR job (only once you've submitted, or a job was resumed) ------
+      if (!is.null(s)) {
+        rows <- c(rows, list(shiny::strong(
+          sprintf("Your compute job %s: %s", short_id(jid_disp), s))))
+        if (!is.null(d)) {
+          prog <- chr(d$progress)
+          pct  <- suppressWarnings(as.numeric(d$percentage %||% NA))
+          if (nzchar(prog) || is.finite(pct))
+            rows <- c(rows, list(shiny::div(sprintf("progress: %s%s", prog,
+                     if (is.finite(pct)) sprintf("  (%.0f%%)", pct) else ""))))
+          if (running && nzchar(chr(d$eta_display)))
+            rows <- c(rows, list(shiny::div(sprintf("ETA: %s", chr(d$eta_display)))))
+          if (running && nzchar(chr(d$current_group)))
+            rows <- c(rows, list(shiny::div(sprintf("fitting group: %s", chr(d$current_group)))))
+          if (nzchar(chr(d$error)))
+            rows <- c(rows, list(shiny::div(style = "color:#b71c1c;",
+                     sprintf("error: %s", chr(d$error)))))
+        }
+        qp <- queue_pos()
+        if (identical(s, "queued") && !is.null(qp))
+          rows <- c(rows, list(shiny::div(style = "color:#1b5e20;font-weight:bold;",
+                   sprintf("your queue position: %d of %d", qp$pos, qp$total))))
+        rows <- c(rows, list(shiny::tags$hr(style = "margin:6px 0;")))
       }
-      qp <- queue_pos()
-      if (identical(s, "queued") && !is.null(qp))
-        rows <- c(rows, list(shiny::div(style = "color:#1b5e20;font-weight:bold;",
-                 sprintf("queue position: %d of %d", qp$pos, qp$total))))
-      ck <- job_checked_at()
+
+      # ---- QUEUE-WIDE view (ALWAYS shown): the running job + jobs waiting ----
+      rows <- c(rows, render_queue_block(qv, mine = jid))
+
+      # ---- last-checked stamp (your last poll, else the queue snapshot time)-
+      ck <- job_checked_at() %||% (if (!is.null(qv)) qv$at else NULL)
       if (!is.null(ck))
         rows <- c(rows, list(shiny::div(style = "color:#787878;font-size:11px;margin-top:3px;",
                  sprintf("checked %s", format(ck, "%H:%M:%S")))))
 
-      # TEMPORARY verbose diagnostic (see JOB_DIAG_VERBOSE up top).
-      if (isTRUE(JOB_DIAG_VERBOSE)) {
+      # TEMPORARY verbose diagnostic (see JOB_DIAG_VERBOSE up top). Only for your
+      # own submitted/resumed job (the DB-row + liveness probes key off it).
+      if (isTRUE(JOB_DIAG_VERBOSE) && !is.null(s)) {
         dg <- job_diag()
         if (!is.null(dg)) {
           n <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "?" else as.character(x[1])
@@ -530,7 +655,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
           cid_show <- if (ncid) paste(utils::head(dg$curve_ids, 20), collapse = ",") else "(none)"
           if (ncid > 20) cid_show <- paste0(cid_show, ", \u2026 (+", ncid - 20, ")")
           dl <- c(
-            sprintf("job_id ............. %s", jid),
+            sprintf("job_id ............. %s", jid_disp),
             sprintf("status ............. %s", s),
             sprintf("curve_ids (%d) ..... %s", ncid, cid_show),
             sprintf("standard_for_fit ... %s row(s)   <- worker exits before 'running' if 0",

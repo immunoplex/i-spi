@@ -28,6 +28,16 @@
 set -uo pipefail
 
 # ---- config ---------------------------------------------------------------
+### short form
+
+BUILD_STAMP=$(date +%Y%m%d-%H%M%S) docker compose build
+
+docker compose up -d
+
+docker compose down
+
+### end short form
+
 IMAGE="${IMAGE:-madi-lumi-reader}"
 CONTAINER="${CONTAINER:-madi-lumi-reader}"
 SERVICE="${SERVICE:-madi-toolset}"
