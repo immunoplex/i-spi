@@ -240,6 +240,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
             plotly::plotlyOutput(ns("curve_plot"), height = "460px"), type = 4, color = "#337ab7"),
           shiny::uiOutput(ns("fda_ribbon_area")),
           shiny::uiOutput(ns("mask_selection")),
+          shiny::uiOutput(ns("unmask_selection")),
           shiny::uiOutput(ns("diagnostics_panel"))),
         shiny::tabPanel("Precision",
           shinycssloaders::withSpinner(
@@ -516,6 +517,29 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
                  hoverinfo = "skip")
       }
 
+      # Unmask-staged highlight: same snapshot mechanism (shared highlight_tick),
+      # a GREEN ring to signal "coming back into the fit" vs the red mask ring.
+      uhs <- shiny::isolate(unhighlight_set())
+      if (length(uhs)) {
+        hx <- c(); hy <- c()
+        if (!is.null(sp) && nrow(sp)) {
+          key_s <- paste("std", sp$well, sp$dilution, sep = "|")
+          m <- key_s %in% uhs
+          if (any(m)) { hx <- c(hx, sp$log10_concentration[m]); hy <- c(hy, sp$response_model[m]) }
+        }
+        if (exists("bl") && !is.null(bl) && nrow(bl)) {
+          key_b <- paste("blk", bl$well, "", sep = "|")
+          m <- key_b %in% uhs
+          if (any(m)) { hx <- c(hx, bl$x[m]); hy <- c(hy, bl$response_model[m]) }
+        }
+        ok <- is.finite(hx) & is.finite(hy)
+        if (any(ok))
+          p <- plotly::add_markers(p, x = hx[ok], y = hy[ok], name = "Staged to unmask",
+                 marker = list(color = "rgba(0,0,0,0)", size = 16,
+                               line = list(color = "#33A02C", width = 3)),
+                 hoverinfo = "skip")
+      }
+
       p <- plotly::layout(p,
         xaxis = list(title = "Concentration", zeroline = FALSE,
                      range = c(xlo, xhi), tickmode = "array",
@@ -524,7 +548,30 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         legend = list(orientation = "v", x = 1.02, y = 1, xanchor = "left"),
         margin = list(r = 10))
       # Register click events (source id scoped to this module) for masking.
-      plotly::event_register(p, "plotly_click")
+      # doubleClick = FALSE: we own the double-click gesture (unmask) below, so
+      # stop plotly's default double-click axis-reset from firing with it.
+      p <- plotly::config(p, doubleClick = FALSE)
+      p <- plotly::event_register(p, "plotly_click")
+      # Double-click a MASKED point to stage it for UNMASKING. plotly emits no
+      # per-point double-click event (plotly_doubleclick carries no point), so we
+      # detect it ourselves: pair two plotly_click events on the SAME point within
+      # 500 ms and push that point's customdata to a Shiny input. Single clicks
+      # still drive mask-staging via event_data() above; the mask observer ignores
+      # already-masked points so the two gestures don't collide.
+      htmlwidgets::onRender(p, "
+        function(el, x, inputId) {
+          var lastKey = null, lastT = 0;
+          el.on('plotly_click', function(d) {
+            if (!d || !d.points || !d.points.length) return;
+            var cd = d.points[0].customdata;
+            if (cd === undefined || cd === null) return;
+            var now = Date.now();
+            if (cd === lastKey && (now - lastT) < 500) {
+              Shiny.setInputValue(inputId, {key: cd, nonce: now}, {priority: 'event'});
+              lastKey = null; lastT = 0;
+            } else { lastKey = cd; lastT = now; }
+          });
+        }", data = session$ns("pt_dblclick"))
     })
 
     # =====================================================================
@@ -533,16 +580,44 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     # "std|well|dilution" or "blk|well|"). Shown as a list with a Clear button.
     # =====================================================================
     staged <- shiny::reactiveVal(character(0))  # customdata keys, staged to mask
+    unstaged <- shiny::reactiveVal(character(0)) # customdata keys, staged to UNMASK
     # Highlight is USER-CONTROLLED: the plot only draws staged outlines for the
     # snapshot captured at the last "Highlight selected" press -- so ordinary
     # clicks stage silently (no re-render) and the user pays the re-render only
     # when they ask. highlight_set is that snapshot; highlight_tick forces the
-    # plot to re-read it on demand.
-    highlight_set  <- shiny::reactiveVal(character(0))
-    highlight_tick <- shiny::reactiveVal(0)
+    # plot to re-read it on demand. unhighlight_set is the parallel snapshot for
+    # unmask staging; both share the one tick (one re-render redraws both rings).
+    highlight_set   <- shiny::reactiveVal(character(0))
+    unhighlight_set <- shiny::reactiveVal(character(0))
+    highlight_tick  <- shiny::reactiveVal(0)
 
-    # A click toggles the point in/out of the staged set. Only real data points
-    # carry customdata; clicks on lines/legend return NULL and are ignored.
+    # The customdata keys of the points that are CURRENTLY masked on this curve+
+    # method, derived exactly as the plot derives its hollow markers (included ==
+    # FALSE in calib_standards / calib_blanks). Drives the click routing below:
+    # a masked point is unmasked (double-click), not masked (single-click).
+    # Refreshes with calib_dirty so it tracks the plot after any mask/unmask save.
+    masked_keys <- shiny::reactive({
+      calib_dirty()
+      cid <- curve_id(); meth <- method()
+      if (!shiny::isTruthy(cid) || !shiny::isTruthy(meth)) return(character(0))
+      keys <- character(0)
+      sp <- tryCatch(fetch_calib_standards(pool, cid, meth), error = function(e) NULL)
+      if (!is.null(sp) && nrow(sp)) {
+        m <- !(as.logical(sp$included) %in% TRUE)
+        if (any(m)) keys <- c(keys, paste("std", sp$well[m], sp$dilution[m], sep = "|"))
+      }
+      bl <- tryCatch(fetch_calib_blanks(pool, cid, meth), error = function(e) NULL)
+      if (!is.null(bl) && nrow(bl)) {
+        m <- !(as.logical(bl$included) %in% TRUE)
+        if (any(m)) keys <- c(keys, paste("blk", bl$well[m], "", sep = "|"))
+      }
+      unique(keys)
+    })
+
+    # A single click toggles an INCLUDED point in/out of the mask-staged set.
+    # Masked points are ignored here -- they are unmasked via double-click (the
+    # onRender shim -> input$pt_dblclick) so the two gestures never fight over the
+    # same point. Only real data points carry customdata; lines/legend give NULL.
     shiny::observeEvent(plotly::event_data("plotly_click", source = session$ns("curve_plot")), {
       # The click event is registered ONCE on the plot object in the render
       # (plotly::event_register(p, ...) above); it must NOT be re-registered here.
@@ -555,32 +630,63 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       cd <- as.character(cd); cd <- cd[!is.na(cd) & nzchar(cd)]
       if (!length(cd)) return()
       cd <- cd[[1]]
+      if (cd %in% masked_keys()) return()   # masked -> unmasked via double-click
       cur_set <- staged()
       staged(if (cd %in% cur_set) setdiff(cur_set, cd) else c(cur_set, cd))
     }, ignoreInit = TRUE)
 
-    # Clear staged selection when the viewed curve/method changes (a staged set
-    # only makes sense for the curve it was selected on). Also clears highlight
-    # AND forces a re-render so any rings on the plot disappear.
-    reset_stage <- function() {
+    # A DOUBLE click toggles a MASKED point in/out of the unmask-staged set. The
+    # onRender shim fires input$pt_dblclick = list(key, nonce) only on a genuine
+    # double-click on a point; we still verify the point is currently masked
+    # (double-clicking an included point does nothing to unmask).
+    shiny::observeEvent(input$pt_dblclick, {
+      ev <- input$pt_dblclick
+      cd <- if (is.list(ev)) ev$key else ev
+      cd <- as.character(cd); cd <- cd[!is.na(cd) & nzchar(cd)]
+      if (!length(cd)) return()
+      cd <- cd[[1]]
+      if (!(cd %in% masked_keys())) return()  # only masked points can be unmasked
+      cur_set <- unstaged()
+      unstaged(if (cd %in% cur_set) setdiff(cur_set, cd) else c(cur_set, cd))
+    }, ignoreInit = TRUE)
+
+    # Clear helpers. bump() forces ONE plot re-render so rings appear/disappear.
+    # clear_mask/clear_unmask clear one side; reset_stage clears BOTH (used when
+    # the viewed curve/method changes -- a staged set only makes sense for the
+    # curve it was selected on).
+    bump <- function() highlight_tick(highlight_tick() + 1)
+    clear_mask   <- function() { staged(character(0));   highlight_set(character(0));   bump() }
+    clear_unmask <- function() { unstaged(character(0)); unhighlight_set(character(0)); bump() }
+    reset_stage  <- function() {
       staged(character(0)); highlight_set(character(0))
-      highlight_tick(highlight_tick() + 1)
+      unstaged(character(0)); unhighlight_set(character(0))
+      bump()
     }
     shiny::observeEvent(list(curve_id(), method()), reset_stage(), ignoreInit = TRUE)
-    shiny::observeEvent(input$mask_clear, reset_stage(), ignoreInit = TRUE)
+    shiny::observeEvent(input$mask_clear,   clear_mask(),   ignoreInit = TRUE)
+    shiny::observeEvent(input$unmask_clear, clear_unmask(), ignoreInit = TRUE)
 
     # "Highlight selected": snapshot the current staging and force ONE re-render.
     shiny::observeEvent(input$mask_highlight, {
       highlight_set(staged())
       highlight_tick(highlight_tick() + 1)
     })
+    shiny::observeEvent(input$unmask_highlight, {
+      unhighlight_set(unstaged())
+      highlight_tick(highlight_tick() + 1)
+    })
 
     # Human-readable staged list + Highlight (snapshot) + Clear + Save controls.
     output$mask_selection <- shiny::renderUI({
       sel <- staged()
-      if (!length(sel))
-        return(shiny::helpText("Click points on the curve to stage them for masking. ",
-                               "Click a staged point again to unstage it."))
+      if (!length(sel)) {
+        # If unmask staging is active, its own panel is showing -- don't repeat
+        # the help here. Otherwise show the combined mask/unmask instructions.
+        if (length(unstaged())) return(NULL)
+        return(shiny::helpText(
+          "Click an included point to stage it for masking (click it again to unstage). ",
+          "Double-click a masked (hollow) point to stage it for unmasking."))
+      }
       pretty <- vapply(sel, function(k) {
         parts <- strsplit(k, "|", fixed = TRUE)[[1]]
         typ <- if (identical(parts[1], "blk")) "blank" else "standard"
@@ -735,11 +841,136 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
                                 type = "error", duration = NULL); NULL })
       if (is.null(res)) return()
       shiny::removeModal()
-      reset_stage()                    # clear staging + rings
+      clear_mask()                     # clear mask staging + red rings
       calib_dirty(calib_dirty() + 1)   # plot removed, status flips to needs-calc
       shiny::showNotification(
         sprintf("Masked %d point(s); deleted fits for %d curve(s) in the group. Recompute on the Compute-fits tab to get a revised fit.",
                 res$masked_std + res$masked_blk, res$group_n),
+        type = "message", duration = 10)
+    })
+
+    # =====================================================================
+    # UNMASKING -- the inverse flow. Double-click stages masked points (above);
+    # this section renders the staged list + Highlight/Clear/Save, previews the
+    # change (DRY-RUN), and applies it. Mirrors the mask flow deliberately; the
+    # resolvers and group/rowcount helpers are shared (they key on well and are
+    # mask-state-agnostic). Unmasking needs no reason and CLEARS mask_reason.
+    # =====================================================================
+    output$unmask_selection <- shiny::renderUI({
+      sel <- unstaged()
+      if (!length(sel)) return(NULL)
+      pretty <- vapply(sel, function(k) {
+        parts <- strsplit(k, "|", fixed = TRUE)[[1]]
+        typ <- if (identical(parts[1], "blk")) "blank" else "standard"
+        w   <- if (length(parts) > 1) parts[2] else "?"
+        d   <- if (length(parts) > 2 && nzchar(parts[3])) sprintf(" | dil %s", parts[3]) else ""
+        sprintf("%s: well %s%s", typ, w, d)
+      }, character(1))
+      uhs <- unhighlight_set()
+      hint <- if (!length(uhs)) {
+        "Not highlighted on plot yet \u2014 press \u201cHighlight selected\u201d to ring them."
+      } else if (!setequal(uhs, sel)) {
+        sprintf("Plot shows an OLDER highlight (%d point(s)); selection changed \u2014 press \u201cHighlight selected\u201d to refresh.",
+                length(uhs))
+      } else {
+        "Plot highlight is current."
+      }
+      shiny::tagList(
+        shiny::tags$strong(sprintf("%d point(s) staged to unmask:", length(sel))),
+        shiny::tags$ul(lapply(pretty, shiny::tags$li)),
+        shiny::tags$div(style = "color:#787878;font-size:11px;margin-bottom:6px;", hint),
+        shiny::div(
+          shiny::actionButton(session$ns("unmask_highlight"), "Highlight selected",
+                              class = "btn-default btn-sm"),
+          shiny::actionButton(session$ns("unmask_clear"), "Clear selection",
+                              class = "btn-default btn-sm"),
+          shiny::span(style = "float:right;",
+            shiny::actionButton(session$ns("unmask_save"), "Save / Restore points",
+                                class = "btn-success btn-sm")))
+      )
+    })
+
+    # DRY-RUN plan for unmasking. Identical shape to mask_plan (intentional twin):
+    # resolve staged wells -> xmap ids, expand affected groups (blank fan-out
+    # included), count calib_* rows that the recompute-invalidation will delete.
+    unmask_plan <- shiny::reactive({
+      sel <- unstaged(); cid <- curve_id()
+      if (!length(sel) || !shiny::isTruthy(cid)) return(NULL)
+      keys <- lapply(sel, parse_key)
+      is_blk <- vapply(keys, function(p) identical(p[1], "blk"), logical(1))
+      std_w <- vapply(keys[!is_blk], function(p) p[2], character(1))
+      std_d <- vapply(keys[!is_blk], function(p) if (length(p) > 2) p[3] else "", character(1))
+      blk_w <- vapply(keys[is_blk],  function(p) p[2], character(1))
+      std_ids <- tryCatch(resolve_std_mask_ids(pool, cid, std_w, std_d), error = function(e) integer(0))
+      blk_ids <- tryCatch(resolve_blk_mask_ids(pool, cid, blk_w),        error = function(e) integer(0))
+      grp     <- tryCatch(curve_group_members(pool, cid),               error = function(e) integer(0))
+      # An unmasked blank re-enters EVERY group it feeds (source-less fan-out),
+      # so every such group's fit is stale -- mirror the mask fan-out exactly.
+      blk_grp <- if (length(blk_ids))
+        tryCatch(curve_ids_for_blanks(pool, blk_ids), error = function(e) integer(0)) else integer(0)
+      grp <- sort(unique(c(grp, blk_grp)))
+      counts  <- tryCatch(calib_group_rowcounts(pool, grp),             error = function(e) integer(0))
+      list(std_ids = std_ids, blk_ids = blk_ids, grp = grp, counts = counts,
+           n_std = length(std_w), n_blk = length(blk_w))
+    })
+
+    output$unmask_dryrun <- shiny::renderUI({
+      pl <- unmask_plan(); if (is.null(pl)) return(NULL)
+      total_del <- sum(pl$counts)
+      shiny::tagList(
+        shiny::tags$hr(),
+        shiny::tags$strong("This will:"),
+        shiny::tags$ul(
+          shiny::tags$li(sprintf("set masked = false and clear the mask reason on %d standard row(s) [xmap_standard_id: %s]",
+            length(pl$std_ids), paste(pl$std_ids, collapse = ", "))),
+          shiny::tags$li(sprintf("set masked = false and clear the mask reason on %d blank row(s) [xmap_buffer_id: %s]",
+            length(pl$blk_ids), paste(pl$blk_ids, collapse = ", "))),
+          shiny::tags$li(sprintf("DELETE all calib_* fits for %d affected curve%s (all groups touched, incl. every group an unmasked blank feeds): %d row(s) total",
+            length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del))),
+        if (length(pl$counts))
+          shiny::tags$div(style = "font-size:11px;color:#787878;",
+            paste(sprintf("%s: %d", names(pl$counts), as.integer(pl$counts)), collapse = "  \u00b7  ")),
+        if ((length(pl$std_ids) + length(pl$blk_ids)) != (pl$n_std + pl$n_blk))
+          shiny::tags$div(style = "color:#B2182B;",
+            "\u26a0 Some staged points did not resolve to a unique row \u2014 review before applying."),
+        shiny::tags$div(style = "margin-top:6px;color:#555;",
+          shiny::tags$em("After applying, this curve's fit is removed and its group shows ",
+                         shiny::tags$b("needs calculation"),
+                         ". Recompute on the Compute-fits tab to get a fit with the points restored.")))
+    })
+
+    shiny::observeEvent(input$unmask_save, {
+      if (!length(unstaged())) return()
+      shiny::showModal(shiny::modalDialog(
+        title = "Restore (unmask) points",
+        shiny::p(paste("Unmasking returns these points to the fit. The existing fit for",
+                       "the affected group(s) is deleted so it can be recomputed with the",
+                       "points restored.")),
+        shiny::uiOutput(session$ns("unmask_dryrun")),
+        footer = shiny::tagList(
+          shiny::modalButton("Cancel"),
+          shiny::actionButton(session$ns("unmask_apply"), "Unmask (delete fits)",
+                              class = "btn-danger")),
+        easyClose = FALSE, size = "l"))
+    })
+
+    shiny::observeEvent(input$unmask_apply, {
+      pl <- unmask_plan()
+      if (is.null(pl) || (!length(pl$std_ids) && !length(pl$blk_ids))) {
+        shiny::showNotification("Nothing resolved to unmask.", type = "error", duration = NULL); return()
+      }
+      res <- tryCatch(
+        apply_unmask(pool, std_ids = pl$std_ids, blk_ids = pl$blk_ids,
+                     group_curve_ids = pl$grp),
+        error = function(e) { shiny::showNotification(conditionMessage(e),
+                                type = "error", duration = NULL); NULL })
+      if (is.null(res)) return()
+      shiny::removeModal()
+      clear_unmask()                   # clear unmask staging + green rings
+      calib_dirty(calib_dirty() + 1)   # plot removed, status flips to needs-calc
+      shiny::showNotification(
+        sprintf("Unmasked %d point(s); deleted fits for %d curve(s) in the group. Recompute on the Compute-fits tab to get a revised fit.",
+                res$unmasked_std + res$unmasked_blk, res$group_n),
         type = "message", duration = 10)
     })
 

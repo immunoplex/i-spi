@@ -886,6 +886,69 @@ apply_mask <- function(pool, std_ids, blk_ids, group_curve_ids, reason,
 }
 
 
+# UNMASKING write (TRANSACTIONAL). The inverse of apply_mask: clear masked and
+# mask_reason on the resolved xmap rows, then delete ALL calib_* fits for the
+# affected multiplate group. Unmasking changes the fit's input set, so the
+# existing joint fit is stale and must be recomputed -- same invalidation as a
+# mask (hence the same group delete). Differences vs apply_mask: no reason is
+# required (unmasking needs no justification), and mask_reason is CLEARED rather
+# than written. All-or-nothing: any error rolls back.
+#
+# std_ids / blk_ids : integer xmap_standard_id / xmap_buffer_id (from the SAME
+#   resolvers used for masking -- they match on well regardless of mask state).
+#   group_curve_ids : every curve_id in every affected group (curve_group_members
+#   plus, for blanks, curve_ids_for_blanks).
+# Returns list(ok, unmasked_std, unmasked_blk, deleted, group_n) or stops.
+apply_unmask <- function(pool, std_ids, blk_ids, group_curve_ids) {
+  std_ids <- as.integer(std_ids[!is.na(std_ids)])
+  blk_ids <- as.integer(blk_ids[!is.na(blk_ids)])
+  grp     <- as.integer(group_curve_ids[!is.na(group_curve_ids)])
+  if (!length(std_ids) && !length(blk_ids))
+    stop("apply_unmask: no rows resolved to unmask.")
+  if (!length(grp))
+    stop("apply_unmask: empty multiplate group (nothing to invalidate).")
+
+  do_txn <- function(co) {
+    DBI::dbBegin(co)
+    tryCatch({
+      n_std <- 0L; n_blk <- 0L
+      if (length(std_ids)) {
+        idlist <- paste(std_ids, collapse = ",")
+        n_std <- DBI::dbExecute(co, sprintf(
+          "UPDATE %s SET masked = FALSE, mask_reason = NULL WHERE xmap_standard_id IN (%s)",
+          .tbl("xmap_standard"), idlist))
+      }
+      if (length(blk_ids)) {
+        idlist <- paste(blk_ids, collapse = ",")
+        n_blk <- DBI::dbExecute(co, sprintf(
+          "UPDATE %s SET masked = FALSE, mask_reason = NULL WHERE xmap_buffer_id IN (%s)",
+          .tbl("xmap_buffer"), idlist))
+      }
+      grplist <- paste(grp, collapse = ",")
+      deleted <- stats::setNames(integer(length(CALIB_CURVE_TABLES)), CALIB_CURVE_TABLES)
+      for (tb in CALIB_CURVE_TABLES) {
+        deleted[[tb]] <- DBI::dbExecute(co, sprintf(
+          "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
+      }
+      DBI::dbCommit(co)
+      list(ok = TRUE, unmasked_std = n_std, unmasked_blk = n_blk,
+           deleted = deleted, group_n = length(grp))
+    }, error = function(e) {
+      DBI::dbRollback(co)
+      stop(sprintf("apply_unmask failed (rolled back): %s", conditionMessage(e)), call. = FALSE)
+    })
+  }
+
+  if (inherits(pool, "Pool")) {
+    co <- pool::poolCheckout(pool)
+    on.exit(pool::poolReturn(co), add = TRUE)
+    do_txn(co)
+  } else {
+    do_txn(pool)
+  }
+}
+
+
 # STANDARDS SUPPORT (read-only). Per curve: how many distinct standard levels
 # (dilutions) and how much replication (wells per level). Drives the sparse-plate
 # hint on the measurement-error toggle -- the measurement-error term is only
