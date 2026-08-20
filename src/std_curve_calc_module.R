@@ -519,6 +519,13 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
         dg <- job_diag()
         if (!is.null(dg)) {
           n <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "?" else as.character(x[1])
+          .fmt_dur <- function(sec) {
+            if (!is.finite(sec)) return("?")
+            sec <- round(sec)
+            if (sec < 120) paste0(sec, "s")
+            else if (sec < 7200) paste0(round(sec / 60), "m")
+            else paste0(round(sec / 3600, 1), "h")
+          }
           ncid <- length(dg$curve_ids)
           cid_show <- if (ncid) paste(utils::head(dg$curve_ids, 20), collapse = ",") else "(none)"
           if (ncid > 20) cid_show <- paste0(cid_show, ", \u2026 (+", ncid - 20, ")")
@@ -532,6 +539,30 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
             sprintf("sample_for_fit ..... %s row(s)", n(dg$smp_rows)),
             sprintf("service queue ...... %s queued / %s running",
                     n(dg$n_queued), n(dg$n_running)))
+
+          # Liveness (REPORT-ONLY): two clocks. heartbeat = the supervisor/worker
+          # loop is spinning; progress = a group actually completed. A legit
+          # Bayesian 4-chain group can run ~2h between advances, so we alarm on a
+          # stale HEARTBEAT (fast), and only flag stale PROGRESS past a
+          # method-aware threshold well above that (never auto-acts).
+          if (!is.null(d) && identical(s, "running")) {
+            now <- as.numeric(Sys.time())
+            age <- function(x) { t <- .parse_iso(chr(x)); if (is.null(t)) NA_real_ else now - as.numeric(t) }
+            hb <- age(d$heartbeat_at); pg <- age(d$progress_at)
+            is_bayes <- identical(tolower(chr(d$script_type)), "bayesian")
+            hb_limit <- 30                       # 6x the 5s supervisor poll
+            pg_limit <- if (is_bayes) 9000 else 600   # bayes >2h legit; freq minutes
+            verdict <- if (is.finite(hb) && hb > hb_limit)
+                         sprintf("STALE (no heartbeat %s) \u2014 loop wedged/dead; RESTART candidate", .fmt_dur(hb))
+                       else if (is.finite(pg) && pg > pg_limit)
+                         sprintf("STALE (no progress %s) \u2014 a group may be wedged; investigate", .fmt_dur(pg))
+                       else if (!is.finite(hb))
+                         "unknown (no heartbeat field yet \u2014 supervisor not updated?)"
+                       else "HEALTHY"
+            dl <- c(dl, sprintf("liveness ........... heartbeat %s ago \u00b7 last progress %s ago \u2192 %s",
+                                .fmt_dur(hb), .fmt_dur(pg), verdict))
+          }
+
           if (!is.null(d)) {
             flds <- c("progress", "percentage", "current_group", "eta_display",
                       "created_at", "started_at", "output_path", "error")
