@@ -141,6 +141,17 @@ family_short <- function(model_name) {
 STD_NK_JOIN_COLS <- CALIB_NK_COLS
 BLK_NK_JOIN_COLS <- setdiff(CALIB_NK_COLS, "source")
 
+# PLATE-scope join keys. Masking a WELL for contamination affects every analyte
+# read from that well, so the plate-scope resolvers drop antigen AND feature from
+# the natural key and match on the remaining physical-well dimensions + well:
+# project/study/experiment, plateid+plate, nominal_sample_dilution, source (for
+# standards; blanks already ignore source), and wavelength. Everything the caller
+# fixes is held constant; only antigen/feature vary. Swapping these in for the
+# *_NK_JOIN_COLS is the ONLY change that turns a one-analyte resolve into a
+# whole-well resolve -- the query shape is identical.
+STD_PLATE_JOIN_COLS <- setdiff(STD_NK_JOIN_COLS, c("antigen", "feature"))
+BLK_PLATE_JOIN_COLS <- setdiff(BLK_NK_JOIN_COLS, c("antigen", "feature"))
+
 
 # 0b. Fitting configuration: what to fit (per antigen/feature settings)
 # -----------------------------------------------------------------------------
@@ -701,6 +712,30 @@ curve_ids_for_blanks <- function(pool, buffer_ids) {
   if (!nrow(df)) integer(0) else as.integer(df$curve_id)
 }
 
+# Plate-scope standard fan-out: given masked xmap_standard ids, return every
+# curve_id in every multiplate group any of those standard rows feeds. Mirrors
+# curve_ids_for_blanks but joins on the FULL standard NK (a standard row maps to
+# a specific analyte's curve via antigen/feature). Used when a well is masked
+# across all analytes ("plate" scope): each analyte's standard row invalidates
+# its own group's joint fit, so the delete blast radius is the union of them all.
+curve_ids_for_standards <- function(pool, standard_ids) {
+  ids <- as.integer(standard_ids[!is.na(standard_ids)])
+  if (!length(ids)) return(integer(0))
+  idlist <- paste(ids, collapse = ",")
+  df <- .calib_q(pool, sprintf(
+    "WITH fed AS (
+       SELECT DISTINCT cl.multiplate_group_id
+         FROM %s s
+         JOIN %s cl ON %s
+        WHERE s.xmap_standard_id IN (%s))
+     SELECT c.curve_id
+       FROM %s c JOIN fed USING (multiplate_group_id)",
+    .tbl("xmap_standard"), .tbl("curve_lookup"),
+    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s"),
+    idlist, .tbl("curve_lookup")))
+  if (!nrow(df)) integer(0) else as.integer(df$curve_id)
+}
+
 # The calib_* tables keyed on curve_id (deleted as a set on mask). calib_run is
 # job-keyed (may span groups) and is intentionally NOT included.
 CALIB_CURVE_TABLES <- c("calib_fit", "calib_param", "calib_gate", "calib_grid",
@@ -719,22 +754,30 @@ calib_group_rowcounts <- function(pool, curve_ids) {
   out
 }
 
-# Resolve staged STANDARD points (keys "std|well|dilution") to xmap_standard_id
-# via the curve's NK (source-IN, dilution used). Mirrors fetch_standard_points.
-resolve_std_mask_ids <- function(pool, curve_id, wells, dilutions = NULL) {
+# Resolve staged STANDARD points (keys "std|well|dilution") to xmap_standard_id.
+# scope = "antigen" (default): the curve's FULL NK (source-in), i.e. this one
+# analyte -- current behavior, preserved for every existing caller. scope =
+# "plate": the reduced NK (antigen/feature dropped), i.e. the same well across
+# ALL analytes on the plate. In BOTH cases the query pins the current curve's
+# scope values by joining cl.curve_id = $1 on the chosen column set, so no new
+# parameters are needed -- only the join key set differs. Match is on well.
+resolve_std_mask_ids <- function(pool, curve_id, wells, dilutions = NULL,
+                                  scope = c("antigen", "plate")) {
+  scope <- match.arg(scope)
   if (!length(wells)) return(integer(0))
+  cols <- if (identical(scope, "plate")) STD_PLATE_JOIN_COLS else STD_NK_JOIN_COLS
   df <- .calib_q(pool, sprintf(
     "SELECT s.xmap_standard_id, s.well, s.dilution, s.masked
        FROM %s s JOIN %s cl ON %s
       WHERE cl.curve_id = $1",
     .tbl("xmap_standard"), .tbl("curve_lookup"),
-    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
+    .nk_join_on(cols, cl = "cl", s = "s")),
     params = list(curve_id))
   if (!nrow(df)) return(integer(0))
-  # Match on WELL alone. The join already pins ONE curve (a single plate /
-  # antigen / source / wavelength / nominal-dilution), and xmap_standard has one
-  # row per standard well within that scope, so `well` uniquely identifies the
-  # point -- exactly as resolve_blk_mask_ids() keys blanks on `well`.
+  # Match on WELL alone. The join already pins the scope (one curve for
+  # "antigen"; one plate/source/wavelength/nominal-dilution across analytes for
+  # "plate"), within which `well` identifies the standard point(s) -- exactly as
+  # resolve_blk_mask_ids() keys blanks on `well`.
   #
   # We deliberately do NOT also require the staged `dilution` to string-equal
   # xmap_standard.dilution. The staged value originates in calib_standards
@@ -745,22 +788,27 @@ resolve_std_mask_ids <- function(pool, curve_id, wells, dilutions = NULL) {
   # surfacing as the misleading "Nothing resolved to mask." The `dilutions`
   # argument is retained for call-site compatibility but is no longer a filter.
   keep <- as.character(df$well) %in% as.character(wells)
-  as.integer(df$xmap_standard_id[keep])
+  unique(as.integer(df$xmap_standard_id[keep]))
 }
 
 # Resolve staged BLANK points (keys "blk|well|") to xmap_buffer_id via the NK
-# MINUS source (blank source != curve source), well only, NO dilution.
-resolve_blk_mask_ids <- function(pool, curve_id, wells) {
+# MINUS source (blank source != curve source), well only, NO dilution. scope =
+# "plate" additionally drops antigen/feature so a contaminated buffer well is
+# resolved across ALL analytes; "antigen" (default) keeps the current behavior.
+resolve_blk_mask_ids <- function(pool, curve_id, wells,
+                                  scope = c("antigen", "plate")) {
+  scope <- match.arg(scope)
   if (!length(wells)) return(integer(0))
+  cols <- if (identical(scope, "plate")) BLK_PLATE_JOIN_COLS else BLK_NK_JOIN_COLS
   df <- .calib_q(pool, sprintf(
     "SELECT b.xmap_buffer_id, b.well, b.masked
        FROM %s b JOIN %s cl ON %s
       WHERE cl.curve_id = $1",
     .tbl("xmap_buffer"), .tbl("curve_lookup"),
-    .nk_join_on(BLK_NK_JOIN_COLS, cl = "cl", s = "b")),
+    .nk_join_on(cols, cl = "cl", s = "b")),
     params = list(curve_id))
   if (!nrow(df)) return(integer(0))
-  as.integer(df$xmap_buffer_id[df$well %in% wells])
+  unique(as.integer(df$xmap_buffer_id[df$well %in% wells]))
 }
 
 
@@ -777,7 +825,11 @@ resolve_blk_mask_ids <- function(pool, curve_id, wells) {
 #                                  xmap `well` strings (representation mismatch)
 # NO writes. Types coerced to character so int64/int/text all compare cleanly.
 diagnose_mask_resolution <- function(pool, curve_id, std_wells = character(0),
-                                     blk_wells = character(0)) {
+                                     blk_wells = character(0),
+                                     scope = c("antigen", "plate")) {
+  scope <- match.arg(scope)
+  std_cols <- if (identical(scope, "plate")) STD_PLATE_JOIN_COLS else STD_NK_JOIN_COLS
+  blk_cols <- if (identical(scope, "plate")) BLK_PLATE_JOIN_COLS else BLK_NK_JOIN_COLS
   chr <- function(x) if (length(x)) sort(unique(as.character(x))) else character(0)
   wells_of <- function(df) if (!is.null(df) && nrow(df) && "well" %in% names(df))
                              chr(df$well) else character(0)
@@ -787,14 +839,14 @@ diagnose_mask_resolution <- function(pool, curve_id, std_wells = character(0),
        FROM %s s JOIN %s cl ON %s
       WHERE cl.curve_id = $1",
     .tbl("xmap_standard"), .tbl("curve_lookup"),
-    .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
+    .nk_join_on(std_cols, cl = "cl", s = "s")),
     params = list(curve_id))
   blk_join <- .calib_q(pool, sprintf(
     "SELECT b.xmap_buffer_id, b.well
        FROM %s b JOIN %s cl ON %s
       WHERE cl.curve_id = $1",
     .tbl("xmap_buffer"), .tbl("curve_lookup"),
-    .nk_join_on(BLK_NK_JOIN_COLS, cl = "cl", s = "b")),
+    .nk_join_on(blk_cols, cl = "cl", s = "b")),
     params = list(curve_id))
   cl_row <- .calib_q(pool, sprintf(
     "SELECT curve_id FROM %s WHERE curve_id = $1 LIMIT 1", .tbl("curve_lookup")),

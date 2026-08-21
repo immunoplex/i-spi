@@ -724,6 +724,19 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     # -- MASKING step 2: reason prompt + DRY-RUN preview (still no writes) ----
     parse_key <- function(k) strsplit(k, "|", fixed = TRUE)[[1]]
 
+    # Scope selector shared by the mask and unmask modals. "antigen" = the viewed
+    # feature/antigen only (original behavior); "plate" = the same well across
+    # every feature/antigen on this plate (project/study/experiment, plateid+
+    # plate, nominal_sample_dilution, source, wavelength all held fixed). Rebuilt
+    # fresh with each modal, so it always defaults back to the safe "antigen".
+    scope_input <- function(id) {
+      shiny::radioButtons(session$ns(id), "Apply to:",
+        choices = c(
+          "This feature/antigen only" = "antigen",
+          "All features/antigens in this well (whole plate)" = "plate"),
+        selected = "antigen")
+    }
+
     shiny::observeEvent(input$mask_save, {
       if (!length(staged())) return()
       shiny::showModal(shiny::modalDialog(
@@ -731,6 +744,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         shiny::textAreaInput(session$ns("mask_reason_txt"),
           "Reason (required) \u2014 applies to all points in this save",
           placeholder = "e.g. plate-edge contamination; implausible replicate", rows = 2),
+        scope_input("mask_scope"),
         shiny::uiOutput(session$ns("mask_dryrun")),
         shiny::uiOutput(session$ns("mask_diag")),
         footer = shiny::tagList(
@@ -740,32 +754,55 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         easyClose = FALSE, size = "l"))
     })
 
-    mask_plan <- shiny::reactive({
-      sel <- staged(); cid <- curve_id()
+    # Shared, scope-aware DRY-RUN plan builder for BOTH mask and unmask. Pure
+    # (read-only): resolve staged wells -> xmap ids at the requested scope, then
+    # compute the calib_* delete blast radius. In "antigen" scope the standard
+    # side stays within the viewed curve's multiplate group (original behavior);
+    # in "plate" scope every analyte's group the masked wells feed is included
+    # (curve_ids_for_standards / curve_ids_for_blanks fan-outs). The viewed
+    # group is always a floor. `scope` flows straight into the resolvers.
+    build_change_plan <- function(sel, cid, scope = "antigen") {
       if (!length(sel) || !shiny::isTruthy(cid)) return(NULL)
+      scope <- if (identical(scope, "plate")) "plate" else "antigen"
       keys <- lapply(sel, parse_key)
       is_blk <- vapply(keys, function(p) identical(p[1], "blk"), logical(1))
       std_w <- vapply(keys[!is_blk], function(p) p[2], character(1))
       std_d <- vapply(keys[!is_blk], function(p) if (length(p) > 2) p[3] else "", character(1))
       blk_w <- vapply(keys[is_blk],  function(p) p[2], character(1))
-      std_ids <- tryCatch(resolve_std_mask_ids(pool, cid, std_w, std_d), error = function(e) integer(0))
-      blk_ids <- tryCatch(resolve_blk_mask_ids(pool, cid, blk_w),        error = function(e) integer(0))
-      grp     <- tryCatch(curve_group_members(pool, cid),               error = function(e) integer(0))
-      # A masked blank invalidates EVERY group it feeds (source-less fan-out,
-      # across sources and methods), not just the viewed curve's group.
-      blk_grp <- if (length(blk_ids))
-        tryCatch(curve_ids_for_blanks(pool, blk_ids), error = function(e) integer(0)) else integer(0)
-      grp <- sort(unique(c(grp, blk_grp)))
-      counts  <- tryCatch(calib_group_rowcounts(pool, grp),             error = function(e) integer(0))
+      std_ids <- tryCatch(resolve_std_mask_ids(pool, cid, std_w, std_d, scope = scope),
+                          error = function(e) integer(0))
+      blk_ids <- tryCatch(resolve_blk_mask_ids(pool, cid, blk_w, scope = scope),
+                          error = function(e) integer(0))
+      grp <- tryCatch(curve_group_members(pool, cid), error = function(e) integer(0))  # floor
+      # Plate scope: standards now span analytes, so every group each masked
+      # standard row feeds is invalidated (antigen scope keeps the viewed group).
+      if (identical(scope, "plate") && length(std_ids))
+        grp <- c(grp, tryCatch(curve_ids_for_standards(pool, std_ids), error = function(e) integer(0)))
+      # A masked blank invalidates EVERY group it feeds (source-less fan-out) in
+      # BOTH scopes; plate scope also fanned it across analytes via the resolver.
+      if (length(blk_ids))
+        grp <- c(grp, tryCatch(curve_ids_for_blanks(pool, blk_ids), error = function(e) integer(0)))
+      grp <- sort(unique(grp))
+      counts <- tryCatch(calib_group_rowcounts(pool, grp), error = function(e) integer(0))
       list(std_ids = std_ids, blk_ids = blk_ids, grp = grp, counts = counts,
-           n_std = length(std_w), n_blk = length(blk_w))
+           n_std = length(std_w), n_blk = length(blk_w), scope = scope)
+    }
+
+    mask_plan <- shiny::reactive({
+      build_change_plan(staged(), curve_id(), input$mask_scope %||% "antigen")
     })
 
     output$mask_dryrun <- shiny::renderUI({
       pl <- mask_plan(); if (is.null(pl)) return(NULL)
       total_del <- sum(pl$counts)
+      scope_banner <- if (identical(pl$scope, "plate"))
+        shiny::tags$div(style = "color:#8a6d3b;background:#fcf8e3;border:1px solid #faebcc;padding:4px 6px;font-size:12px;",
+          "Whole-plate scope: this masks the staged well(s) for EVERY feature/antigen on this plate ",
+          "(same project/study/experiment, plateid, nominal dilution, source, wavelength), not just the viewed one.")
+      else NULL
       shiny::tagList(
         shiny::tags$hr(),
+        scope_banner,
         shiny::tags$strong("This will:"),
         shiny::tags$ul(
           shiny::tags$li(sprintf("set masked = true on %d standard row(s) [xmap_standard_id: %s]",
@@ -797,7 +834,8 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       is_blk <- vapply(keys, function(p) identical(p[1], "blk"), logical(1))
       std_w <- vapply(keys[!is_blk], function(p) p[2], character(1))
       blk_w <- vapply(keys[is_blk],  function(p) p[2], character(1))
-      d <- tryCatch(diagnose_mask_resolution(pool, cid, std_w, blk_w),
+      d <- tryCatch(diagnose_mask_resolution(pool, cid, std_w, blk_w,
+                                             scope = input$mask_scope %||% "antigen"),
                     error = function(e) list(error = conditionMessage(e)))
       fmt <- function(v) if (!length(v)) "(none)" else paste(v, collapse = ", ")
       lines <- if (!is.null(d$error)) paste("diagnostic error:", d$error) else c(
@@ -844,8 +882,10 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       clear_mask()                     # clear mask staging + red rings
       calib_dirty(calib_dirty() + 1)   # plot removed, status flips to needs-calc
       shiny::showNotification(
-        sprintf("Masked %d point(s); deleted fits for %d curve(s) in the group. Recompute on the Compute-fits tab to get a revised fit.",
-                res$masked_std + res$masked_blk, res$group_n),
+        sprintf("Masked %d point(s)%s; deleted fits for %d curve(s). Recompute on the Compute-fits tab to get a revised fit.",
+                res$masked_std + res$masked_blk,
+                if (identical(pl$scope, "plate")) " across all features/antigens in the well" else "",
+                res$group_n),
         type = "message", duration = 10)
     })
 
@@ -890,35 +930,23 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       )
     })
 
-    # DRY-RUN plan for unmasking. Identical shape to mask_plan (intentional twin):
-    # resolve staged wells -> xmap ids, expand affected groups (blank fan-out
-    # included), count calib_* rows that the recompute-invalidation will delete.
+    # DRY-RUN plan for unmasking. Uses the SAME scope-aware builder as masking
+    # (build_change_plan); only the staged set and the write direction differ.
     unmask_plan <- shiny::reactive({
-      sel <- unstaged(); cid <- curve_id()
-      if (!length(sel) || !shiny::isTruthy(cid)) return(NULL)
-      keys <- lapply(sel, parse_key)
-      is_blk <- vapply(keys, function(p) identical(p[1], "blk"), logical(1))
-      std_w <- vapply(keys[!is_blk], function(p) p[2], character(1))
-      std_d <- vapply(keys[!is_blk], function(p) if (length(p) > 2) p[3] else "", character(1))
-      blk_w <- vapply(keys[is_blk],  function(p) p[2], character(1))
-      std_ids <- tryCatch(resolve_std_mask_ids(pool, cid, std_w, std_d), error = function(e) integer(0))
-      blk_ids <- tryCatch(resolve_blk_mask_ids(pool, cid, blk_w),        error = function(e) integer(0))
-      grp     <- tryCatch(curve_group_members(pool, cid),               error = function(e) integer(0))
-      # An unmasked blank re-enters EVERY group it feeds (source-less fan-out),
-      # so every such group's fit is stale -- mirror the mask fan-out exactly.
-      blk_grp <- if (length(blk_ids))
-        tryCatch(curve_ids_for_blanks(pool, blk_ids), error = function(e) integer(0)) else integer(0)
-      grp <- sort(unique(c(grp, blk_grp)))
-      counts  <- tryCatch(calib_group_rowcounts(pool, grp),             error = function(e) integer(0))
-      list(std_ids = std_ids, blk_ids = blk_ids, grp = grp, counts = counts,
-           n_std = length(std_w), n_blk = length(blk_w))
+      build_change_plan(unstaged(), curve_id(), input$unmask_scope %||% "antigen")
     })
 
     output$unmask_dryrun <- shiny::renderUI({
       pl <- unmask_plan(); if (is.null(pl)) return(NULL)
       total_del <- sum(pl$counts)
+      scope_banner <- if (identical(pl$scope, "plate"))
+        shiny::tags$div(style = "color:#8a6d3b;background:#fcf8e3;border:1px solid #faebcc;padding:4px 6px;font-size:12px;",
+          "Whole-plate scope: this unmasks the staged well(s) for EVERY feature/antigen on this plate ",
+          "(same project/study/experiment, plateid, nominal dilution, source, wavelength), not just the viewed one.")
+      else NULL
       shiny::tagList(
         shiny::tags$hr(),
+        scope_banner,
         shiny::tags$strong("This will:"),
         shiny::tags$ul(
           shiny::tags$li(sprintf("set masked = false and clear the mask reason on %d standard row(s) [xmap_standard_id: %s]",
@@ -946,6 +974,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         shiny::p(paste("Unmasking returns these points to the fit. The existing fit for",
                        "the affected group(s) is deleted so it can be recomputed with the",
                        "points restored.")),
+        scope_input("unmask_scope"),
         shiny::uiOutput(session$ns("unmask_dryrun")),
         footer = shiny::tagList(
           shiny::modalButton("Cancel"),
@@ -969,8 +998,10 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       clear_unmask()                   # clear unmask staging + green rings
       calib_dirty(calib_dirty() + 1)   # plot removed, status flips to needs-calc
       shiny::showNotification(
-        sprintf("Unmasked %d point(s); deleted fits for %d curve(s) in the group. Recompute on the Compute-fits tab to get a revised fit.",
-                res$unmasked_std + res$unmasked_blk, res$group_n),
+        sprintf("Unmasked %d point(s)%s; deleted fits for %d curve(s). Recompute on the Compute-fits tab to get a revised fit.",
+                res$unmasked_std + res$unmasked_blk,
+                if (identical(pl$scope, "plate")) " across all features/antigens in the well" else "",
+                res$group_n),
         type = "message", duration = 10)
     })
 
