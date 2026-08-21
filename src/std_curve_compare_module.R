@@ -152,24 +152,36 @@ stdCurveCompareUI <- function(id) {
       shiny::column(4,
         shiny::radioButtons(ns("mode"), "Comparison mode",
           choices = c("All plates (multiplate group)"       = "plates",
+                      "Plates gating (sample QC)"           = "plates_gating",
                       "Model forms (one curve)"            = "forms",
                       "Frequentist vs Bayesian (one curve)" = "methods",
                       "Sources (compare standards)"         = "sources"),
           selected = "plates")),
       shiny::column(8, shiny::uiOutput(ns("picker")))
     ),
-    shiny::uiOutput(ns("set_note")),
-    shiny::hr(),
-    shiny::h4("Overlaid standard curves"),
-    shinycssloaders::withSpinner(
-      plotly::plotlyOutput(ns("summary_plot"), height = "520px"), type = 4, color = "#337ab7"),
-    shiny::div(style = "margin:6px 0 2px;",
-      shiny::downloadButton(ns("dl_cv_rdata"), "Download CV% (RData)", class = "btn-xs"),
-      shiny::downloadButton(ns("dl_cv_json"),  "Download CV% (JSON)",  class = "btn-xs")),
-    shiny::uiOutput(ns("cv_note")),
-    shiny::h4("Parameter comparison"),
-    shinycssloaders::withSpinner(
-      shiny::plotOutput(ns("forest_plot"), height = "640px"), type = 4, color = "#337ab7")
+
+    # ---- fit-comparison body (all modes EXCEPT plates_gating) --------------
+    shiny::conditionalPanel(
+      condition = "input.mode != 'plates_gating'", ns = ns,
+      shiny::uiOutput(ns("set_note")),
+      shiny::hr(),
+      shiny::h4("Overlaid standard curves"),
+      shinycssloaders::withSpinner(
+        plotly::plotlyOutput(ns("summary_plot"), height = "520px"), type = 4, color = "#337ab7"),
+      shiny::div(style = "margin:6px 0 2px;",
+        shiny::downloadButton(ns("dl_cv_rdata"), "Download CV% (RData)", class = "btn-xs"),
+        shiny::downloadButton(ns("dl_cv_json"),  "Download CV% (JSON)",  class = "btn-xs")),
+      shiny::uiOutput(ns("cv_note")),
+      shiny::h4("Parameter comparison"),
+      shinycssloaders::withSpinner(
+        shiny::plotOutput(ns("forest_plot"), height = "640px"), type = 4, color = "#337ab7")
+    ),
+
+    # ---- plate-gating body (own module; sample QC by plate) ----------------
+    shiny::conditionalPanel(
+      condition = "input.mode == 'plates_gating'", ns = ns,
+      plateGatingUI(ns("gating"))
+    )
   )
 }
 
@@ -183,6 +195,10 @@ stdCurveCompareServer <- function(id, pool, scope = NULL,
 
     scope_val <- reactive(if (!is.null(scope)) scope()
                           else list(study = NULL, experiment = NULL, project_id = NA))
+
+    # "Plates gating" mode is a self-contained module (sample QC by plate). It
+    # reads the same scope; its UI is shown by the conditionalPanel above.
+    plateGatingServer("gating", pool = pool, scope = scope_val)
 
     # Scoped curves + labels (batch has multiplate_group_id/antigen/feature;
     # curve_lookup adds plateid). One join drives every picker + label.
@@ -225,6 +241,8 @@ stdCurveCompareServer <- function(id, pool, scope = NULL,
     # A/B/C get a Standard-source selector (hidden when the study has one source)
     # that narrows the curve/group list; Mode D uses a position picker instead.
     output$picker <- renderUI({
+      # plates_gating owns its own source/antigen/feature filters -> no picker
+      if (identical(input$mode, "plates_gating")) return(NULL)
       cv <- curves()
       if (is.null(cv)) return(shiny::helpText("No curves in scope yet."))
 

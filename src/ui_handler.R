@@ -456,7 +456,7 @@ output$view_stored_experiments_ui <- renderUI({
                           radioGroupButtons(
                             inputId = "qc_component",
                             label = "",
-                            choices = c("Bead Count", "Standard Curve"),
+                            choices = c("Bead Count", "Plate Dilution Series", "Standard Curve"),
                             selected = character(0)
                           ),
                           conditionalPanel(
@@ -469,6 +469,13 @@ output$view_stored_experiments_ui <- renderUI({
                             uiOutput("bead_not_available_ui")
                           ),
 
+                          # Plate Dilution Series: faceted standard-curve-by-plate
+                          # figures (Analytes / Sources sub-tabs). Rendered by
+                          # plateDilutionSeriesModule (wired in app.R).
+                          conditionalPanel(
+                            condition = "input.qc_component == 'Plate Dilution Series'",
+                            uiOutput("plate_dilution_series_ui")
+                          ),
 
                           # conditionalPanel(
                           #   condition = "input.qc_component == 'Standard Curve'",

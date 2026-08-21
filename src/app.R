@@ -1190,6 +1190,8 @@ server <- function(input, output, session) {
       source("std_curve_view_module.R", local = TRUE)
       source("std_curve_calc_module.R", local = TRUE)
       source("std_curve_compare_module.R", local = TRUE)
+      source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
+      source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
       source("assay_response.R",     local = TRUE)
       source("data_dictionary.R",    local = TRUE)
       source("data_tab_module.R",    local = TRUE)
@@ -1222,6 +1224,12 @@ server <- function(input, output, session) {
         )
       })
 
+      # Plate Dilution Series QC tab (Analytes / Sources sub-tabs). Reads raw
+      # standards for the current scope; re-reads on the shared reload_trigger.
+      output$plate_dilution_series_ui <- renderUI({
+        plateDilutionSeriesUI("plate_dil_series")
+      })
+
       # stdCurveServer("std_curve", conn = db_pool, api = compute_api_client(),
       #                scope = calib_scope)
       calib_dirty    <- shiny::reactiveVal(0)
@@ -1234,6 +1242,8 @@ server <- function(input, output, session) {
                          selected_curve = selected_curve)
       stdCurveCompareServer("sc_compare", pool = db_pool, scope = sc_scope,
                             selected_curve = selected_curve)
+      plateDilutionSeriesServer("plate_dil_series", pool = db_pool,
+                                scope = calib_scope, reload_trigger = reload_trigger)
       settingsCascadeServer("settings", pool = db_pool, scope = calib_scope)
       settingsExportImportServer("settings_io", pool = db_pool,
                                  scope = calib_scope, user = currentuser)
