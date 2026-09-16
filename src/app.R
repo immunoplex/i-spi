@@ -1115,8 +1115,6 @@ server <- function(input, output, session) {
       source("generate_flowjo_layout_template.R", local = TRUE) # flow template (was sourced by flowjo_reader.R)
       source("reader_bead_xponent_parsers.R", local = TRUE)     # xPONENT parsers (lifted from xPonentReader.R)
       source("reader_elisa_parsers.R", local = TRUE)            # ELISA parsers (lifted from elisa_reader.R)
-      source("assay_description_rule_ui.R", local = TRUE)
-      source("assay_description_parse.R", local = TRUE)
       source("assay_import_contract.R", local = TRUE)
       source("assay_import_backend.R", local = TRUE)
       source("assay_import_module.R", local = TRUE)

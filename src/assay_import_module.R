@@ -48,20 +48,10 @@ assay_import_ui <- function(id, descriptor) {
       tags$h4("1. Upload instrument file(s)"),
       fileInput(ns("raw_files"), NULL, multiple = TRUE, accept = accept),
       if (!is.null(descriptor$assay_controls)) descriptor$assay_controls(ns),
-      # per-type description parse-rule builder + live preview (bead/ELISA only)
-      if (!is.null(descriptor$description_elements))
-        ai_rule_ui(ns, descriptor$description_elements),
       actionButton(ns("parse_btn"), "Parse uploaded file(s)", class = "btn-primary"),
       tags$span(style = "margin-left:12px;", textOutput(ns("parse_status"), inline = TRUE)),
       tags$hr(),
-      conditionalPanel(
-        condition = sprintf("output['%s']", ns("rules_ready")),
-        downloadButton(ns("template"), "Download layout template")
-      ),
-      conditionalPanel(
-        condition = sprintf("!output['%s']", ns("rules_ready")),
-        tags$em("Parse the file(s), then approve the parse rule for each specimen type to enable template download.")
-      ),
+      downloadButton(ns("template"), "Download layout template"),
       tags$p(tags$small(
         "Parse the instrument file(s) first, then download the template, edit it, ",
         "and upload the completed file below."))
@@ -116,17 +106,6 @@ assay_import_server <- function(id, pool, descriptor, scope) {
       get_assay_reader(descriptor$assay, fmt)
     })
 
-    # normalized (Type, Description) frame from the last parse, for the rule panel
-    descriptions_r <- reactive(
-      if (!is.null(rv$raw)) rv$raw$template_seed$descriptions else NULL)
-
-    # per-type parse-rule panel (bead/ELISA). Returns rules() + approved().
-    # NULL for assays without a delimited Description (flow).
-    rule <- if (!is.null(descriptor$description_elements))
-      ai_rule_install(input, output, session,
-                      de = descriptor$description_elements,
-                      descriptions_r = descriptions_r) else NULL
-
     build_opts <- reactive({
       s <- scope()
       list(
@@ -136,24 +115,31 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         user              = s$user,
         n_wells           = input$n_wells %||% 96,
         feature_value     = input$feature_value,
-        # per-type parse rules from the panel (NULL for flow -> readers fall back)
-        rules             = if (!is.null(rule)) rule$rules() else NULL,
-        descriptions      = descriptions_r(),
+        delimiter         = input$delimiter %||% "_",
+        element_order     = .ai_split_order(input$x_element_order,
+                              c("PatientID", "TimePeriod", "DilutionFactor")),
+        bcs_element_order = .ai_split_order(input$bcs_element_order,
+                              c("Source", "DilutionFactor")),
         raw_preview       = if (!is.null(rv$raw)) rv$raw$preview else NULL,
         dilutions_ref     = if (!is.null(rv$raw)) rv$raw$template_seed$dilutions else NULL,
         dilution_map      = if (!is.null(rv$raw)) rv$raw$template_seed$dilution_map else NULL
       )
     })
 
-    # template download is gated on: files parsed AND every present specimen-type
-    # rule approved (flow has no rule panel -> approval is vacuously satisfied).
-    output$rules_ready <- reactive({
-      !is.null(rv$raw) && (is.null(rule) || isTRUE(rule$approved()))
-    })
-    outputOptions(output, "rules_ready", suspendWhenHidden = FALSE)
-
-    # ── description parse rules are handled by the per-type rule panel
-    #    (ai_rule_install, wired above). Flow has no description_elements.
+    # ── description-element ordering (bead/ELISA): drag-to-order sample
+    #    elements = base + any optional elements toggled on. Rebuilt on toggle,
+    #    matching the retired import UI. Flow has no description_elements -> skipped.
+    if (!is.null(descriptor$description_elements)) {
+      de <- descriptor$description_elements
+      output$x_element_order_ui <- renderUI({
+        opt   <- input$optional_elements
+        items <- c(de$base, opt[opt %in% de$optional])
+        shinyjqui::orderInput(
+          inputId    = session$ns("x_element_order"),
+          label      = "Description Label: Sample Elements (drag to reorder)",
+          items      = items, width = "100%", item_class = "primary")
+      })
+    }
 
     # ── 1. parse raw files (explicit button; deterministic) ──────────────────
     observeEvent(input$parse_btn, {

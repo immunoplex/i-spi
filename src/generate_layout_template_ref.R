@@ -352,8 +352,7 @@ generate_layout_template <- function(all_plates,
                                         element_order = NULL,
                                         bcs_element_order = NULL,
                                         assay_response_long_override = NULL,
-                                        feature_value = NULL,
-                                     rules = NULL) {
+                                        feature_value = NULL) {
 
   wb <- createWorkbook()
   bold_style <- createStyle(textDecoration = "bold")
@@ -424,8 +423,7 @@ generate_layout_template <- function(all_plates,
     delimiter = description_delimiter,
     element_order = XElementOrder,
     bcs_element_order = BCSElementOrder,
-    feature_value = input_feature_value,
-    rules = rules
+    feature_value = input_feature_value
   )
 
   # ==========================================================================
@@ -535,12 +533,6 @@ generate_layout_template <- function(all_plates,
     study_accession = study_accession,
     experiment_accession = experiment_accession
   )
-
-  # audit: record exactly which per-type parse rule produced this template
-  if (!is.null(rules)) {
-    addWorksheet(wb, "parse_rule")
-    writeData(wb, "parse_rule", ai_ruleset_to_sheet(rules))
-  }
 
   # Save the workbook
   saveWorkbook(wb, output_file, overwrite = TRUE)
@@ -689,7 +681,7 @@ build_plate_id_df <- function(header_list, study_accession, experiment_accession
   required_cols <- c("project_id", "study_name", "experiment_name", "number_of_wells",
                      "plate_number", "plateid", "plate_id", "plate_filename",
                      "acquisition_date", "reader_serial_number", "rp1_pmt_volts", "rp1_target")
-
+  
   missing <- setdiff(required_cols, names(plate_id))
   if (length(missing) > 0) {
     cat("  ⚠ Missing columns in plate_id (filling with NA):", paste(missing, collapse = ", "), "\n")
@@ -697,7 +689,7 @@ build_plate_id_df <- function(header_list, study_accession, experiment_accession
       plate_id[[mc]] <- NA_character_
     }
   }
-
+  
   plate_id <- plate_id[, required_cols, drop = FALSE]
   cat("Final plate_id dimensions:", nrow(plate_id), "rows x", ncol(plate_id), "cols\n")
   cat("=====================================\n\n")
@@ -739,8 +731,7 @@ build_antigen_df <- function(all_plates, study_accession, experiment_accession, 
 build_plates_map <- function(all_plates, plate_id, header_list, study_accession,
                              experiment_accession, n_wells, project_id,
                              description_status, delimiter, element_order, bcs_element_order,
-                             feature_value = NA_character_,
-                             rules = NULL) {
+                             feature_value = NA_character_) {
 
   # Use plateid (unique run identifier) for expansion, NOT plate_number
   # This ensures each unique plate run gets its own set of wells
@@ -826,30 +817,19 @@ build_plates_map <- function(all_plates, plate_id, header_list, study_accession,
     cat("╚══════════════════════════════════════════════════════════╝\n")
   }
 
-  parsed <- if (!is.null(rules)) {
-    ai_parse_ruleset(plate_well_map, rules, use_defaults = use_defaults)
-  } else {
-    parse_all_descriptions(
-      plate_data        = plate_well_map,
-      delimiter         = delimiter,
-      element_order     = element_order,
-      bcs_element_order = bcs_element_order,
-      use_defaults      = use_defaults)
-  }
+  parsed <- parse_all_descriptions(
+    plate_data = plate_well_map,
+    delimiter = delimiter,
+    element_order = element_order,
+    bcs_element_order = bcs_element_order,
+    use_defaults = use_defaults
+  )
 
   # Apply parsed values
-  plate_well_map$subject_id               <- parsed$subject_id
+  plate_well_map$subject_id <- parsed$subject_id
   plate_well_map$specimen_dilution_factor <- parsed$specimen_dilution_factor
-  plate_well_map$specimen_source          <- parsed$specimen_source
-  plate_well_map$groupa                   <- parsed$groupa   # <-- ADD: carry groups
-  plate_well_map$groupb                   <- parsed$groupb   # <-- ADD: so subject_groups reuses them
-
-  # timepoint: preserve internal spaces when the X rule uses space as a delimiter
-  # (multi-word timeperiods like "Day 7 Post"); otherwise strip whitespace (legacy).
-  x_delims       <- if (!is.null(rules) && !is.null(rules$X)) rules$X$delimiters else delimiter
-  space_is_delim <- " " %in% ai_delim_chars(x_delims)
-  plate_well_map$timepoint_tissue_abbreviation <-
-    ai_finalize_timepoint(parsed$timepoint_tissue_abbreviation, space_is_delim)
+  plate_well_map$timepoint_tissue_abbreviation = gsub("[[:space:][:cntrl:]]", "", parsed$timepoint_tissue_abbreviation)
+  plate_well_map$specimen_source <- parsed$specimen_source
 
   if (use_defaults) {
     cat("  ✓ Parsed all descriptions with defaults applied\n")
@@ -966,26 +946,37 @@ build_subject_groups <- function(plate_well_map, study_accession, description_st
   # since we only need groupa/groupb
   use_defaults <- !description_status$has_content || !description_status$has_sufficient_elements
 
-  if (all(c("groupa", "groupb") %in% names(plate_well_map))) {
-    # groups already parsed once under the X rule in build_plates_map
-    subject_id_dat$groupa <- plate_well_map$groupa[sample_mask]
-    subject_id_dat$groupb <- plate_well_map$groupb[sample_mask]
+  if (use_defaults) {
+    subject_id_dat$groupa <- sapply(subject_id_dat$Description, function(desc) {
+      parsed <- parse_description_with_defaults(
+        description = desc,
+        delimiter = delimiter,
+        element_order = element_order,
+        optional_elements = c("SampleGroupA", "SampleGroupB")
+      )
+      parsed$groupa
+    })
+
+    subject_id_dat$groupb <- sapply(subject_id_dat$Description, function(desc) {
+      parsed <- parse_description_with_defaults(
+        description = desc,
+        delimiter = delimiter,
+        element_order = element_order,
+        optional_elements = c("SampleGroupA", "SampleGroupB")
+      )
+      parsed$groupb
+    })
   } else {
-    # legacy fallback (unchanged)
-    use_defaults <- !description_status$has_content || !description_status$has_sufficient_elements
-    if (use_defaults) {
-      subject_id_dat$groupa <- sapply(subject_id_dat$Description, function(desc)
-        parse_description_with_defaults(desc, delimiter, element_order,
-                                        optional_elements = c("SampleGroupA", "SampleGroupB"))$groupa)
-      subject_id_dat$groupb <- sapply(subject_id_dat$Description, function(desc)
-        parse_description_with_defaults(desc, delimiter, element_order,
-                                        optional_elements = c("SampleGroupA", "SampleGroupB"))$groupb)
-    } else {
-      xgroupa <- get_element_position("SampleGroupA", element_order)
-      xgroupb <- get_element_position("SampleGroupB", element_order)
-      subject_id_dat$groupa <- if (!is.na(xgroupa)) str_split_i(subject_id_dat$Description, delimiter, xgroupa) else ""
-      subject_id_dat$groupb <- if (!is.na(xgroupb)) str_split_i(subject_id_dat$Description, delimiter, xgroupb) else ""
-    }
+    xgroupa <- get_element_position("SampleGroupA", element_order)
+    xgroupb <- get_element_position("SampleGroupB", element_order)
+
+    subject_id_dat$groupa <- if (!is.na(xgroupa)) {
+      str_split_i(subject_id_dat$Description, delimiter, xgroupa)
+    } else ""
+
+    subject_id_dat$groupb <- if (!is.na(xgroupb)) {
+      str_split_i(subject_id_dat$Description, delimiter, xgroupb)
+    } else ""
   }
 
   # Apply defaults to empty values
