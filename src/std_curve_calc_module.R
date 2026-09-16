@@ -344,24 +344,37 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       n_curves <- length(unique(cs$curve_id))
       done <- cs[!is.na(cs$method), , drop = FALSE]
       by_m <- table(done$method)
+      n_stale <- length(unique(cs$curve_id[cs$needs_recalc %in% TRUE]))
       shiny::tags$small(sprintf(
-        "assay response: %s  \u00b7  %d curve set(s) registered  \u00b7  computed: %s",
+        "assay response: %s  \u00b7  %d curve set(s) registered  \u00b7  computed: %s%s",
         resp, n_curves,
         if (length(by_m)) paste(sprintf("%s %d", names(by_m), as.integer(by_m)), collapse = ", ")
-        else "none yet"))
+        else "none yet",
+        if (n_stale > 0)
+          sprintf("  \u00b7  \u26a0 %d curve(s) OUT OF DATE (masking) \u2014 submit a fit job to refresh", n_stale)
+        else ""))
     })
 
     output$calc_status <- DT::renderDataTable({
       cs <- calc_status(); shiny::req(nrow(cs) > 0)
       cs$best_model <- ifelse(is.na(cs$best_model), "\u2014", family_label(cs$best_model))
       cs$method     <- ifelse(is.na(cs$method), "not computed", cs$method)
+      cs$recalc_status <- ifelse(cs$needs_recalc %in% TRUE,
+                                 "\u26a0 out of date (masking)", "current")
       cols <- intersect(c("antigen", "plateid", "feature", "source", "wavelength",
                           "method", "best_model", "converged", "eligible",
-                          "score_type", "selection_score", "job_status", "finished_at"),
+                          "score_type", "selection_score", "recalc_status",
+                          "job_status", "finished_at"),
                         names(cs))
-      DT::datatable(cs[, cols, drop = FALSE], rownames = FALSE, filter = "top",
-                    selection = "none",
-                    options = list(scrollX = TRUE, pageLength = 15))
+      dt <- DT::datatable(cs[, cols, drop = FALSE], rownames = FALSE, filter = "top",
+                          selection = "none",
+                          options = list(scrollX = TRUE, pageLength = 15))
+      if ("recalc_status" %in% cols)
+        dt <- DT::formatStyle(dt, "recalc_status",
+          backgroundColor = DT::styleEqual("\u26a0 out of date (masking)", "#FFF5F5"),
+          color           = DT::styleEqual("\u26a0 out of date (masking)", "#D32F2F"),
+          fontWeight      = DT::styleEqual("\u26a0 out of date (masking)", "bold"))
+      dt
     }, server = TRUE)
 
     # -- submit + poll a worker job ---------------------------------------
@@ -485,7 +498,16 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
             } else NULL
           }, error = function(e) NULL))
         } else queue_pos(NULL)
-        if (identical(st$status, "completed")) calib_dirty(calib_dirty() + 1)
+        if (identical(st$status, "completed")) {
+          calib_dirty(calib_dirty() + 1)
+          # This job's curve_ids now have a fresh fit -- clear any "out of
+          # date (masking)" flag left over from a batched, deferred-delete
+          # mask/unmask save (see stdCurveView's keep_fits_input). Curves that
+          # were never flagged are unaffected (clear is a no-op for them).
+          batch_cids <- tryCatch(as.integer(job_batch()$curve_id), error = function(e) integer(0))
+          if (length(batch_cids))
+            tryCatch(clear_recalc_flags(pool, batch_cids), error = function(e) NULL)
+        }
       }
       invisible()
     }

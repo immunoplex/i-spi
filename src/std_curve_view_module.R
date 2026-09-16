@@ -217,6 +217,38 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       b <- bundle(); nrow(b$fit_best) > 0 && nrow(b$grid) > 0
     })
 
+    # Curve-level staleness (calib_recalc_flag): set when a batched mask/unmask
+    # save deferred its recompute (see keep_fits_input / apply_mask/apply_unmask
+    # delete_fits = FALSE). Method-agnostic by design -- both the frequentist and
+    # Bayesian fits for this curve are equally out of date, so the same flag
+    # drives the banner/border regardless of which method tab is selected.
+    # calib_dirty() refreshes it after any mask/unmask save or completed job.
+    stale_info <- shiny::reactive({
+      calib_dirty()
+      cid <- tryCatch(curve_id(), error = function(e) NULL)
+      if (!shiny::isTruthy(cid)) return(list(stale = FALSE))
+      tryCatch(curve_recalc_flag(pool, cid), error = function(e) list(stale = FALSE))
+    })
+
+    # Big red border + label wrapper, applied around the plot area whenever the
+    # viewed curve is flagged stale -- independent of has_calib() (the whole
+    # point of deferring is that the OLD fit stays visible while stale).
+    stale_wrap <- function(...) {
+      si <- stale_info()
+      if (!isTRUE(si$stale)) return(shiny::tagList(...))
+      shiny::tags$div(
+        style = paste("border: 4px solid #D32F2F; border-radius: 4px;",
+                      "padding: 8px; background: #FFF5F5;"),
+        shiny::tags$div(
+          style = "color:#D32F2F;font-weight:bold;font-size:14px;margin-bottom:6px;",
+          "\u26a0 FITS OUT OF DATE \u2014 masking changes are pending recalculation ",
+          "(frequentist and Bayesian). Submit a fit job on the Compute-fits tab to refresh."),
+        if (!is.na(si$reason) && nzchar(si$reason))
+          shiny::tags$div(style = "color:#a33;font-size:11px;margin-bottom:6px;",
+                          sprintf("Reason: %s", si$reason)),
+        ...)
+    }
+
     # -- status banner (per-curve) ----------------------------------------
     output$sc_status <- shiny::renderUI({
       if (!isTRUE(has_calib())) {
@@ -234,22 +266,23 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
 
     output$sc_plot_area <- shiny::renderUI({
       if (!isTRUE(has_calib())) return(NULL)
-      shiny::tabsetPanel(
-        shiny::tabPanel("Curve",
-          shinycssloaders::withSpinner(
-            plotly::plotlyOutput(ns("curve_plot"), height = "460px"), type = 4, color = "#337ab7"),
-          shiny::uiOutput(ns("fda_ribbon_area")),
-          shiny::uiOutput(ns("mask_selection")),
-          shiny::uiOutput(ns("unmask_selection")),
-          shiny::uiOutput(ns("diagnostics_panel"))),
-        shiny::tabPanel("Precision",
-          shinycssloaders::withSpinner(
-            plotly::plotlyOutput(ns("precision_plot"), height = "460px"), type = 4, color = "#337ab7"),
-          shiny::uiOutput(ns("precision_panel"))),
-        shiny::tabPanel("Model selection", DT::DTOutput(ns("fits_table"))),
-        shiny::tabPanel("Parameters",      DT::DTOutput(ns("params_table"))),
-        shiny::tabPanel("Back-calculated samples", DT::DTOutput(ns("samples_table")))
-      )
+      stale_wrap(
+        shiny::tabsetPanel(
+          shiny::tabPanel("Curve",
+            shinycssloaders::withSpinner(
+              plotly::plotlyOutput(ns("curve_plot"), height = "460px"), type = 4, color = "#337ab7"),
+            shiny::uiOutput(ns("fda_ribbon_area")),
+            shiny::uiOutput(ns("mask_selection")),
+            shiny::uiOutput(ns("unmask_selection")),
+            shiny::uiOutput(ns("diagnostics_panel"))),
+          shiny::tabPanel("Precision",
+            shinycssloaders::withSpinner(
+              plotly::plotlyOutput(ns("precision_plot"), height = "460px"), type = 4, color = "#337ab7"),
+            shiny::uiOutput(ns("precision_panel"))),
+          shiny::tabPanel("Model selection", DT::DTOutput(ns("fits_table"))),
+          shiny::tabPanel("Parameters",      DT::DTOutput(ns("params_table"))),
+          shiny::tabPanel("Back-calculated samples", DT::DTOutput(ns("samples_table")))
+        ))
     })
 
     # -- curve plot: ONE visualization for both methods, from the shared
@@ -347,8 +380,23 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       # points get the ring overlay below. One trace per verdict -> colour legend;
       # symbol varies within a trace. customdata unchanged so click-masking is intact.
       # No frequentist fit -> fall back to the plain fit/masked scheme.
+      #
+      # masked/reason come from the LIVE xmap flags (fetch_live_mask_state), NOT
+      # from sp$included/sp$mask_reason -- those are the calib_standards SNAPSHOT
+      # from the last fit and go stale the instant a mask/unmask save defers its
+      # recompute (delete_fits = FALSE). Using the live flags means a just-saved
+      # mask shows as hollow (and unmask as filled) immediately, even while the
+      # curve sits flagged stale awaiting recomputation.
+      live <- tryCatch(fetch_live_mask_state(pool, cid),
+                       error = function(e) list(std_masked_wells = character(0),
+                                                 blk_masked_wells = character(0),
+                                                 std_reason = character(0),
+                                                 blk_reason = character(0)))
       if (!is.null(sp) && nrow(sp)) {
-        sp$masked <- !(as.logical(sp$included) %in% TRUE)
+        sp$masked <- as.character(sp$well) %in% live$std_masked_wells
+        live_std_reason <- unname(live$std_reason[as.character(sp$well)])
+        sp$mask_reason  <- ifelse(!is.na(live_std_reason) & nzchar(live_std_reason),
+                                  live_std_reason, sp$mask_reason)
         mask_note <- function(row_masked, reason, base) {
           if (!row_masked) return(base)
           if (!is.na(reason) && nzchar(reason)) paste0(base, " \u2014 MASKED: ", reason)
@@ -394,13 +442,19 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       }
 
       # Individual blanks parked at the left gutter, own color; masked = lighter.
+      # Split on the LIVE xmap_buffer flag (see `live` above), not bl$included --
+      # same staleness reasoning as the standards block.
       bl <- tryCatch(fetch_calib_blanks(pool, cid, meth), error = function(e) NULL)
       if (!is.null(bl) && nrow(bl)) {
         bl$response_model <- num(bl$response_model)
         bl <- bl[is.finite(bl$response_model), , drop = FALSE]
         bl$x <- blank_x
-        binc <- bl[  as.logical(bl$included) %in% TRUE, , drop = FALSE]
-        bexc <- bl[!(as.logical(bl$included) %in% TRUE), , drop = FALSE]
+        bl$masked <- as.character(bl$well) %in% live$blk_masked_wells
+        live_blk_reason <- unname(live$blk_reason[as.character(bl$well)])
+        bl$mask_reason   <- ifelse(!is.na(live_blk_reason) & nzchar(live_blk_reason),
+                                   live_blk_reason, bl$mask_reason)
+        binc <- bl[!bl$masked, , drop = FALSE]
+        bexc <- bl[ bl$masked, , drop = FALSE]
         if (nrow(binc))
           p <- plotly::add_markers(p, data = binc, x = ~x, y = ~response_model,
                  name = "Blank", marker = list(color = "#6A3D9A", symbol = "diamond", size = 8),
@@ -592,23 +646,30 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     highlight_tick  <- shiny::reactiveVal(0)
 
     # The customdata keys of the points that are CURRENTLY masked on this curve+
-    # method, derived exactly as the plot derives its hollow markers (included ==
-    # FALSE in calib_standards / calib_blanks). Drives the click routing below:
-    # a masked point is unmasked (double-click), not masked (single-click).
-    # Refreshes with calib_dirty so it tracks the plot after any mask/unmask save.
+    # method, from the LIVE xmap flags (fetch_live_mask_state) -- NOT from
+    # calib_standards/calib_blanks.included, which is the last-fit SNAPSHOT and
+    # goes stale the moment a mask/unmask save defers its recompute (see
+    # fetch_live_mask_state's doc). sp/bl here only supply the well<->dilution
+    # pairs already on the plot (for the customdata key shape); which of them
+    # are masked is decided live. Drives the click routing below: a masked
+    # point is unmasked (double-click), not masked (single-click). Refreshes
+    # with calib_dirty so it tracks the plot after any mask/unmask save.
     masked_keys <- shiny::reactive({
       calib_dirty()
       cid <- curve_id(); meth <- method()
       if (!shiny::isTruthy(cid) || !shiny::isTruthy(meth)) return(character(0))
       keys <- character(0)
+      live <- tryCatch(fetch_live_mask_state(pool, cid),
+                       error = function(e) list(std_masked_wells = character(0),
+                                                 blk_masked_wells = character(0)))
       sp <- tryCatch(fetch_calib_standards(pool, cid, meth), error = function(e) NULL)
       if (!is.null(sp) && nrow(sp)) {
-        m <- !(as.logical(sp$included) %in% TRUE)
+        m <- as.character(sp$well) %in% live$std_masked_wells
         if (any(m)) keys <- c(keys, paste("std", sp$well[m], sp$dilution[m], sep = "|"))
       }
       bl <- tryCatch(fetch_calib_blanks(pool, cid, meth), error = function(e) NULL)
       if (!is.null(bl) && nrow(bl)) {
-        m <- !(as.logical(bl$included) %in% TRUE)
+        m <- as.character(bl$well) %in% live$blk_masked_wells
         if (any(m)) keys <- c(keys, paste("blk", bl$well[m], "", sep = "|"))
       }
       unique(keys)
@@ -737,6 +798,24 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         selected = "antigen")
     }
 
+    # Deferred-recalc control shared by the mask and unmask modals. Unchecked
+    # (default) = original behavior: the affected group's calib_* fits are
+    # deleted immediately on save. Checked = batch mode: the existing fits are
+    # KEPT (still viewable) but flagged stale, so several plates' worth of
+    # masking edits can be staged before paying for one recompute; the Explore
+    # fits view marks any stale curve with a red border + label until then.
+    keep_fits_input <- function(id) {
+      shiny::tags$div(style = "margin-top:6px;",
+        shiny::checkboxInput(session$ns(id),
+          "Keep existing fits and mark them out of date instead of deleting now",
+          value = FALSE),
+        shiny::tags$div(style = "font-size:11px;color:#787878;",
+          "Use this when staging masking changes across more than one plate. ",
+          "Existing frequentist/Bayesian fits stay visible (marked stale) until ",
+          "you submit a fit job on the Compute-fits tab; that recompute clears ",
+          "the flag. Leave unchecked to delete the affected fits right away, as before."))
+    }
+
     shiny::observeEvent(input$mask_save, {
       if (!length(staged())) return()
       shiny::showModal(shiny::modalDialog(
@@ -745,11 +824,12 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           "Reason (required) \u2014 applies to all points in this save",
           placeholder = "e.g. plate-edge contamination; implausible replicate", rows = 2),
         scope_input("mask_scope"),
+        keep_fits_input("mask_keep_fits"),
         shiny::uiOutput(session$ns("mask_dryrun")),
         shiny::uiOutput(session$ns("mask_diag")),
         footer = shiny::tagList(
           shiny::modalButton("Cancel"),
-          shiny::actionButton(session$ns("mask_apply"), "Apply mask (delete fits)",
+          shiny::actionButton(session$ns("mask_apply"), "Apply mask",
                               class = "btn-danger")),
         easyClose = FALSE, size = "l"))
     })
@@ -795,11 +875,21 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     output$mask_dryrun <- shiny::renderUI({
       pl <- mask_plan(); if (is.null(pl)) return(NULL)
       total_del <- sum(pl$counts)
+      keep <- isTRUE(input$mask_keep_fits)
       scope_banner <- if (identical(pl$scope, "plate"))
         shiny::tags$div(style = "color:#8a6d3b;background:#fcf8e3;border:1px solid #faebcc;padding:4px 6px;font-size:12px;",
           "Whole-plate scope: this masks the staged well(s) for EVERY feature/antigen on this plate ",
           "(same project/study/experiment, plateid, nominal dilution, source, wavelength), not just the viewed one.")
       else NULL
+      fit_action_li <- if (keep)
+        shiny::tags$li(sprintf(
+          "KEEP the existing calib_* fits for %d affected curve%s (all groups touched, incl. every group a masked blank feeds: %d row(s)) and mark %s stale, pending recalculation",
+          length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del,
+          if (length(pl$grp) == 1) "it" else "them"))
+      else
+        shiny::tags$li(sprintf(
+          "DELETE all calib_* fits for %d affected curve%s (all groups touched, incl. every group a masked blank feeds): %d row(s) total",
+          length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del))
       shiny::tagList(
         shiny::tags$hr(),
         scope_banner,
@@ -809,8 +899,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
             length(pl$std_ids), paste(pl$std_ids, collapse = ", "))),
           shiny::tags$li(sprintf("set masked = true on %d blank row(s) [xmap_buffer_id: %s]",
             length(pl$blk_ids), paste(pl$blk_ids, collapse = ", "))),
-          shiny::tags$li(sprintf("DELETE all calib_* fits for %d affected curve%s (all groups touched, incl. every group a masked blank feeds): %d row(s) total",
-            length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del))),
+          fit_action_li),
         if (length(pl$counts))
           shiny::tags$div(style = "font-size:11px;color:#787878;",
             paste(sprintf("%s: %d", names(pl$counts), as.integer(pl$counts)), collapse = "  \u00b7  ")),
@@ -818,9 +907,14 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           shiny::tags$div(style = "color:#B2182B;",
             "\u26a0 Some staged points did not resolve to a unique row \u2014 review before applying."),
         shiny::tags$div(style = "margin-top:6px;color:#555;",
-          shiny::tags$em("After applying, this curve's fit is removed and its group shows ",
-                         shiny::tags$b("needs calculation"),
-                         ". Recompute on the Compute-fits tab to get a revised fit.")))
+          if (keep)
+            shiny::tags$em("The plot will keep showing the ", shiny::tags$b("existing"), " fit, ",
+                           "ringed in red and labelled ", shiny::tags$b("out of date"),
+                           ", until you submit a fit job (any scope covering this curve) on the Compute-fits tab.")
+          else
+            shiny::tags$em("After applying, this curve's fit is removed and its group shows ",
+                           shiny::tags$b("needs calculation"),
+                           ". Recompute on the Compute-fits tab to get a revised fit.")))
     })
 
     # Read-only diagnostic panel: shows exactly what the resolvers see, so a
@@ -872,21 +966,28 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       if (is.null(pl) || (!length(pl$std_ids) && !length(pl$blk_ids))) {
         shiny::showNotification("Nothing resolved to mask.", type = "error", duration = NULL); return()
       }
+      keep <- isTRUE(input$mask_keep_fits)
       res <- tryCatch(
         apply_mask(pool, std_ids = pl$std_ids, blk_ids = pl$blk_ids,
-                   group_curve_ids = pl$grp, reason = reason, set_masked = TRUE),
+                   group_curve_ids = pl$grp, reason = reason, set_masked = TRUE,
+                   delete_fits = !keep),
         error = function(e) { shiny::showNotification(conditionMessage(e),
                                 type = "error", duration = NULL); NULL })
       if (is.null(res)) return()
       shiny::removeModal()
       clear_mask()                     # clear mask staging + red rings
-      calib_dirty(calib_dirty() + 1)   # plot removed, status flips to needs-calc
-      shiny::showNotification(
+      calib_dirty(calib_dirty() + 1)   # plot/status re-reads (needs-calc, or stale banner)
+      msg <- if (keep)
+        sprintf("Masked %d point(s)%s; kept existing fits and flagged %d curve(s) out of date. Submit a fit job on the Compute-fits tab when you're done batching masking edits.",
+                res$masked_std + res$masked_blk,
+                if (identical(pl$scope, "plate")) " across all features/antigens in the well" else "",
+                res$group_n)
+      else
         sprintf("Masked %d point(s)%s; deleted fits for %d curve(s). Recompute on the Compute-fits tab to get a revised fit.",
                 res$masked_std + res$masked_blk,
                 if (identical(pl$scope, "plate")) " across all features/antigens in the well" else "",
-                res$group_n),
-        type = "message", duration = 10)
+                res$group_n)
+      shiny::showNotification(msg, type = "message", duration = 10)
     })
 
     # =====================================================================
@@ -939,11 +1040,21 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     output$unmask_dryrun <- shiny::renderUI({
       pl <- unmask_plan(); if (is.null(pl)) return(NULL)
       total_del <- sum(pl$counts)
+      keep <- isTRUE(input$unmask_keep_fits)
       scope_banner <- if (identical(pl$scope, "plate"))
         shiny::tags$div(style = "color:#8a6d3b;background:#fcf8e3;border:1px solid #faebcc;padding:4px 6px;font-size:12px;",
           "Whole-plate scope: this unmasks the staged well(s) for EVERY feature/antigen on this plate ",
           "(same project/study/experiment, plateid, nominal dilution, source, wavelength), not just the viewed one.")
       else NULL
+      fit_action_li <- if (keep)
+        shiny::tags$li(sprintf(
+          "KEEP the existing calib_* fits for %d affected curve%s (all groups touched, incl. every group an unmasked blank feeds: %d row(s)) and mark %s stale, pending recalculation",
+          length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del,
+          if (length(pl$grp) == 1) "it" else "them"))
+      else
+        shiny::tags$li(sprintf(
+          "DELETE all calib_* fits for %d affected curve%s (all groups touched, incl. every group an unmasked blank feeds): %d row(s) total",
+          length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del))
       shiny::tagList(
         shiny::tags$hr(),
         scope_banner,
@@ -953,8 +1064,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
             length(pl$std_ids), paste(pl$std_ids, collapse = ", "))),
           shiny::tags$li(sprintf("set masked = false and clear the mask reason on %d blank row(s) [xmap_buffer_id: %s]",
             length(pl$blk_ids), paste(pl$blk_ids, collapse = ", "))),
-          shiny::tags$li(sprintf("DELETE all calib_* fits for %d affected curve%s (all groups touched, incl. every group an unmasked blank feeds): %d row(s) total",
-            length(pl$grp), if (length(pl$grp) == 1) "" else "s", total_del))),
+          fit_action_li),
         if (length(pl$counts))
           shiny::tags$div(style = "font-size:11px;color:#787878;",
             paste(sprintf("%s: %d", names(pl$counts), as.integer(pl$counts)), collapse = "  \u00b7  ")),
@@ -962,23 +1072,29 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           shiny::tags$div(style = "color:#B2182B;",
             "\u26a0 Some staged points did not resolve to a unique row \u2014 review before applying."),
         shiny::tags$div(style = "margin-top:6px;color:#555;",
-          shiny::tags$em("After applying, this curve's fit is removed and its group shows ",
-                         shiny::tags$b("needs calculation"),
-                         ". Recompute on the Compute-fits tab to get a fit with the points restored.")))
+          if (keep)
+            shiny::tags$em("The plot will keep showing the ", shiny::tags$b("existing"), " fit, ",
+                           "ringed in red and labelled ", shiny::tags$b("out of date"),
+                           ", until you submit a fit job (any scope covering this curve) on the Compute-fits tab.")
+          else
+            shiny::tags$em("After applying, this curve's fit is removed and its group shows ",
+                           shiny::tags$b("needs calculation"),
+                           ". Recompute on the Compute-fits tab to get a fit with the points restored.")))
     })
 
     shiny::observeEvent(input$unmask_save, {
       if (!length(unstaged())) return()
       shiny::showModal(shiny::modalDialog(
         title = "Restore (unmask) points",
-        shiny::p(paste("Unmasking returns these points to the fit. The existing fit for",
-                       "the affected group(s) is deleted so it can be recomputed with the",
+        shiny::p(paste("Unmasking returns these points to the fit. By default the existing fit",
+                       "for the affected group(s) is deleted so it can be recomputed with the",
                        "points restored.")),
         scope_input("unmask_scope"),
+        keep_fits_input("unmask_keep_fits"),
         shiny::uiOutput(session$ns("unmask_dryrun")),
         footer = shiny::tagList(
           shiny::modalButton("Cancel"),
-          shiny::actionButton(session$ns("unmask_apply"), "Unmask (delete fits)",
+          shiny::actionButton(session$ns("unmask_apply"), "Unmask",
                               class = "btn-danger")),
         easyClose = FALSE, size = "l"))
     })
@@ -988,21 +1104,27 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       if (is.null(pl) || (!length(pl$std_ids) && !length(pl$blk_ids))) {
         shiny::showNotification("Nothing resolved to unmask.", type = "error", duration = NULL); return()
       }
+      keep <- isTRUE(input$unmask_keep_fits)
       res <- tryCatch(
         apply_unmask(pool, std_ids = pl$std_ids, blk_ids = pl$blk_ids,
-                     group_curve_ids = pl$grp),
+                     group_curve_ids = pl$grp, delete_fits = !keep),
         error = function(e) { shiny::showNotification(conditionMessage(e),
                                 type = "error", duration = NULL); NULL })
       if (is.null(res)) return()
       shiny::removeModal()
       clear_unmask()                   # clear unmask staging + green rings
-      calib_dirty(calib_dirty() + 1)   # plot removed, status flips to needs-calc
-      shiny::showNotification(
+      calib_dirty(calib_dirty() + 1)   # plot/status re-reads (needs-calc, or stale banner)
+      msg <- if (keep)
+        sprintf("Unmasked %d point(s)%s; kept existing fits and flagged %d curve(s) out of date. Submit a fit job on the Compute-fits tab when you're done batching masking edits.",
+                res$unmasked_std + res$unmasked_blk,
+                if (identical(pl$scope, "plate")) " across all features/antigens in the well" else "",
+                res$group_n)
+      else
         sprintf("Unmasked %d point(s)%s; deleted fits for %d curve(s). Recompute on the Compute-fits tab to get a revised fit.",
                 res$unmasked_std + res$unmasked_blk,
                 if (identical(pl$scope, "plate")) " across all features/antigens in the well" else "",
-                res$group_n),
-        type = "message", duration = 10)
+                res$group_n)
+      shiny::showNotification(msg, type = "message", duration = 10)
     })
 
     # =====================================================================

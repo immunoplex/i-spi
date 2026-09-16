@@ -430,6 +430,15 @@ fetch_calib_standards <- function(pool, curve_id, method) {
 #' intrinsic concentration, so x-positioning is a plotting decision (see the
 #' module's reference band). `response_model` is on the SAME scale as the
 #' standards/grid. Split on `included` as with standards.
+#'
+#' NOTE (both this and fetch_calib_standards above): `included`/`mask_reason`
+#' here are a SNAPSHOT written by the worker at fit time, not a live read of
+#' xmap_standard.masked / xmap_buffer.masked. They go stale the moment a mask/
+#' unmask save defers its recompute (see calib_recalc_flag / delete_fits).
+#' Anything that needs to know whether a point is masked RIGHT NOW -- deciding
+#' fill-vs-hollow on the plot, routing a click to mask vs. unmask -- must use
+#' fetch_live_mask_state() instead; use these two only for the response/
+#' concentration VALUES to plot, not for current mask status.
 fetch_calib_blanks <- function(pool, curve_id, method) {
   .calib_q(pool, sprintf(
     "SELECT well, response_model, assay_response_raw, included, exclusion_reason, mask_reason
@@ -635,19 +644,25 @@ fetch_calib_run_scoped <- function(pool, project, study, experiment) {
 # (method/model NULL). This is the assay-agnostic replacement for the old
 # hierarchical "run freq/bayes + status" panel -- the worker runs; this reports.
 # Uses the unmasked curve registry (masked curves aren't fit, so aren't shown).
+# needs_recalc / recalc_reason (method-agnostic, see calib_recalc_flag) flag
+# curves whose displayed fit is stale because a batched mask/unmask edit was
+# deferred rather than deleted -- recompute clears it (see poll_once()).
 fetch_calc_status_scoped <- function(pool, project, study, experiment) {
+  tryCatch(.ensure_recalc_flag_table(pool), error = function(e) NULL)
   .calib_q(pool, sprintf(
     "SELECT cl.curve_id, cl.antigen, cl.plateid, cl.plate, cl.feature,
             cl.source, cl.wavelength,
             f.method, f.model_name AS best_model, f.converged, f.eligible,
             f.score_type, f.selection_score, f.job_id,
-            r.status AS job_status, r.finished_at
+            r.status AS job_status, r.finished_at,
+            (rc.curve_id IS NOT NULL) AS needs_recalc, rc.reason AS recalc_reason
        FROM %s cl
-       LEFT JOIN %s f ON f.curve_id = cl.curve_id AND f.is_best
-       LEFT JOIN %s r ON r.job_id  = f.job_id
+       LEFT JOIN %s f  ON f.curve_id  = cl.curve_id AND f.is_best
+       LEFT JOIN %s r  ON r.job_id    = f.job_id
+       LEFT JOIN %s rc ON rc.curve_id = cl.curve_id
       WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
       ORDER BY cl.antigen, cl.plateid, cl.feature, f.method",
-    .tbl(TBL_CURVE_LOOKUP), .tbl("calib_fit"), .tbl("calib_run")),
+    .tbl(TBL_CURVE_LOOKUP), .tbl("calib_fit"), .tbl("calib_run"), .tbl(CALIB_RECALC_TABLE)),
     params = list(project, study, experiment))
 }
 
@@ -667,6 +682,55 @@ fetch_standard_points <- function(pool, curve_id) {
     .tbl("xmap_standard"), .tbl("curve_lookup"),
     .nk_join_on(STD_NK_JOIN_COLS, cl = "cl", s = "s")),
     params = list(curve_id))
+}
+
+# Observed BLANK points for ONE curve, LIVE mask status straight from
+# xmap_buffer (mirrors fetch_standard_points above). Blanks join the curve's
+# NK MINUS source (blank source != curve source), same as the mask resolvers
+# (BLK_NK_JOIN_COLS) -- so this returns exactly the blanks that feed this
+# curve's fit, with their CURRENT masked flag/reason.
+fetch_blank_points <- function(pool, curve_id) {
+  .calib_q(pool, sprintf(
+    "SELECT b.well, b.antibody_mfi AS assay_response, b.masked, b.mask_reason
+       FROM %s b JOIN %s cl ON %s
+      WHERE cl.curve_id = $1",
+    .tbl("xmap_buffer"), .tbl("curve_lookup"),
+    .nk_join_on(BLK_NK_JOIN_COLS, cl = "cl", s = "b")),
+    params = list(curve_id))
+}
+
+# THE live source of truth for "is this point masked right now". Reads
+# directly from xmap_standard / xmap_buffer via fetch_standard_points /
+# fetch_blank_points -- NOT from calib_standards.included / calib_blanks.
+# included, which are SNAPSHOTS the worker bakes in at fit time and go stale
+# the moment a mask/unmask save defers its recompute (apply_mask/apply_unmask
+# delete_fits = FALSE, see calib_recalc_flag above). Callers that render or
+# stage masking (the Explore-fits plot, masked_keys()) should always use this,
+# whether or not the curve happens to be flagged stale -- it costs one extra
+# small query per render and is correct in every case, deferred or not.
+# Matches on WELL only (same identity the mask resolvers use -- a standard's
+# `dilution` can be represented differently between xmap_standard and
+# calib_standards, see resolve_std_mask_ids's comment), so results are keyed
+# by well, not well+dilution.
+# Returns list(std_masked_wells, blk_masked_wells, std_reason, blk_reason);
+# the *_reason elements are named character vectors (name = well) for the
+# masked rows only. Well-shaped (all-empty) on any error.
+fetch_live_mask_state <- function(pool, curve_id) {
+  empty <- list(std_masked_wells = character(0), blk_masked_wells = character(0),
+                std_reason = character(0), blk_reason = character(0))
+  tryCatch({
+    std <- fetch_standard_points(pool, curve_id)
+    blk <- fetch_blank_points(pool, curve_id)
+    std_m <- if (!is.null(std) && nrow(std)) as.logical(std$masked) %in% TRUE else logical(0)
+    blk_m <- if (!is.null(blk) && nrow(blk)) as.logical(blk$masked) %in% TRUE else logical(0)
+    list(
+      std_masked_wells = if (any(std_m)) unique(as.character(std$well[std_m])) else character(0),
+      blk_masked_wells = if (any(blk_m)) unique(as.character(blk$well[blk_m])) else character(0),
+      std_reason = if (any(std_m)) stats::setNames(as.character(std$mask_reason[std_m]),
+                                                    as.character(std$well[std_m])) else character(0),
+      blk_reason = if (any(blk_m)) stats::setNames(as.character(blk$mask_reason[blk_m]),
+                                                    as.character(blk$well[blk_m])) else character(0))
+  }, error = function(e) empty)
 }
 
 
@@ -741,6 +805,108 @@ curve_ids_for_standards <- function(pool, standard_ids) {
 CALIB_CURVE_TABLES <- c("calib_fit", "calib_param", "calib_gate", "calib_grid",
                         "calib_samples", "calib_diagnostics", "calib_standards",
                         "calib_blanks", "calib_loo")
+
+# ---------------------------------------------------------------------------
+# RECALC FLAG -- deferred-recalculation tracking (batched masking).
+#
+# Historically every mask/unmask save immediately DELETEd the affected group's
+# calib_* rows, forcing a recompute before the curve could be viewed again.
+# Users masking across several plates in one sitting wanted to stage all of
+# that masking first and defer the (expensive) recompute to ONE later "Submit
+# fit job" -- without losing the ability to see the still-valid-until-proven-
+# otherwise existing fit in the meantime. calib_recalc_flag is the small,
+# curve-keyed table that makes that possible: a row means "this curve_id's
+# calib_* fits are STALE (masking changed the input set since they were
+# computed) but have deliberately NOT been deleted yet". It is consulted by
+# the Explore-fits viewer (red border + label, both methods) and by the
+# Compute-fits status table, and is cleared once that curve_id is included in
+# a job that reaches 'completed'.
+#
+# GRAIN: one row per curve_id (method-agnostic -- a mask invalidates every
+# method's fit for the curve, exactly like the immediate-delete path already
+# did). Requires the one-time DDL below; .ensure_recalc_flag_table() creates it
+# lazily (CREATE TABLE IF NOT EXISTS) so no separate migration step is needed,
+# provided the app's DB role has CREATE privilege on CALIB_SCHEMA:
+#
+#   CREATE TABLE IF NOT EXISTS <schema>.calib_recalc_flag (
+#     curve_id   BIGINT PRIMARY KEY,
+#     reason     TEXT NOT NULL,
+#     flagged_at TIMESTAMPTZ NOT NULL DEFAULT now()
+#   )
+CALIB_RECALC_TABLE <- "calib_recalc_flag"
+
+.ensure_recalc_flag_table <- function(pool) {
+  DBI::dbExecute(pool, sprintf(
+    "CREATE TABLE IF NOT EXISTS %s (
+       curve_id   BIGINT PRIMARY KEY,
+       reason     TEXT NOT NULL,
+       flagged_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )", .tbl(CALIB_RECALC_TABLE)))
+  invisible(NULL)
+}
+
+# Flag curve_ids as stale (masking change pending recalculation) WITHOUT
+# touching calib_*. Upsert: re-flagging an already-stale curve just refreshes
+# the reason/timestamp. Safe to call with an existing DBI connection `co`
+# (inside a transaction) or with the pool directly.
+mark_curves_stale <- function(pool, curve_ids, reason = "Masking changes pending recalculation") {
+  ids <- unique(as.integer(curve_ids[!is.na(curve_ids)]))
+  if (!length(ids)) return(invisible(0L))
+  .ensure_recalc_flag_table(pool)
+  idlist <- paste(ids, collapse = ",")
+  DBI::dbExecute(pool, sprintf(
+    "INSERT INTO %s (curve_id, reason, flagged_at)
+       SELECT unnest(ARRAY[%s]::bigint[]), $1, now()
+     ON CONFLICT (curve_id) DO UPDATE
+       SET reason = EXCLUDED.reason, flagged_at = EXCLUDED.flagged_at",
+    .tbl(CALIB_RECALC_TABLE), idlist), params = list(reason))
+}
+
+# Clear the stale flag for a set of curve_ids (a fresh fit has landed, or an
+# immediate mask/unmask delete has just invalidated + is about to be recomputed
+# right away). No-op, not an error, if none of them were flagged.
+clear_recalc_flags <- function(pool, curve_ids) {
+  ids <- unique(as.integer(curve_ids[!is.na(curve_ids)]))
+  if (!length(ids)) return(invisible(0L))
+  .ensure_recalc_flag_table(pool)
+  idlist <- paste(ids, collapse = ",")
+  DBI::dbExecute(pool, sprintf(
+    "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(CALIB_RECALC_TABLE), idlist))
+}
+
+# Which of the given curve_ids are currently flagged stale. NULL/empty curve_ids
+# -> integer(0) (no DB call). Used by the calc-status join and one-off checks.
+fetch_stale_curve_ids <- function(pool, curve_ids = NULL) {
+  tryCatch({
+    .ensure_recalc_flag_table(pool)
+    if (is.null(curve_ids) || !length(curve_ids)) {
+      df <- .calib_q(pool, sprintf("SELECT curve_id FROM %s", .tbl(CALIB_RECALC_TABLE)))
+    } else {
+      ids <- unique(as.integer(curve_ids[!is.na(curve_ids)]))
+      if (!length(ids)) return(integer(0))
+      df <- .calib_q(pool, sprintf(
+        "SELECT curve_id FROM %s WHERE curve_id IN (%s)",
+        .tbl(CALIB_RECALC_TABLE), paste(ids, collapse = ",")))
+    }
+    if (!nrow(df)) integer(0) else as.integer(df$curve_id)
+  }, error = function(e) integer(0))
+}
+
+# Single-curve detail for the Explore-fits banner: is it stale, and why/when.
+# Always returns a well-shaped list (stale = FALSE on any error / not flagged)
+# so callers never need their own tryCatch.
+curve_recalc_flag <- function(pool, curve_id) {
+  out <- list(stale = FALSE, reason = NA_character_, flagged_at = NA)
+  if (is.null(curve_id) || !length(curve_id) || is.na(curve_id)) return(out)
+  tryCatch({
+    .ensure_recalc_flag_table(pool)
+    df <- .calib_q(pool, sprintf(
+      "SELECT reason, flagged_at FROM %s WHERE curve_id = $1",
+      .tbl(CALIB_RECALC_TABLE)), params = list(as.integer(curve_id)))
+    if (nrow(df)) list(stale = TRUE, reason = df$reason[1], flagged_at = df$flagged_at[1])
+    else out
+  }, error = function(e) out)
+}
 
 # Row counts that WOULD be deleted for a set of curve_ids, per table (dry-run).
 calib_group_rowcounts <- function(pool, curve_ids) {
@@ -871,18 +1037,26 @@ diagnose_mask_resolution <- function(pool, curve_id, std_wells = character(0),
 }
 
 
-# MASKING write (TRANSACTIONAL). The ONE destructive call: set masked/mask_reason
-# on the resolved xmap rows, then delete ALL calib_* fits for the affected
-# multiplate group (a mask invalidates the joint fit). All-or-nothing: any error
-# rolls back so there is never a half-masked / half-deleted state.
+# MASKING write (TRANSACTIONAL). Sets masked/mask_reason on the resolved xmap
+# rows, then EITHER deletes ALL calib_* fits for the affected multiplate group
+# (a mask invalidates the joint fit; the historical, still-default behavior) OR,
+# when the user has opted to batch several masking edits before recomputing,
+# leaves the existing fits in place and marks the group STALE via
+# calib_recalc_flag instead (see mark_curves_stale). All-or-nothing: any error
+# rolls back so there is never a half-masked / half-deleted / half-flagged state.
 #
 # std_ids / blk_ids : integer xmap_standard_id / xmap_buffer_id (from the
 #   resolvers). group_curve_ids : every curve_id in the group (from
 #   curve_group_members). reason : required, written to every masked row.
-# Returns list(ok, masked_std, masked_blk, deleted, group_n) or stops on error.
-
+# delete_fits : TRUE (default) = immediate delete, exactly the original
+#   behavior. FALSE = defer: keep calib_* as-is and flag group_curve_ids stale
+#   instead, using `reason` as the recalc-flag reason too (masking already
+#   requires one, so it doubles as the "why is this stale" note).
+# Returns list(ok, masked_std, masked_blk, deleted, marked_stale, group_n) or
+# stops on error. `deleted` is all-zero when delete_fits = FALSE; `marked_stale`
+# is empty when delete_fits = TRUE.
 apply_mask <- function(pool, std_ids, blk_ids, group_curve_ids, reason,
-                       set_masked = TRUE) {
+                       set_masked = TRUE, delete_fits = TRUE) {
   reason <- trimws(if (is.null(reason)) "" else as.character(reason)[1])
   if (!nzchar(reason)) stop("apply_mask: a non-empty reason is required.")
   std_ids <- as.integer(std_ids[!is.na(std_ids)])
@@ -912,13 +1086,22 @@ apply_mask <- function(pool, std_ids, blk_ids, group_curve_ids, reason,
       }
       grplist <- paste(grp, collapse = ",")
       deleted <- stats::setNames(integer(length(CALIB_CURVE_TABLES)), CALIB_CURVE_TABLES)
-      for (tb in CALIB_CURVE_TABLES) {
-        deleted[[tb]] <- DBI::dbExecute(co, sprintf(
-          "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
+      if (isTRUE(delete_fits)) {
+        for (tb in CALIB_CURVE_TABLES) {
+          deleted[[tb]] <- DBI::dbExecute(co, sprintf(
+            "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
+        }
+        # An immediate delete needs no stale flag (there's nothing stale left to
+        # mark -- the group is simply empty until recomputed); clear any leftover
+        # flag from an earlier deferred edit on the same group.
+        clear_recalc_flags(co, grp)
+      } else {
+        mark_curves_stale(co, grp, reason = reason)
       }
       DBI::dbCommit(co)
       list(ok = TRUE, masked_std = n_std, masked_blk = n_blk,
-           deleted = deleted, group_n = length(grp))
+           deleted = deleted, marked_stale = if (isTRUE(delete_fits)) integer(0) else grp,
+           group_n = length(grp))
     }, error = function(e) {
       DBI::dbRollback(co)
       stop(sprintf("apply_mask failed (rolled back): %s", conditionMessage(e)), call. = FALSE)
@@ -939,19 +1122,23 @@ apply_mask <- function(pool, std_ids, blk_ids, group_curve_ids, reason,
 
 
 # UNMASKING write (TRANSACTIONAL). The inverse of apply_mask: clear masked and
-# mask_reason on the resolved xmap rows, then delete ALL calib_* fits for the
-# affected multiplate group. Unmasking changes the fit's input set, so the
-# existing joint fit is stale and must be recomputed -- same invalidation as a
-# mask (hence the same group delete). Differences vs apply_mask: no reason is
-# required (unmasking needs no justification), and mask_reason is CLEARED rather
-# than written. All-or-nothing: any error rolls back.
+# mask_reason on the resolved xmap rows, then EITHER delete ALL calib_* fits for
+# the affected multiplate group (default, original behavior) OR defer that
+# delete and flag the group STALE instead (see apply_mask's delete_fits doc --
+# same mechanism, same reason this exists: batching several plates' worth of
+# mask/unmask corrections before paying for one recompute). Differences vs
+# apply_mask: no reason is required to unmask, and mask_reason is CLEARED rather
+# than written; when deferred, the recalc-flag reason defaults to a fixed
+# unmask-specific note (there is no user-supplied reason to reuse). All-or-
+# nothing: any error rolls back.
 #
 # std_ids / blk_ids : integer xmap_standard_id / xmap_buffer_id (from the SAME
 #   resolvers used for masking -- they match on well regardless of mask state).
 #   group_curve_ids : every curve_id in every affected group (curve_group_members
 #   plus, for blanks, curve_ids_for_blanks).
-# Returns list(ok, unmasked_std, unmasked_blk, deleted, group_n) or stops.
-apply_unmask <- function(pool, std_ids, blk_ids, group_curve_ids) {
+# delete_fits : TRUE (default) = immediate delete. FALSE = defer (mark stale).
+# Returns list(ok, unmasked_std, unmasked_blk, deleted, marked_stale, group_n).
+apply_unmask <- function(pool, std_ids, blk_ids, group_curve_ids, delete_fits = TRUE) {
   std_ids <- as.integer(std_ids[!is.na(std_ids)])
   blk_ids <- as.integer(blk_ids[!is.na(blk_ids)])
   grp     <- as.integer(group_curve_ids[!is.na(group_curve_ids)])
@@ -978,13 +1165,19 @@ apply_unmask <- function(pool, std_ids, blk_ids, group_curve_ids) {
       }
       grplist <- paste(grp, collapse = ",")
       deleted <- stats::setNames(integer(length(CALIB_CURVE_TABLES)), CALIB_CURVE_TABLES)
-      for (tb in CALIB_CURVE_TABLES) {
-        deleted[[tb]] <- DBI::dbExecute(co, sprintf(
-          "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
+      if (isTRUE(delete_fits)) {
+        for (tb in CALIB_CURVE_TABLES) {
+          deleted[[tb]] <- DBI::dbExecute(co, sprintf(
+            "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
+        }
+        clear_recalc_flags(co, grp)
+      } else {
+        mark_curves_stale(co, grp, reason = "Unmasking changes pending recalculation")
       }
       DBI::dbCommit(co)
       list(ok = TRUE, unmasked_std = n_std, unmasked_blk = n_blk,
-           deleted = deleted, group_n = length(grp))
+           deleted = deleted, marked_stale = if (isTRUE(delete_fits)) integer(0) else grp,
+           group_n = length(grp))
     }, error = function(e) {
       DBI::dbRollback(co)
       stop(sprintf("apply_unmask failed (rolled back): %s", conditionMessage(e)), call. = FALSE)

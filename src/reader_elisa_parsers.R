@@ -672,7 +672,8 @@ generate_elisa_layout_template <- function(combined_data,
                                            description_status = NULL,
                                            delimiter = "_",
                                            element_order = NULL,
-                                           bcs_element_order = NULL) {
+                                           bcs_element_order = NULL,
+                                           rules = NULL) {
 
   cat("\n╔══════════════════════════════════════════════════════════╗\n")
   cat("║  GENERATING ELISA LAYOUT TEMPLATE                        ║\n")
@@ -743,7 +744,8 @@ generate_elisa_layout_template <- function(combined_data,
     description_status = description_status,
     delimiter = delimiter,
     element_order = element_order,
-    bcs_element_order = bcs_element_order
+    bcs_element_order = bcs_element_order,
+    rules = rules
   ),
     error = function(e) {
       cat("  ERROR in build_elisa_plates_map:", conditionMessage(e), "\n")
@@ -851,6 +853,11 @@ generate_elisa_layout_template <- function(combined_data,
     readme_df <- data.frame(Notes = readme_lines, stringsAsFactors = FALSE)
     addWorksheet(wb, "README_IMPORTANT")
     writeData(wb, "README_IMPORTANT", readme_df, startRow = 1, startCol = 1, colNames = FALSE)
+  }
+
+  if (!is.null(rules)) {
+    addWorksheet(wb, "parse_rule")
+    writeData(wb, "parse_rule", ai_ruleset_to_sheet(rules))
   }
 
   saveWorkbook(wb, output_file, overwrite = TRUE)
@@ -964,7 +971,8 @@ build_elisa_plate_id <- function(combined_data, header_list, study_accession,
 build_elisa_plates_map <- function(combined_data, plate_map, plate_id_df,
                                    study_accession, experiment_accession, project_id,
                                    description_status, delimiter, element_order,
-                                   bcs_element_order) {
+                                   bcs_element_order,
+                                   rules) {
 
   # Create one row per plate x well from the plate_map
   # Ensure plain data.frames throughout
@@ -989,18 +997,27 @@ build_elisa_plates_map <- function(combined_data, plate_map, plate_id_df,
 
   # Parse descriptions to extract subject_id, dilution, timepoint
   if ("Description" %in% names(unique_plate_wells)) {
-    parsed <- parse_elisa_descriptions(
-      descriptions = unique_plate_wells$Description,
-      stypes = unique_plate_wells$SType,
-      delimiter = delimiter,
-      element_order = element_order,
-      bcs_element_order = bcs_element_order,
-      use_defaults = !description_status$has_content || !description_status$has_sufficient_elements
-    )
-    unique_plate_wells$subject_id <- parsed$subject_id
-    unique_plate_wells$specimen_dilution_factor <- parsed$specimen_dilution_factor
+    if (!is.null(rules)) {
+      pd <- data.frame(Type        = as.character(unique_plate_wells$SType),
+                       Description = as.character(unique_plate_wells$Description),
+                       stringsAsFactors = FALSE)
+      parsed <- ai_parse_ruleset(pd, rules,
+                                 use_defaults = !description_status$has_content ||
+                                   !description_status$has_sufficient_elements)
+    } else {
+      parsed <- parse_elisa_descriptions(
+        descriptions = unique_plate_wells$Description,
+        stypes       = unique_plate_wells$SType,
+        delimiter    = delimiter,
+        element_order     = element_order,
+        bcs_element_order = bcs_element_order,
+        use_defaults = !description_status$has_content ||
+          !description_status$has_sufficient_elements)
+    }
+    unique_plate_wells$subject_id                    <- parsed$subject_id
+    unique_plate_wells$specimen_dilution_factor      <- parsed$specimen_dilution_factor
     unique_plate_wells$timepoint_tissue_abbreviation <- parsed$timepoint_tissue_abbreviation
-    unique_plate_wells$specimen_source <- parsed$specimen_source
+    unique_plate_wells$specimen_source               <- parsed$specimen_source
   } else {
     unique_plate_wells$subject_id <- "1"
     unique_plate_wells$specimen_dilution_factor <- 1

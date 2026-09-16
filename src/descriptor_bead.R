@@ -23,24 +23,15 @@ descriptor_bead <- list(
     bcs      = c("Source", "DilutionFactor")
   ),
   assay_controls = function(ns) {
+    # Description parse-rule controls (delimiter / element order / dilution mode)
+    # are now the per-type rule panel, mounted by the module from
+    # description_elements (assay_description_rule_ui.R). Only assay-specific
+    # controls remain here.
     tagList(
       numericInput(ns("n_wells"), "Number of wells per plate",
                    value = 96, min = 96, max = 384, step = 288),
       textInput(ns("feature_value"), "Feature (isotype), e.g. IgG",
-                value = "", placeholder = "\u226415 chars"),
-      textInput(ns("delimiter"), "Description delimiter", value = "_"),
-      tags$label(style = "font-weight:600;", "Include optional elements:"),
-      shinyWidgets::checkboxGroupButtons(
-        inputId = ns("optional_elements"), label = NULL,
-        choices = c("SampleGroupA", "SampleGroupB"),
-        selected = c("SampleGroupA", "SampleGroupB"),
-        status = "outline-primary",
-        checkIcon = list(yes = icon("check"), no = icon("times"))),
-      uiOutput(ns("x_element_order_ui")),
-      shinyjqui::orderInput(
-        inputId = ns("bcs_element_order"),
-        label = "Description Label: Blank/Standard/Control Elements (drag to reorder)",
-        items = c("Source", "DilutionFactor"), width = "100%", item_class = "info")
+                value = "", placeholder = "\u226415 chars")
     )
   }
 )

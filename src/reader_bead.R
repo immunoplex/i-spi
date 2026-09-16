@@ -67,6 +67,16 @@
                                  required_elements = 3),
     error = function(e) NULL)
 
+  # normalized (Type, Description[, Well]) frame for the per-type rule preview
+  # and the description-contract validator (uniform across assays; see
+  # assay_description_parse.R). Bead carries Type/Description on combined_plates.
+  descriptions <- tryCatch({
+    cp <- p$combined_plates
+    if (all(c("Type", "Description") %in% names(cp))) {
+      cp[, intersect(c("Well", "Type", "Description"), names(cp)), drop = FALSE]
+    } else NULL
+  }, error = function(e) NULL)
+
   list(
     preview        = p$combined_plates,
     plate_metadata = p$header_list,
@@ -74,7 +84,8 @@
       all_plates                   = p$combined_plates,
       header_list                  = p$header_list,
       assay_response_long_override = arl_override,
-      description_status           = desc
+      description_status           = desc,
+      descriptions                 = descriptions
     )
   )
 }
@@ -89,6 +100,10 @@
            c("PatientID", "TimePeriod", "DilutionFactor") else opts$element_order
   bcs <- if (is.null(opts$bcs_element_order))
            c("Source", "DilutionFactor") else opts$bcs_element_order
+  # per-type parse rules: use the approved ruleset from the module if present,
+  # else synthesise one from the legacy flat controls (backward compatible).
+  rules <- opts$rules %||%
+    ai_ruleset_from_legacy(opts$delimiter %||% "_", el, bcs, "auto")
   generate_layout_template(
     all_plates                   = seed$all_plates,
     study_accession              = opts$study,
@@ -102,7 +117,8 @@
     element_order                = el,
     bcs_element_order            = bcs,
     assay_response_long_override = seed$assay_response_long_override,
-    feature_value                = opts$feature_value
+    feature_value                = opts$feature_value,
+    rules                        = rules
   )
   out
 }
@@ -351,6 +367,24 @@
                              messages = paste("assay_response check failed:", conditionMessage(e)),
                              warnings = character()))
   extra[[length(extra) + 1L]] <- ai_bridge_result(ares, "assay_response_long")
+
+  # per-type Description contract (X: PatientID+TimePeriod+integer dilution;
+  # S/B/C: Source+integer dilution). Runs against the raw (Type, Description)
+  # frame from parse_raw; uses the approved ruleset if present, else the legacy
+  # flat controls. Guarded so it is a no-op when the frame is unavailable.
+  dd <- opts$descriptions %||% opts$raw_preview
+  if (!is.null(dd) && all(c("Type", "Description") %in% names(dd))) {
+    rules <- opts$rules %||% ai_ruleset_from_legacy(
+      opts$delimiter %||% "_",
+      opts$element_order     %||% c("PatientID", "TimePeriod", "DilutionFactor"),
+      opts$bcs_element_order %||% c("Source", "DilutionFactor"), "auto")
+    extra[[length(extra) + 1L]] <- tryCatch(
+      validate_plate_descriptions_ruleset(dd, rules, sheet = "plates_map"),
+      error = function(e) data.frame(
+        sheet = "plates_map", severity = "warning", column = NA_character_,
+        message = paste("description validation skipped:", conditionMessage(e)),
+        stringsAsFactors = FALSE))
+  }
 
   do.call(rbind, extra)
 }

@@ -30,6 +30,19 @@
 .elisa_parse_raw <- function(files, opts) {
   p <- process_elisa_files(files)
   desc <- opts$description_status
+  # normalized (Type, Description[, Well]) frame for the per-type rule preview
+  # and the description-contract validator. ELISA carries these on plate_map
+  # (SType + Description), NOT on combined_data.
+  descriptions <- tryCatch({
+    pm <- p$plate_map
+    if (!is.null(pm) && "Description" %in% names(pm)) {
+      data.frame(
+        Type        = if ("SType" %in% names(pm)) as.character(pm$SType) else NA_character_,
+        Description = as.character(pm$Description),
+        Well        = if ("Well" %in% names(pm)) as.character(pm$Well) else NA_character_,
+        stringsAsFactors = FALSE)
+    } else NULL
+  }, error = function(e) NULL)
   list(
     preview        = p$combined_data,
     plate_metadata = p$header_list,
@@ -37,7 +50,8 @@
       combined_data      = p$combined_data,
       plate_map          = p$plate_map,
       header_list        = p$header_list,
-      description_status = desc
+      description_status = desc,
+      descriptions       = descriptions
     )
   )
 }
@@ -51,6 +65,8 @@
            c("PatientID", "TimePeriod", "DilutionFactor") else opts$element_order
   bcs <- if (is.null(opts$bcs_element_order))
            c("Source", "DilutionFactor") else opts$bcs_element_order
+  rules <- opts$rules %||%
+    ai_ruleset_from_legacy(opts$delimiter %||% "_", el, bcs, "auto")
   generate_elisa_layout_template(
     combined_data        = seed$combined_data,
     plate_map            = seed$plate_map,
@@ -63,7 +79,8 @@
     description_status   = seed$description_status,
     delimiter            = opts$delimiter %||% "_",
     element_order        = el,
-    bcs_element_order    = bcs
+    bcs_element_order    = bcs,
+    rules                = rules
   )
   out
 }
@@ -149,6 +166,22 @@
     error = function(e) list(is_valid = FALSE, messages = conditionMessage(e)))
   dres <- .elisa_norm_result(dres)
   extra[[length(extra) + 1L]] <- ai_bridge_result(dres, "assay_response_long")
+
+  # per-type Description contract (see reader_bead.R for the rationale). ELISA's
+  # raw (Type, Description) frame comes from parse_raw via opts$descriptions.
+  dd <- opts$descriptions
+  if (!is.null(dd) && all(c("Type", "Description") %in% names(dd))) {
+    rules <- opts$rules %||% ai_ruleset_from_legacy(
+      opts$delimiter %||% "_",
+      opts$element_order     %||% c("PatientID", "TimePeriod", "DilutionFactor"),
+      opts$bcs_element_order %||% c("Source", "DilutionFactor"), "auto")
+    extra[[length(extra) + 1L]] <- tryCatch(
+      validate_plate_descriptions_ruleset(dd, rules, sheet = "plates_map"),
+      error = function(e) data.frame(
+        sheet = "plates_map", severity = "warning", column = NA_character_,
+        message = paste("description validation skipped:", conditionMessage(e)),
+        stringsAsFactors = FALSE))
+  }
 
   do.call(rbind, extra)
 }
