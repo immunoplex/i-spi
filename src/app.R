@@ -1176,6 +1176,7 @@ server <- function(input, output, session) {
       # compute_concentration, ...) to fetch_calib_*, then drop those too.
       # =====================================================================
       source("calib_data_access.R",  local = TRUE)
+      source("mask_ui_helpers.R",    local = TRUE)  # shared point-masking UI/logic (Explore fits + Plate Dilution Series)
       source("settings_cascade_access.R", local = TRUE)
       source("settings_cascade_ui.R", local = TRUE)
       source("settings_export_import_ui.R", local = TRUE)
@@ -1226,6 +1227,10 @@ server <- function(input, output, session) {
 
       # Plate Dilution Series QC tab (Analytes / Sources sub-tabs). Reads raw
       # standards for the current scope; re-reads on the shared reload_trigger.
+      # The Analytes sub-tab also supports masking/unmasking standard points
+      # (see plate_dilution_series_module.R); it shares calib_dirty with the
+      # Explore-fits / Compute-fits tabs so a mask/unmask/recompute on any of
+      # them is reflected on the others.
       output$plate_dilution_series_ui <- renderUI({
         plateDilutionSeriesUI("plate_dil_series")
       })
@@ -1243,7 +1248,8 @@ server <- function(input, output, session) {
       stdCurveCompareServer("sc_compare", pool = db_pool, scope = sc_scope,
                             selected_curve = selected_curve)
       plateDilutionSeriesServer("plate_dil_series", pool = db_pool,
-                                scope = calib_scope, reload_trigger = reload_trigger)
+                                scope = calib_scope, reload_trigger = reload_trigger,
+                                calib_dirty = calib_dirty)
       settingsCascadeServer("settings", pool = db_pool, scope = calib_scope)
       settingsExportImportServer("settings_io", pool = db_pool,
                                  scope = calib_scope, user = currentuser)
