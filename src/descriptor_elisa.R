@@ -1,37 +1,21 @@
 # =============================================================================
-# descriptor_elisa.R  —  11.10 Assay Import Refactor, Phase 3 (+ problem 2)
+# descriptor_elisa.R  --  ELISA descriptor for the generic assay import module
 # -----------------------------------------------------------------------------
-# ELISA descriptor for the generic assay import module. Same constrained/ordered
-# description controls as bead, minus the feature box (ELISA derives feature from
-# the data). Source AFTER assay_import_contract.R and reader_elisa.R.
+# Same reduction as descriptor_bead.R: the delimiter and element-order controls
+# are replaced by the description pre-processor, and "Number of wells per plate"
+# is derived by ai_infer_plate_size() from the wells present rather than typed
+# in. ELISA has no feature box either (the feature is read from the plate_map
+# sheet), so this descriptor carries no controls at all.
+#
+# assay_controls is omitted rather than set to a function returning NULL:
+# assay_import_ui() already tests for its presence.
+#
+# Source AFTER assay_import_contract.R and reader_elisa.R.
 # =============================================================================
 
 descriptor_elisa <- list(
   assay          = "elisa",
   label          = "ELISA",
   default_format = "xlsx",
-  description_elements = list(
-    base     = c("PatientID", "DilutionFactor", "TimePeriod"),
-    optional = c("SampleGroupA", "SampleGroupB"),
-    bcs      = c("Source", "DilutionFactor")
-  ),
-  assay_controls = function(ns) {
-    tagList(
-      numericInput(ns("n_wells"), "Number of wells per plate",
-                   value = 96, min = 96, max = 384, step = 288),
-      textInput(ns("delimiter"), "Description delimiter", value = "_"),
-      tags$label(style = "font-weight:600;", "Include optional elements:"),
-      shinyWidgets::checkboxGroupButtons(
-        inputId = ns("optional_elements"), label = NULL,
-        choices = c("SampleGroupA", "SampleGroupB"),
-        selected = c("SampleGroupA", "SampleGroupB"),
-        status = "outline-primary",
-        checkIcon = list(yes = icon("check"), no = icon("times"))),
-      uiOutput(ns("x_element_order_ui")),
-      shinyjqui::orderInput(
-        inputId = ns("bcs_element_order"),
-        label = "Description Label: Blank/Standard/Control Elements (drag to reorder)",
-        items = c("Source", "DilutionFactor"), width = "100%", item_class = "info")
-    )
-  }
+  preprocess     = TRUE    # mount the description pre-processor
 )

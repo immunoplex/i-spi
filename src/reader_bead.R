@@ -85,10 +85,11 @@
 .bead_make_template <- function(seed, opts) {
   out <- if (is.null(opts$output_file)) tempfile(fileext = ".xlsx") else opts$output_file
   desc <- seed$description_status
-  el  <- if (is.null(opts$element_order))
-           c("PatientID", "TimePeriod", "DilutionFactor") else opts$element_order
-  bcs <- if (is.null(opts$bcs_element_order))
-           c("Source", "DilutionFactor") else opts$bcs_element_order
+  # element_order / bcs_element_order are LEGACY: the flat descriptor controls
+  # that set them are gone. They are still passed so the legacy branch of
+  # build_plates_map() works for a reader that supplies no resolved_wells.
+  el  <- opts$element_order     %||% c("PatientID", "TimePeriod", "DilutionFactor")
+  bcs <- opts$bcs_element_order %||% c("Source", "DilutionFactor")
   generate_layout_template(
     all_plates                   = seed$all_plates,
     study_accession              = opts$study,
@@ -102,7 +103,12 @@
     element_order                = el,
     bcs_element_order            = bcs,
     assay_response_long_override = seed$assay_response_long_override,
-    feature_value                = opts$feature_value
+    feature_value                = opts$feature_value,
+    # Confirmed layout + bound description rules from the pre-processor. When
+    # present these are authoritative and generate_layout_template stops
+    # re-deriving identity from the raw Description.
+    resolved_wells               = opts$resolved_wells,
+    description_ruleset          = opts$description_ruleset
   )
   out
 }

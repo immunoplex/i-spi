@@ -247,14 +247,82 @@ parse_quantification <- function(raw, region_order, qend) {
 # ---- stage 5: per-well statistics blocks ---------------------------------- #
 F_OFF <- c(median = 16L, mean = 20L, trimmed_mean = 24L, cv = 28L, trimmed_cv = 32L,
            std_dev = 36L, trimmed_std_dev = 40L, std_err = 52L, trimmed_std_err = 56L)
-BLOCK_HEADER <- 396L; RECSZ <- 80L; STAT_LIMIT <- 0x364000L
+# BLOCK_HEADER is a FALLBACK ONLY. The distance from the analyte-name table to the
+# first stat record is not constant across files (observed 313/315/396/485/524 on
+# Bio-Plex Manager 5.0, 6.1 and 6.2 exports), so it is calibrated per file in
+# calibrate_header(). The old fixed 396L silently produced zero usable stat blocks
+# -- and therefore no bead counts -- on every file that did not happen to use it.
+BLOCK_HEADER <- 396L; RECSZ <- 80L
+HEADER_MIN <- 150L; HEADER_MAX <- 1400L
 
-parse_stat_blocks <- function(raw, names) {
+# A real stat record is finite, non-negative and satisfies CV == SD / Mean.
+# An empty bead region serialises as all zeros, which is also valid.
+record_is_sane <- function(r) {
+  if (any(!is.finite(r)) || any(r < 0)) return(FALSE)
+  if (r[["mean"]] <= 0) return(all(r == 0))
+  if (r[["median"]] > 1e6 || r[["mean"]] > 1e6) return(FALSE)
+  abs(r[["cv"]] - r[["std_dev"]] / r[["mean"]]) < 1e-4
+}
+
+read_record <- function(raw, base, N) {
+  if (base < 0L || base + RECSZ > N) return(NULL)
+  sapply(F_OFF, function(off) rd_f32(raw, base + off))
+}
+
+# Recover this file's header length by scoring every candidate against the medians
+# already decoded from the quantification section: the correct offset is the one at
+# which the most blocks reproduce a real well's median set.
+calibrate_header <- function(raw, starts, n_slots, medians) {
+  N <- length(raw)
+  targets <- lapply(medians, function(m) sort(unlist(m, use.names = FALSE)))
+  targets <- targets[vapply(targets, length, 1L) > 0L]
+  if (!length(targets) || !length(starts)) return(NULL)
+  all_med <- sort(unique(unlist(targets, use.names = FALSE)))
+  probe   <- starts[seq_len(min(8L, length(starts)))]
+  med_off <- F_OFF[["median"]]
+
+  # Pass 1 (cheap): an offset is only worth checking if the FIRST record's
+  # median is one this plate actually measured. One float read per offset.
+  cand <- integer(0)
+  for (off in HEADER_MIN:HEADER_MAX) {
+    hit <- FALSE
+    for (o in probe) {
+      base <- o + off + med_off
+      if (base < 0L || base + 4L > N) next
+      v <- rd_f32(raw, base)
+      if (is.finite(v) && v > 0 && any(abs(all_med - v) < 0.5)) { hit <- TRUE; break }
+    }
+    if (hit) cand <- c(cand, off)
+  }
+  if (!length(cand)) return(NULL)
+
+  # Pass 2 (full): score surviving offsets on the whole record set.
+  best_off <- NULL; best <- 0L
+  for (off in cand) {
+    score <- 0L
+    for (o in probe) {
+      got <- numeric(0)
+      for (i in 0:(n_slots - 1L)) {
+        r <- read_record(raw, o + off + i * RECSZ, N)
+        if (!is.null(r) && record_is_sane(r)) got <- c(got, r[["median"]])
+      }
+      if (!length(got)) next
+      hit <- any(vapply(targets, function(tg)
+        all(vapply(tg, function(t) any(abs(t - got) < 0.5), logical(1))), logical(1)))
+      if (hit) score <- score + 1L
+    }
+    if (score > best) { best <- score; best_off <- off }
+  }
+  if (best > 0L) best_off else NULL
+}
+
+
+parse_stat_blocks <- function(raw, names, medians = list()) {
   if (length(names) == 0) return(list())
   nb <- charToRaw(names[1]); fl <- length(nb); N <- length(raw)
-  hi <- min(STAT_LIMIT, N - fl)
+  hi <- N - fl                                        # scan the WHOLE file, not a fixed cap
   cand <- which(raw[1:hi] == as.raw(fl)) - 1L          # 0-based candidate block starts
-  blocks <- list()
+  blocks <- list(); starts <- integer(0)
   for (o in cand) {
     if (!all(raw[(o + 2L):(o + 1L + fl)] == nb)) next
     p <- o; okk <- TRUE                                 # verify full <len><name><i32> sequence
@@ -264,19 +332,78 @@ parse_stat_blocks <- function(raw, names) {
       else { okk <- FALSE; break }
     }
     if (!okk) next
-    tot <- rd_i32(raw, o + BLOCK_HEADER); gat <- rd_i32(raw, o + BLOCK_HEADER + 4L)
-    rgn <- rd_i32(raw, o + BLOCK_HEADER + 8L)
-    recs <- vector("list", 8L)
-    for (i in 0:7) {
-      base <- o + BLOCK_HEADER + i * RECSZ
+    starts <- c(starts, o)
+  }
+  n_slots <- length(names) + 2L                       # blocks carry spare region slots
+  header <- calibrate_header(raw, starts, n_slots, medians)
+  if (is.null(header)) header <- BLOCK_HEADER
+  for (o in starts) {
+    tot <- rd_i32(raw, o + header); gat <- rd_i32(raw, o + header + 4L)
+    rgn <- rd_i32(raw, o + header + 8L)
+    recs <- vector("list", n_slots)
+    for (i in 0:(n_slots - 1L)) {
+      base <- o + header + i * RECSZ
       if (base + RECSZ > N) break
       recs[[i + 1L]] <- sapply(F_OFF, function(off) rd_f32(raw, base + off))
     }
+    recs <- recs[!vapply(recs, is.null, logical(1))]
     blocks[[length(blocks) + 1L]] <- list(total = tot, gated = gat, region = rgn,
                                            medians = sapply(recs, function(r) r["median"]),
                                            records = recs)
   }
   blocks
+}
+
+# ---- plate geometry -------------------------------------------------------- #
+# Well indices in the binary are row-major over the PLATE'S OWN column count,
+# so the column count is not a constant: 96 wells is 8x12, 384 is 16x24.
+# Assuming 12 columns mislabels every well past index 95 on a 384 plate --
+# index 96 comes out "I1" where the real position is "E1" -- and, because the
+# same count bounded the sample-record validity test, it also DROPPED every
+# sample record addressing a well at or beyond the bound.
+RBX_PLATE_SIZES <- list(
+  `96`  = c(rows =  8L, cols = 12L),
+  `384` = c(rows = 16L, cols = 24L)
+)
+
+#' Rows and columns for a plate size. Anything over 96 is a 384 plate: a 96
+#' plate cannot yield more than 96 acquired wells or a well index above 95.
+rbx_geometry <- function(n_wells) {
+  n <- suppressWarnings(as.integer(n_wells)[1])
+  if (is.na(n) || n <= 96L) return(RBX_PLATE_SIZES[["96"]])
+  if (n <= 384L)            return(RBX_PLATE_SIZES[["384"]])
+  stop(sprintf("rbx_geometry(): %d wells is neither a 96- nor a 384-well plate", n),
+       call. = FALSE)
+}
+
+#' Decide the plate size from what was actually decoded.
+#' @param n_decoded    number of wells in the quantification section
+#' @param max_well_idx highest absolute well index seen in the sample records
+rbx_plate_size <- function(n_decoded, max_well_idx = -1L) {
+  if (!is.finite(max_well_idx)) max_well_idx <- -1L
+  if (n_decoded > 96L || max_well_idx >= 96L) 384L else 96L
+}
+
+#' Row-major well index (0-based) -> label, for a given column count.
+#' Vectorised; out-of-range rows fall back to "#<idx>" as before.
+rbx_well_label <- function(idx, cols) {
+  idx <- as.integer(idx)
+  r <- idx %/% as.integer(cols)
+  c <- idx %%  as.integer(cols)
+  out <- ifelse(!is.na(r) & r >= 0L & r < 26L,
+                paste0(LETTERS[r + 1L], c + 1L), paste0("#", idx))
+  out[is.na(idx)] <- NA_character_
+  out
+}
+
+#' Fill each sample record's well labels once the plate size is known.
+#' parse_samples() deliberately does not label: the plate size is not knowable
+#' until every sample record has been read.
+rbx_assign_well_labels <- function(samples, cols) {
+  lapply(samples, function(s) {
+    s$wells <- rbx_well_label(s$well_index, cols)
+    s
+  })
 }
 
 # ---- stage 6: sample -> well assignment ----------------------------------- #
@@ -285,7 +412,7 @@ sample_category <- function(label) {
   switch(p, B = "Blank", S = "Standard", C = "Control", X = "Unknown", "Unknown")
 }
 
-parse_samples <- function(raw, panel, plate = 96L) {
+parse_samples <- function(raw, panel, plate = 384L) {
   if (panel <= 0L) return(list())
   v <- int32_all(raw); N <- length(raw)
   back_string_end <- function(E) {                 # string whose last content byte is at E (0-based)
@@ -302,10 +429,6 @@ parse_samples <- function(raw, panel, plate = 96L) {
     }
     NULL
   }
-  rows <- "ABCDEFGHIJKLMNOP"
-  wlabel <- function(idx) { r <- idx %/% 12L; c <- idx %% 12L
-    if (r < nchar(rows)) paste0(substr(rows, r + 1L, r + 1L), c + 1L) else paste0("#", idx) }
-
   naoff <- which(v == panel) - 1L                  # 0-based offsets of the analyte-count field
   found <- list()
   for (na in naoff) {
@@ -320,9 +443,11 @@ parse_samples <- function(raw, panel, plate = 96L) {
       l <- back_string_end(d$start - 1L); if (is.null(l)) next
       lab <- l$text
       if (!grepl("^[A-Za-z]{1,4}[0-9]{0,4}$", lab)) next
+      # wells are labelled later by rbx_assign_well_labels(), once the plate
+      # size is known -- labelling here forced a 12-column guess.
       found[[length(found) + 1L]] <- list(label = lab, description = d$text,
         category = sample_category(lab), dilution = if (is.nan(dil)) NA else dil,
-        well_index = wells, wells = vapply(wells, wlabel, character(1)))
+        well_index = wells, wells = rep(NA_character_, length(wells)))
       break
     }
   }
@@ -339,12 +464,20 @@ parse_samples <- function(raw, panel, plate = 96L) {
 STAT_FIELDS <- c("median","mean","trimmed_mean","cv","trimmed_cv",
                  "std_dev","trimmed_std_dev","std_err","trimmed_std_err","bead_count")
 
-merge_all <- function(medians, stat_blocks, region_order, region_name, samples) {
-  rows <- "ABCDEFGHIJKLMNOP"; ncol <- 12L
+merge_all <- function(medians, stat_blocks, region_order, region_name, samples,
+                      cols = 12L) {
+  ncol <- as.integer(cols)
+  # The quantification section holds only the wells that were actually acquired,
+  # renumbered from 0, while sample records address absolute plate positions. On a
+  # run that does not start at A1 (or that skips wells) the two disagree and every
+  # well fails to match a sample, so recover the true plate position of each
+  # decoded well from the sample well indices.
+  plate_idx <- sort(unique(unlist(lapply(samples, `[[`, "well_index"), use.names = FALSE)))
+  if (length(plate_idx) != length(medians)) plate_idx <- seq_along(medians) - 1L
   wells <- vector("list", length(medians))
   for (i in seq_along(medians)) {
-    idx <- i - 1L; r <- idx %/% ncol; c <- idx %% ncol
-    label <- if (r < nchar(rows)) paste0(substr(rows, r + 1L, r + 1L), c + 1L) else NA
+    idx <- plate_idx[i]
+    label <- rbx_well_label(idx, ncol)
     med <- medians[[i]]
     analytes <- list()
     for (rg in names(med)) {
@@ -353,26 +486,33 @@ merge_all <- function(medians, stat_blocks, region_order, region_name, samples) 
       st$region <- as.integer(rg); st$median <- med[[rg]]
       analytes[[nm]] <- st
     }
-    wells[[i]] <- list(well = label, index = i, sample_label = NA, sample_description = NA,
+    wells[[i]] <- list(well = label, index = idx + 1L, sample_label = NA, sample_description = NA,
                        sample_category = NA, dilution = NA, total_events = NA,
                        gated_events = NA, region_events = NA, analytes = analytes)
   }
-  # well -> sample
-  for (s in samples) for (idx in s$well_index) if (idx >= 0 && idx < length(wells)) {
-    wells[[idx + 1L]]$sample_label <- s$label
-    wells[[idx + 1L]]$sample_description <- s$description
-    wells[[idx + 1L]]$sample_category <- s$category
-    wells[[idx + 1L]]$dilution <- s$dilution
+  # well -> sample, keyed on absolute plate position
+  pos <- match(plate_idx, plate_idx)                  # identity; kept for clarity
+  for (s in samples) for (idx in s$well_index) {
+    k <- match(idx, plate_idx)
+    if (!is.na(k)) {
+      wells[[k]]$sample_label <- s$label
+      wells[[k]]$sample_description <- s$description
+      wells[[k]]$sample_category <- s$category
+      wells[[k]]$dilution <- s$dilution
+    }
   }
   # align stat blocks to wells by median set, then fill stats
   used <- integer(0)
   for (blk in stat_blocks) {
-    recmeds <- blk$medians
+    recmeds <- unlist(blk$medians, use.names = FALSE)
+    recmeds <- recmeds[is.finite(recmeds)]            # short/empty slots yield NA
+    if (!length(recmeds)) next
     best <- -1L
     for (i in seq_along(wells)) {
       if (i %in% used) next
-      wm <- sapply(wells[[i]]$analytes, function(a) a$median)
-      if (length(wm) && all(sapply(wm, function(mv) any(abs(recmeds - mv) < 0.6)))) { best <- i; break }
+      wm <- unlist(lapply(wells[[i]]$analytes, function(a) a$median), use.names = FALSE)
+      wm <- wm[is.finite(wm)]
+      if (length(wm) && all(vapply(wm, function(mv) any(abs(recmeds - mv) < 0.6), logical(1)))) { best <- i; break }
     }
     if (best < 0) next
     used <- c(used, best)
@@ -407,13 +547,36 @@ parse_rbx <- function(path) {
   region_name  <- setNames(as.list(an$names), as.character(an$regions))
   qend <- if (an$def_off > 0L) an$def_off else min(length(raw), 0x44000L)
   medians <- parse_quantification(raw, region_order, qend)
-  plate   <- max(length(medians), 96L)
-  samples <- parse_samples(raw, length(an$names), plate)
-  blocks  <- parse_stat_blocks(raw, an$names)
-  wells   <- merge_all(medians, blocks, region_order, region_name, samples)
+
+  # Read sample records against the PERMISSIVE bound first. The old code bounded
+  # them by max(length(medians), 96), so on a 384 plate where only part of the
+  # plate was acquired every sample record addressing a higher well was silently
+  # discarded -- the wells then had no label, no category and no dilution.
+  samples <- parse_samples(raw, length(an$names), plate = 384L)
+
+  max_idx <- suppressWarnings(
+    max(unlist(lapply(samples, `[[`, "well_index"), use.names = FALSE)))
+  n_wells <- rbx_plate_size(length(medians), max_idx)
+  geo     <- rbx_geometry(n_wells)
+  cat(sprintf("  plate: %d wells (%d x %d), %d decoded, max well index %s\n",
+              n_wells, geo[["rows"]], geo[["cols"]], length(medians),
+              if (is.finite(max_idx)) as.character(max_idx) else "none"))
+
+  # Now that the geometry is known, drop any record outside the real plate and
+  # label the rest.
+  samples <- Filter(function(s) all(s$well_index >= 0L & s$well_index < n_wells),
+                    samples)
+  samples <- rbx_assign_well_labels(samples, geo[["cols"]])
+
+  blocks  <- parse_stat_blocks(raw, an$names, medians)
+  wells   <- merge_all(medians, blocks, region_order, region_name, samples,
+                       cols = geo[["cols"]])
   list(format = list(magic = hdr$magic, version = hdr$version),
        panel = list(name = hdr$panel,
                     analytes = Map(function(n, r) list(name = n, region = r), an$names, an$regions)),
+       # geometry travels with the document so the importer does not have to
+       # guess the plate size from a UI field
+       geometry = list(n_wells = n_wells, rows = geo[["rows"]], cols = geo[["cols"]]),
        metadata = meta, samples = samples, wells = wells)
 }
 

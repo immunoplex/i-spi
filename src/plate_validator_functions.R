@@ -1,9 +1,54 @@
+# =============================================================================
+# Plate file identity
+# -----------------------------------------------------------------------------
+# WHAT WENT WRONG HERE
+# looks_like_file_path() demanded a directory separator, and
+# validate_batch_plate_metadata() applied it to plate_metadata$file_name. But
+# file_name comes from Shiny's fileInput as upload_df$name, which is the BASE
+# NAME only -- browsers do not send the client's directory, by design. So a
+# perfectly good upload failed with
+#   INVALID FILE PATHS: ... - 20221003_AGA_1_2000_IgG1_Plate_1.csv
+#   File paths must include directory separators
+# and the demand was impossible to satisfy through the UI: there is no way to
+# make the browser reveal the path, and typing one into the template would then
+# break the join below, which matches on the base name.
+#
+# The check that is actually wanted is "does this name identify a plate file",
+# i.e. non-empty with a file extension. A separator is not required, and is
+# tolerated by normalising it away.
+#
+# looks_like_file_path() is kept -- for testing an actual path -- but is no
+# longer used to validate an uploaded file's name.
+# =============================================================================
+
+#' TRUE when x looks like a real filesystem path (separator or drive letter).
+#' NOT for validating an uploaded file's name -- see looks_like_plate_filename().
 looks_like_file_path <- function(x) {
-  # TRUE if:
-  # - contains a directory separator ("/" for Unix/Mac, "\\" for Windows), OR
-  # - starts with a drive letter on Windows (e.g. "C:/"), AND
-  # - ends with a file extension (e.g. ".csv", ".txt")
-  (grepl("[/\\\\]", x) | grepl("^[A-Za-z]:[\\\\/]", x)) ##&& grepl("\\.[A-Za-z0-9]+$", x)
+  (grepl("[/\\\\]", x) | grepl("^[A-Za-z]:[\\\\/]", x))
+}
+
+#' Reduce any path to the bare file name, for joining on file identity.
+#'
+#' Handles Windows separators, which basename() does not on a Unix host, so a
+#' user who pasted "C:\\data\\plate_1.csv" into the template still matches the
+#' uploaded "plate_1.csv".
+plate_file_basename <- function(x) {
+  s <- trimws(as.character(x))
+  s <- sub("^[A-Za-z]:", "", s)
+  s <- gsub("\\\\", "/", s)
+  s <- sub("/+$", "", s)
+  out <- sub("^.*/", "", s)
+  out[is.na(x)] <- NA_character_
+  out
+}
+
+#' TRUE when x identifies a plate file: non-empty, with a file extension.
+#'
+#' A directory separator is neither required nor rejected -- it is stripped
+#' first, because every join downstream is on the base name.
+looks_like_plate_filename <- function(x) {
+  b <- plate_file_basename(x)
+  !is.na(b) & nzchar(b) & grepl("\\.[A-Za-z0-9]{1,6}$", b)
 }
 
 # Validate the RP1 Volts and RP1 Target
@@ -383,8 +428,12 @@ validate_batch_plate_metadata <- function(plate_metadata, plate_id_data) {
 
   message_list <- c()
 
-  # Check if uploaded files are in layout
-  check_uploaded_file_in_layout <- plate_metadata$file_name %in% plate_id_data$plate_filename
+  # Check if uploaded files are in layout. Compare BASE NAMES: the uploaded
+  # name never carries a directory, so a template row that does (pasted from a
+  # file manager) used to read as a missing file.
+  check_uploaded_file_in_layout <-
+    plate_file_basename(plate_metadata$file_name) %in%
+    plate_file_basename(plate_id_data$plate_filename)
   if (!all(check_uploaded_file_in_layout)) {
     missing_files <- plate_metadata$file_name[!check_uploaded_file_in_layout]
     message_list <- c(message_list, paste0(
@@ -415,14 +464,19 @@ validate_batch_plate_metadata <- function(plate_metadata, plate_id_data) {
     ))
   }
 
-  # check to see if all files pass file Path validation
-  pass_file_path <- all(looks_like_file_path(plate_metadata$file_name))
-  if (!pass_file_path) {
-    invalid_paths <- plate_metadata$file_name[!looks_like_file_path(plate_metadata$file_name)]
+  # Does each row name a plate file? A base name is correct and expected here;
+  # requiring a directory separator rejected every browser upload (see the note
+  # on looks_like_plate_filename).
+  ok_names <- looks_like_plate_filename(plate_metadata$file_name)
+  if (!all(ok_names)) {
+    bad <- plate_metadata$file_name[!ok_names]
     message_list <- c(message_list, paste0(
-      "INVALID FILE PATHS: The following file paths are incorrectly formatted:\n",
-      paste("  - ", invalid_paths, collapse = "\n"),
-      "\n\nFile paths must include directory separators (/ or \\) and be complete paths to the files."
+      "INVALID FILE NAMES: The following plate file names are not usable:\n",
+      paste("  - ", ifelse(is.na(bad) | !nzchar(trimws(bad)), "(blank)", bad),
+            collapse = "\n"),
+      "\n\nEach row of the 'plate_id' sheet needs the plate file's name including",
+      " its extension, e.g. my_plate_1.csv. A full directory path is allowed but",
+      " not required."
     ))
   }
 
@@ -1752,10 +1806,13 @@ plate_validation <- function(plate_metadata, plate_data, blank_keyword) {
   #   message_list <- c(message_list, pass_required_metadata_variables[[2]])
   # }
 
-  # check to see if it passes file Path
-  pass_file_path <- looks_like_file_path(plate_metadata$file_name)
-  if (!pass_file_path) {
-     message_list <- c(message_list, "Ensure the file path has foward or backward slashes based on Mac or Windows")
+  # Same fix as in validate_batch_plate_metadata(): an uploaded file's name is
+  # a base name, so require a usable file name rather than a path.
+  if (!all(looks_like_plate_filename(plate_metadata$file_name))) {
+     message_list <- c(message_list, paste(
+       "The plate file name is not usable:",
+       paste(plate_metadata$file_name, collapse = ", "),
+       "- it needs the file's name including its extension, e.g. my_plate_1.csv."))
   }
 
   pass_rp1_pmt_volts <- check_rp1_numeric(plate_metadata$rp1_pmt_volts)

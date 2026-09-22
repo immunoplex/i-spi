@@ -352,7 +352,9 @@ generate_layout_template <- function(all_plates,
                                         element_order = NULL,
                                         bcs_element_order = NULL,
                                         assay_response_long_override = NULL,
-                                        feature_value = NULL) {
+                                        feature_value = NULL,
+                                        resolved_wells = NULL,
+                                        description_ruleset = NULL) {
 
   wb <- createWorkbook()
   bold_style <- createStyle(textDecoration = "bold")
@@ -423,7 +425,8 @@ generate_layout_template <- function(all_plates,
     delimiter = description_delimiter,
     element_order = XElementOrder,
     bcs_element_order = BCSElementOrder,
-    feature_value = input_feature_value
+    feature_value = input_feature_value,
+    resolved = resolved_wells
   )
 
   # ==========================================================================
@@ -434,7 +437,8 @@ generate_layout_template <- function(all_plates,
     study_accession = study_accession,
     description_status = description_status,
     delimiter = description_delimiter,
-    element_order = XElementOrder
+    element_order = XElementOrder,
+    resolved = !is.null(resolved_wells)
   )
 
   # ==========================================================================
@@ -518,6 +522,14 @@ generate_layout_template <- function(all_plates,
     assay_response_long = assay_response_long,  # <-- NEW
     cell_valid = cell_valid_table
   )
+
+  # Audit: record the approved description ruleset next to the data it produced,
+  # so a re-uploaded template can be re-validated against the rules that
+  # generated it rather than whatever the UI happens to hold later.
+  if (!is.null(description_ruleset) && length(description_ruleset) &&
+      exists("ai_shape_ruleset_to_sheet", mode = "function")) {
+    workbook$parse_rule <- ai_shape_ruleset_to_sheet(description_ruleset)
+  }
 
   write_workbook_sheets_v2(wb, workbook, bold_style, italic_style)
 
@@ -731,7 +743,8 @@ build_antigen_df <- function(all_plates, study_accession, experiment_accession, 
 build_plates_map <- function(all_plates, plate_id, header_list, study_accession,
                              experiment_accession, n_wells, project_id,
                              description_status, delimiter, element_order, bcs_element_order,
-                             feature_value = NA_character_) {
+                             feature_value = NA_character_,
+                             resolved = NULL) {
 
   # Use plateid (unique run identifier) for expansion, NOT plate_number
   # This ensures each unique plate run gets its own set of wells
@@ -797,6 +810,33 @@ build_plates_map <- function(all_plates, plate_id, header_list, study_accession,
   )
 
   cat("  After joining in_plates: ", nrow(plate_well_map), " rows\n", sep="")
+
+  # ==========================================================================
+  # Identity: resolved by the pre-processor, or (legacy) re-derived here
+  # --------------------------------------------------------------------------
+  # When `resolved` is supplied, the user has already confirmed the specimen
+  # type of every well on a plate grid and bound each description shape to its
+  # identity components. That is authoritative: re-parsing the raw Description
+  # here would silently discard those decisions, and when the two paths
+  # disagreed the workbook's answer won.
+  #
+  # The legacy branch below is untouched, so a reader that does not yet pass
+  # `resolved` behaves exactly as it did.
+  # ==========================================================================
+  if (!is.null(resolved) && nrow(resolved)) {
+    cat("\n  -> Applying confirmed layout + description rules (",
+        nrow(resolved), " resolved well(s))\n", sep = "")
+    plate_well_map <- ai_merge_resolved(plate_well_map, resolved,
+                                        plate_col = "plateid", well_col = "well",
+                                        keep_description = TRUE)
+    plate_well_map$feature    <- feature_value
+    plate_well_map$project_id <- project_id
+    n_empty <- sum(!nzchar(plate_well_map$specimen_type))
+    cat("  -> ", nrow(plate_well_map) - n_empty, " occupied well(s), ",
+        n_empty, " empty\n", sep = "")
+    cat("=========================\n\n")
+    return(plate_well_map)
+  }
 
   # Set specimen_type
   plate_well_map$specimen_type <- case_when(
@@ -910,7 +950,7 @@ build_header_df_for_merge <- function(header_list) {
 
 #' Build subject_groups data frame
 build_subject_groups <- function(plate_well_map, study_accession, description_status,
-                                 delimiter, element_order) {
+                                 delimiter, element_order, resolved = FALSE) {
 
   # Pre-fill NA subject_ids
   sample_mask <- plate_well_map$specimen_type == "X"
@@ -946,7 +986,13 @@ build_subject_groups <- function(plate_well_map, study_accession, description_st
   # since we only need groupa/groupb
   use_defaults <- !description_status$has_content || !description_status$has_sufficient_elements
 
-  if (use_defaults) {
+  # The pre-processor already bound SampleGroupA/B per description shape, so the
+  # values are already on plate_well_map. Re-splitting the string here would
+  # ignore that binding and reintroduce the positional assumption it replaced.
+  if (isTRUE(resolved) && all(c("groupa", "groupb") %in% names(plate_well_map))) {
+    subject_id_dat$groupa <- plate_well_map$groupa[sample_mask]
+    subject_id_dat$groupb <- plate_well_map$groupb[sample_mask]
+  } else if (use_defaults) {
     subject_id_dat$groupa <- sapply(subject_id_dat$Description, function(desc) {
       parsed <- parse_description_with_defaults(
         description = desc,

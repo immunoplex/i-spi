@@ -672,7 +672,9 @@ generate_elisa_layout_template <- function(combined_data,
                                            description_status = NULL,
                                            delimiter = "_",
                                            element_order = NULL,
-                                           bcs_element_order = NULL) {
+                                           bcs_element_order = NULL,
+                                           resolved_wells = NULL,
+                                           description_ruleset = NULL) {
 
   cat("\n╔══════════════════════════════════════════════════════════╗\n")
   cat("║  GENERATING ELISA LAYOUT TEMPLATE                        ║\n")
@@ -743,7 +745,8 @@ generate_elisa_layout_template <- function(combined_data,
     description_status = description_status,
     delimiter = delimiter,
     element_order = element_order,
-    bcs_element_order = bcs_element_order
+    bcs_element_order = bcs_element_order,
+    resolved = resolved_wells
   ),
     error = function(e) {
       cat("  ERROR in build_elisa_plates_map:", conditionMessage(e), "\n")
@@ -757,6 +760,7 @@ generate_elisa_layout_template <- function(combined_data,
     plates_map = plates_map_df,
     study_accession = study_accession,
     description_status = description_status,
+    resolved = !is.null(resolved_wells),
     delimiter = delimiter,
     element_order = element_order
   )
@@ -817,6 +821,11 @@ generate_elisa_layout_template <- function(combined_data,
   )
 
   # ---- Write all sheets ----
+  # Audit: stamp the approved description ruleset into the workbook.
+  parse_rule_df <- if (!is.null(description_ruleset) && length(description_ruleset) &&
+                       exists("ai_shape_ruleset_to_sheet", mode = "function"))
+    ai_shape_ruleset_to_sheet(description_ruleset) else NULL
+
   workbook <- list(
     plate_id = plate_id_df,
     subject_groups = subject_groups_df,
@@ -826,6 +835,7 @@ generate_elisa_layout_template <- function(combined_data,
     assay_response_long = assay_response_long_df,
     cell_valid = cell_valid_table
   )
+  if (!is.null(parse_rule_df)) workbook$parse_rule <- parse_rule_df
 
   for (sheet_name in names(workbook)) {
     addWorksheet(wb, sheet_name)
@@ -964,7 +974,7 @@ build_elisa_plate_id <- function(combined_data, header_list, study_accession,
 build_elisa_plates_map <- function(combined_data, plate_map, plate_id_df,
                                    study_accession, experiment_accession, project_id,
                                    description_status, delimiter, element_order,
-                                   bcs_element_order) {
+                                   bcs_element_order, resolved = NULL) {
 
   # Create one row per plate x well from the plate_map
   # Ensure plain data.frames throughout
@@ -987,8 +997,22 @@ build_elisa_plates_map <- function(combined_data, plate_map, plate_id_df,
   # Map specimen_type from SType
   unique_plate_wells$specimen_type <- unique_plate_wells$SType
 
-  # Parse descriptions to extract subject_id, dilution, timepoint
-  if ("Description" %in% names(unique_plate_wells)) {
+  # ==========================================================================
+  # Identity: resolved by the pre-processor, or (legacy) re-parsed here.
+  # See the same branch in build_plates_map() -- when the user has confirmed
+  # the layout and bound the description shapes, re-parsing would discard it.
+  # ==========================================================================
+  if (!is.null(resolved) && nrow(resolved)) {
+    cat("    -> Applying confirmed layout + description rules\n")
+    unique_plate_wells <- ai_merge_resolved(
+      unique_plate_wells, resolved,
+      plate_col = "plateid", well_col = "well", keep_description = FALSE)
+    # ELISA's specimen_type came from SType; the grid may have changed it, so
+    # keep the resolved value and mirror it back onto SType for the sheet.
+    unique_plate_wells$SType <- ifelse(
+      nzchar(unique_plate_wells$specimen_type),
+      unique_plate_wells$specimen_type, NA_character_)
+  } else if ("Description" %in% names(unique_plate_wells)) {
     parsed <- parse_elisa_descriptions(
       descriptions = unique_plate_wells$Description,
       stypes = unique_plate_wells$SType,
@@ -1164,7 +1188,8 @@ parse_elisa_descriptions <- function(descriptions, stypes, delimiter = "_",
 
 #' Build subject_groups sheet for ELISA
 build_elisa_subject_groups <- function(plates_map, study_accession,
-                                       description_status, delimiter, element_order) {
+                                       description_status, delimiter, element_order,
+                                       resolved = FALSE) {
 
   sample_rows <- plates_map[plates_map$specimen_type == "X", , drop = FALSE]
 
@@ -1185,6 +1210,19 @@ build_elisa_subject_groups <- function(plates_map, study_accession,
   sg$study_name <- study_accession
   sg$groupa <- "Unknown"
   sg$groupb <- "Unknown"
+
+  # ELISA never derived groups: every subject was written out as "Unknown".
+  # When the pre-processor has bound SampleGroupA/B the real values are on the
+  # plates_map, so carry them over -- first non-empty value per subject.
+  if (isTRUE(resolved) && all(c("groupa", "groupb") %in% names(sample_rows))) {
+    pick <- function(col, sid) {
+      v <- sample_rows[[col]][sample_rows$subject_id == sid]
+      v <- v[!is.na(v) & nzchar(v)]
+      if (length(v)) v[1] else "Unknown"
+    }
+    sg$groupa <- vapply(sg$subject_id, pick, character(1), col = "groupa")
+    sg$groupb <- vapply(sg$subject_id, pick, character(1), col = "groupb")
+  }
   sg
 }
 
