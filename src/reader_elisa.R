@@ -47,10 +47,9 @@
 
 .elisa_make_template <- function(seed, opts) {
   out <- if (is.null(opts$output_file)) tempfile(fileext = ".xlsx") else opts$output_file
-  el  <- if (is.null(opts$element_order))
-           c("PatientID", "TimePeriod", "DilutionFactor") else opts$element_order
-  bcs <- if (is.null(opts$bcs_element_order))
-           c("Source", "DilutionFactor") else opts$bcs_element_order
+  # legacy fallbacks only -- see reader_bead.R
+  el  <- opts$element_order     %||% c("PatientID", "TimePeriod", "DilutionFactor")
+  bcs <- opts$bcs_element_order %||% c("Source", "DilutionFactor")
   generate_elisa_layout_template(
     combined_data        = seed$combined_data,
     plate_map            = seed$plate_map,
@@ -63,7 +62,9 @@
     description_status   = seed$description_status,
     delimiter            = opts$delimiter %||% "_",
     element_order        = el,
-    bcs_element_order    = bcs
+    bcs_element_order    = bcs,
+    resolved_wells       = opts$resolved_wells,
+    description_ruleset  = opts$description_ruleset
   )
   out
 }

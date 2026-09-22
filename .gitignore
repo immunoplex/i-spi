@@ -35,4 +35,7 @@ shiny-server.sock
 .DS_Store
 i-spi-add-fcuploader.Rproj
 /dead
-/simulate
+/simulatesrc/assay_description_rule_ui.R
+src/phase4_timing_summary (1).md
+dev/for_scot.zip
+/dev

@@ -27,32 +27,30 @@
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 
-# ---- .rbx description builder (order-aware) ---------------------------------
-# .rbx_dil_from() / .rbx_strip_ratio() are defined once in reader_bead.R (sourced
-# before this file) — no duplicate here. This builder places the parsed dilution
-# and the (ratio-stripped, <=15) name into the correct slots of the user's
-# element order, so build_plates_map extracts them regardless of how the
-# description elements are ordered. For X wells the name goes to the PatientID
-# slot; for B/S/C wells to the Source slot; the dilution to the DilutionFactor
-# slot; all other slots (TimePeriod, SampleGroupA/B, ...) are left empty.
-.rbx_build_description <- function(type_first, name, dil_chr, x_order, bcs_order, delim) {
-  n <- length(name)
-  out <- character(n)
-  for (i in seq_len(n)) {
-    ord <- if (!is.na(type_first[i]) && type_first[i] == "X") x_order else bcs_order
-    parts <- vapply(ord, function(el) {
-      if (el %in% c("PatientID", "Source")) name[i]
-      else if (el == "DilutionFactor")      dil_chr[i]
-      else ""
-    }, character(1))
-    while (length(parts) > 1L && !nzchar(parts[length(parts)]))
-      parts <- parts[-length(parts)]
-    out[i] <- paste(parts, collapse = delim)
-  }
-  out
-}
-
-
+# ---- Description: emit the .rbx text verbatim -------------------------------
+# .rbx_build_description() USED TO LIVE HERE. It extracted the "1:N" ratio out of
+# the binary's description, stripped the ratio from the label, truncated the
+# label to 15 chars, and rebuilt a delimiter-joined string in the user's element
+# order -- purely so build_plates_map() could re-parse it positionally.
+#
+# That round trip is now not just redundant but wrong. It depended on
+# opts$delimiter / opts$element_order / opts$bcs_element_order, which came from
+# the flat descriptor controls that the description pre-processor replaced. With
+# those controls gone the arguments fall back to defaults nobody chose, and a
+# real sample description "80 V1" (space-delimited) gets rebuilt as the single
+# token "80 V1" joined under "_" -- so PatientID swallows the timepoint and the
+# shape reads as incomplete.
+#
+# So the reader now reports what the file says and nothing more: the raw
+# sample_description, ratio intact. The pre-processor classifies "1:2952450" as
+# a `ratio` token and binds it to DilutionFactor directly, and binds the
+# remaining token span to Source. .rbx_dil_from()/.rbx_strip_ratio() stay in
+# reader_bead.R for the stage-2 template path, where they now find no ratio to
+# strip and correctly no-op.
+#
+# The 15-char patientid limit is enforced where it belongs -- on the RESOLVED
+# subject_id, by validate_layout_sheets() against AI_COL_LIMITS -- instead of by
+# truncating the source text before anyone has said which part is the subject.
 # ---- Type code from the .rbx sample label / category ------------------------
 # Empty wells (no sample assigned) -> NA specimen_type so the assembler drops
 # them. Standards/Controls keep their number (S1, C1, ...); Blank -> B; else X.
@@ -71,9 +69,7 @@
 
 
 # ---- Per-batch reader (mirrors process_xponent_files) -----------------------
-process_rbx_files <- function(upload_df, delimiter = "_",
-                              x_order = c("PatientID", "DilutionFactor", "TimePeriod"),
-                              bcs_order = c("Source", "DilutionFactor")) {
+process_rbx_files <- function(upload_df) {
   cat("Processing", nrow(upload_df), ".rbx file(s)...\n")
 
   results <- lapply(seq_len(nrow(upload_df)), function(i) {
@@ -98,24 +94,14 @@ process_rbx_files <- function(upload_df, delimiter = "_",
                             "sample_category", "dilution"), drop = FALSE])
       wi$Type <- .rbx_type_from(wi$sample_label, wi$sample_category)
 
-      # Build the Description so the layout template fills specimen_dilution_factor
-      # at GENERATION (not just at commit). The .rbx embeds the real dilution as a
-      # "1:N" ratio in the description (standards: "Inhouse Ref 1:2952450";
-      # diluted samples: "QC1 1:2500"). We split it into a delimiter-joined string
-      # with the ratio-stripped, <=15 name in the PatientID/Source slot and N in
-      # the DilutionFactor slot, per the user's element order (order-aware).
-      # build_plates_map then parses name -> subject_id/source and N ->
-      # specimen_dilution_factor, so the downloaded template AND the commit carry
-      # the correct standard/sample dilutions with no manual editing, and
-      # subject_id never exceeds 15.
+      # Description: the binary's own text, verbatim. Standards read
+      # "Inhouse Ref 1:2952450", controls "QC1 (Low) 1:2500", samples "80 V1".
+      # The pre-processor reads the ratio and the source span off these directly
+      # (see the note above). Fall back to the sample label when the file
+      # carries no description for a well.
       desc <- as.character(wi$sample_description)
-      desc <- ifelse(!is.na(desc) & nzchar(trimws(desc)), desc, as.character(wi$sample_label))
-      dil  <- .rbx_dil_from(desc)                          # numeric N, or NA
-      name <- .rbx_strip_ratio(desc)                       # label without the ratio
-      name <- substr(ifelse(is.na(name), "", name), 1, 15) # patientid limit
-      dil_chr <- ifelse(is.na(dil), "", format(dil, scientific = FALSE, trim = TRUE))
-      wi$Description <- .rbx_build_description(
-        substr(as.character(wi$Type), 1, 1), name, dil_chr, x_order, bcs_order, delimiter)
+      wi$Description <- ifelse(!is.na(desc) & nzchar(trimws(desc)),
+                               trimws(desc), as.character(wi$sample_label))
 
       # wide plate: one column per analyte with median (FI)
       wide <- tidyr::pivot_wider(
@@ -174,7 +160,13 @@ process_rbx_files <- function(upload_df, delimiter = "_",
         stringsAsFactors = FALSE)
 
       list(plate = plate, header = header, assay_long = assay_long,
-           dil = dil, file_name = fn)
+           dil = dil, file_name = fn,
+           # The binary knows its own plate size; parse_rbx() reports it as
+           # geometry$n_wells (96 = 8x12, 384 = 16x24). Carrying it out means the
+           # importer never has to take the plate size from a UI field that the
+           # user may have left at the default -- a 384 file read as 96 would
+           # drop 288 wells out of the inventory without saying so.
+           n_wells = if (!is.null(doc$geometry$n_wells)) doc$geometry$n_wells else 96L)
     }, error = function(e) {
       cat("    x ERROR:", conditionMessage(e), "\n")
       NULL
@@ -189,6 +181,9 @@ process_rbx_files <- function(upload_df, delimiter = "_",
   plate_list          <- lapply(results, `[[`, "plate")
   assay_long_list     <- lapply(results, `[[`, "assay_long")
   dil_list            <- lapply(results, `[[`, "dil")
+  n_wells             <- max(unlist(lapply(results, `[[`, "n_wells")), 96L)
+  if (length(unique(unlist(lapply(results, `[[`, "n_wells")))) > 1L)
+    cat("  ! mixed plate sizes in this batch; using the largest:", n_wells, "\n")
 
   header_list <- assign_plate_numbers(header_list)
 
@@ -209,31 +204,31 @@ process_rbx_files <- function(upload_df, delimiter = "_",
 
   list(combined_plates = combined_plates, header_list = header_list,
        plate_list = plate_list, assay_response_long = assay_response_long,
-       dilution_map = dilution_map)
+       dilution_map = dilution_map, n_wells = n_wells)
 }
 
 
 # ---- Stage 1: raw -> preview + template seed (xPONENT/override shape) --------
 .rbx_parse_raw <- function(files, opts) {
-  p <- process_rbx_files(
-    files,
-    delimiter = if (is.null(opts$delimiter)) "_" else opts$delimiter,
-    x_order   = if (is.null(opts$element_order))
-                  c("PatientID", "DilutionFactor", "TimePeriod") else opts$element_order,
-    bcs_order = if (is.null(opts$bcs_element_order))
-                  c("Source", "DilutionFactor") else opts$bcs_element_order)
+  p <- process_rbx_files(files)
+  # description_status only feeds the LEGACY branch of build_plates_map (the one
+  # taken when no resolved_wells is supplied); "_" is a placeholder there, not a
+  # delimiter choice.
   desc <- tryCatch(
-    check_and_report_description(p$combined_plates, opts$delimiter %||% "_",
-                                 required_elements = 3),
+    check_and_report_description(p$combined_plates, "_", required_elements = 3),
     error = function(e) NULL)
   list(
     preview        = p$combined_plates,
     plate_metadata = p$header_list,
+    # detected from the file, not from the UI: the module uses this to size the
+    # plate grid and the layout template
+    n_wells        = p$n_wells,
     template_seed  = list(
       all_plates                   = p$combined_plates,
       header_list                  = p$header_list,
       assay_response_long_override = p$assay_response_long,
       dilution_map                 = p$dilution_map,
+      n_wells                      = p$n_wells,
       description_status           = desc
     )
   )
