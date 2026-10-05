@@ -126,6 +126,8 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       a <- tolower(chr0(x))
       if (identical(a, "bayesian")) "Bayesian"
       else if (identical(a, "frequentist")) "Frequentist"
+      else if (identical(a, "weights_bayesian")) "Weights (Bayesian)"
+      else if (identical(a, "weights_frequentist")) "Weights (Frequentist)"
       else if (nzchar(a)) a else "?"
     }
     n_curve_ids <- function(j) {

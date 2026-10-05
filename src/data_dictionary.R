@@ -91,7 +91,19 @@ CALIB_TABLE_DOCS <- list(
     what  = "Bayesian leave-one-out model comparison (Bayesian method only; empty for frequentist, which selects by AIC).",
     grain = "one row per curve / model_name (bayesian only)",
     keys  = c("model_name", "elpd_loo", "se_elpd_loo", "looic", "elpd_diff",
-              "pareto_k_bad"))
+              "pareto_k_bad")),
+  calib_weights = list(
+    group = "Results", label = "Precision weights",
+    what  = "curveRweights per-sample precision weights (sigma/w/w_norm), from the saturated location-scale model sigma_i = phi * se_i^beta1.",
+    grain = "one row per curve / method / sample identity",
+    keys  = c("sampleid", "patientid", "timeperiod", "agroup", "dilution",
+              "se", "pcov", "sigma", "w", "w_norm")),
+  calib_weights_fit = list(
+    group = "Results", label = "Precision weights fit",
+    what  = "One curveRweights fit per multiplate group x method: phi/beta1 scale-model estimates, diagnostics, and interpretation.",
+    grain = "one row per multiplate_group_id / method",
+    keys  = c("method", "design_cols", "scale_predictor", "phi", "beta1",
+              "interpretation", "n_fit", "n_eff", "weight_ratio"))
 )
 
 #' Look up the human description for a table (by physical name). Returns a list
@@ -109,5 +121,6 @@ CALIB_TABLE_ORDER <- list(
   `Raw inputs` = c("xmap_header", "xmap_standard", "xmap_control", "xmap_buffer", "xmap_sample"),
   Registry     = c("curve_lookup"),
   Results      = c("calib_run", "calib_fit", "calib_param", "calib_gate",
-                   "calib_grid", "calib_samples", "calib_diagnostics", "calib_loo")
+                   "calib_grid", "calib_samples", "calib_diagnostics", "calib_loo",
+                   "calib_weights", "calib_weights_fit")
 )

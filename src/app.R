@@ -1207,6 +1207,8 @@ server <- function(input, output, session) {
       # source("std_curve_module.R",   local = TRUE)
       source("std_curve_view_module.R", local = TRUE)
       source("std_curve_calc_module.R", local = TRUE)
+      source("precision_weight_panel.R", local = TRUE)      # Summary-tab figure (ported from std-curver)
+      source("std_curve_weights_module.R", local = TRUE)  # Precision Weights tab (sibling to Standard Curve)
       source("std_curve_compare_module.R", local = TRUE)
       source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
       source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
@@ -1242,6 +1244,19 @@ server <- function(input, output, session) {
         )
       })
 
+      # Precision Weights tab: sibling to Standard Curve (own qc_component
+      # choice, see ui_handler.R), NOT nested under std_curve_subtabs --
+      # curveRweights precision weighting is a fully separate job family from
+      # calibration. One combined module (std_curve_weights_module.R), two
+      # visible sub-tabs, same "sc_weights" namespace id for both halves.
+      output$precision_weights_ui <- renderUI({
+        shiny::tabsetPanel(
+          id = "precision_weights_subtabs",
+          shiny::tabPanel("Compute weights", stdCurveWeightsComputeUI("sc_weights")),
+          shiny::tabPanel("Summary",         stdCurveWeightsSummaryUI("sc_weights"))
+        )
+      })
+
       # Plate Dilution Series QC tab (Analytes / Sources sub-tabs). Reads raw
       # standards for the current scope; re-reads on the shared reload_trigger.
       # The Analytes sub-tab also supports masking/unmasking standard points
@@ -1262,6 +1277,8 @@ server <- function(input, output, session) {
       stdCurveCalcServer("sc_calc", pool = db_pool, api = compute_api_client(),
                          scope = sc_scope, calib_dirty = calib_dirty,
                          selected_curve = selected_curve)
+      stdCurveWeightsServer("sc_weights", pool = db_pool, api = compute_api_client(),
+                            scope = sc_scope)
       stdCurveCompareServer("sc_compare", pool = db_pool, scope = sc_scope,
                             selected_curve = selected_curve)
       plateDilutionSeriesServer("plate_dil_series", pool = db_pool,

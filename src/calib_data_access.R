@@ -612,6 +612,202 @@ fetch_calib_samples_scoped     <- function(pool, project, study, experiment) .fe
 fetch_calib_diagnostics_scoped <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_diagnostics")
 fetch_calib_loo_scoped         <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_loo")
 
+# Per-sample curveRweights precision weights (calib_weights) for a study/
+# experiment. Same shape/key as calib_samples -- curve_id-keyed, so the
+# existing .fetch_calib_scoped() factory applies directly.
+fetch_calib_weights_scoped <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_weights")
+
+# Per-(multiplate_group_id, method) weights FIT summary (phi/beta1/...) for a
+# study/experiment. Unlike every other *_scoped fetcher above, calib_weights_fit
+# is keyed by multiplate_group_id, not curve_id, so it needs its own join
+# (.fetch_calib_scoped's `t.curve_id = cl.curve_id` join doesn't apply) --
+# DISTINCT because several curve_lookup rows (one per plate) share one group.
+fetch_calib_weights_fit_scoped <- function(pool, project, study, experiment) {
+  .calib_q(pool, sprintf(
+    "SELECT DISTINCT cwf.*
+       FROM %s cwf
+       JOIN %s cl ON cl.multiplate_group_id = cwf.multiplate_group_id
+      WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
+      ORDER BY cwf.multiplate_group_id, cwf.method",
+    .tbl("calib_weights_fit"), .tbl("curve_lookup")),
+    params = list(project, study, experiment))
+}
+
+# Weights-computation status for the "Compute weights" status box: one row per
+# (curve x method) exactly like fetch_calc_status_scoped(), LEFT JOINed so an
+# uncomputed combo shows NULL rather than being absent. Unlike
+# fetch_calc_status_scoped(), there is no calib_run join -- the worker never
+# writes one for a weights job (see worker_weights.R) -- so "has a
+# calib_weights_fit row" (method non-NULL) IS the completion signal;
+# computed_at substitutes for finished_at. In-flight (queued/running) weights
+# jobs are reported separately, by the shared queue-view box (same
+# list_jobs()-based mechanism std_curve_calc_module.R already uses), not here.
+fetch_weights_status_scoped <- function(pool, project, study, experiment) {
+  .calib_q(pool, sprintf(
+    "SELECT cl.curve_id, cl.antigen, cl.plateid, cl.plate, cl.feature,
+            cl.source, cl.wavelength, cl.multiplate_group_id,
+            cwf.method, cwf.phi, cwf.beta1, cwf.interpretation,
+            cwf.design_cols, cwf.n_eff, cwf.weight_ratio, cwf.job_id,
+            cwf.created_at AS computed_at
+       FROM %s cl
+       LEFT JOIN %s cwf ON cwf.multiplate_group_id = cl.multiplate_group_id
+      WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
+      ORDER BY cl.antigen, cl.plateid, cl.feature, cwf.method",
+    .tbl("curve_lookup"), .tbl("calib_weights_fit")),
+    params = list(project, study, experiment))
+}
+
+# Full calib_samples rows for a study/experiment/method, optionally scoped
+# further to one antigen/feature, joined to curve_lookup for antigen/feature/
+# plateid context columns. Feeds the "Compute weights" Excel download (the
+# analyst-facing calib_samples template for filling in missing agroup) --
+# NOT used for fitting (worker_weights.R reads calib_samples directly from
+# Postgres itself; this is purely for the UI's download/edit/upload round-trip).
+fetch_calib_samples_for_scope <- function(pool, project, study, experiment, method,
+                                          feature = NULL, antigen = NULL) {
+  where <- "cl.project_id = $1 AND cl.study_accession = $2
+            AND cl.experiment_accession = $3 AND cs.method = $4"
+  params <- list(project, study, experiment, method)
+  if (!is.null(feature)) { params <- c(params, list(feature))
+    where <- paste0(where, sprintf(" AND cl.feature = $%d", length(params))) }
+  if (!is.null(antigen)) { params <- c(params, list(antigen))
+    where <- paste0(where, sprintf(" AND cl.antigen = $%d", length(params))) }
+  .calib_q(pool, sprintf(
+    "SELECT cl.antigen, cl.feature, cl.plateid, cs.*
+       FROM %s cs
+       JOIN %s cl ON cl.curve_id = cs.curve_id
+      WHERE %s
+      ORDER BY cl.antigen, cl.plateid, cs.sampleid",
+    .tbl("calib_samples"), .tbl("curve_lookup"), where), params = params)
+}
+
+# timeperiod x agroup cross-tab + sample count for a study/experiment/method,
+# scoped further to one antigen/feature when given (the weights job's actual
+# submission scope). Drives the "Compute weights" design-readiness panel: a
+# column with only one group (e.g. agroup all NULL) has no usable variation
+# for curveRweights::as_weight_data()'s saturated-cell design.
+fetch_design_readiness <- function(pool, project, study, experiment, method,
+                                   feature = NULL, antigen = NULL) {
+  where <- "cl.project_id = $1 AND cl.study_accession = $2
+            AND cl.experiment_accession = $3 AND cs.method = $4"
+  params <- list(project, study, experiment, method)
+  if (!is.null(feature)) { params <- c(params, list(feature))
+    where <- paste0(where, sprintf(" AND cl.feature = $%d", length(params))) }
+  if (!is.null(antigen)) { params <- c(params, list(antigen))
+    where <- paste0(where, sprintf(" AND cl.antigen = $%d", length(params))) }
+  out <- .calib_q(pool, sprintf(
+    "SELECT cs.timeperiod, cs.agroup, count(*) AS n
+       FROM %s cs
+       JOIN %s cl ON cl.curve_id = cs.curve_id
+      WHERE %s
+      GROUP BY cs.timeperiod, cs.agroup
+      ORDER BY cs.timeperiod, cs.agroup",
+    .tbl("calib_samples"), .tbl("curve_lookup"), where), params = params)
+  # count(*) comes back as Postgres bigint -> RPostgres hands it back as
+  # bit64::integer64 (no bigint= override on this app's db_pool). xtabs()'s
+  # internal summation isn't bit64-aware and silently zeroes it out while the
+  # factor labels (timeperiod/agroup, unaffected) stay correct -- exactly the
+  # "right headers, all-zero cells" symptom seen in testing. Plain integer is
+  # more than enough range for a sample count.
+  if (nrow(out)) out$n <- as.integer(out$n)
+  out
+}
+
+# timeperiod x agroup x method summary of COMPUTED weights (calib_weights.
+# w_norm), scoped the same way as fetch_design_readiness(). One row per
+# (method, timeperiod, agroup) actually represented in calib_weights -- a
+# cell with no weights computed yet for that method simply has no row (the
+# UI pivots this into a grid and leaves those cells blank). Aggregated in
+# SQL (not pulled row-by-row into R) since calib_weights can run to
+# thousands of rows for a whole-experiment scope.
+fetch_weights_distribution <- function(pool, project, study, experiment,
+                                       feature = NULL, antigen = NULL) {
+  where <- "cl.project_id = $1 AND cl.study_accession = $2
+            AND cl.experiment_accession = $3"
+  params <- list(project, study, experiment)
+  if (!is.null(feature)) { params <- c(params, list(feature))
+    where <- paste0(where, sprintf(" AND cl.feature = $%d", length(params))) }
+  if (!is.null(antigen)) { params <- c(params, list(antigen))
+    where <- paste0(where, sprintf(" AND cl.antigen = $%d", length(params))) }
+  out <- .calib_q(pool, sprintf(
+    "SELECT cw.method, cw.timeperiod, cw.agroup, count(*) AS n,
+            avg(cw.w_norm) AS mean_w_norm, stddev(cw.w_norm) AS sd_w_norm
+       FROM %s cw
+       JOIN %s cl ON cl.curve_id = cw.curve_id
+      WHERE %s
+      GROUP BY cw.method, cw.timeperiod, cw.agroup
+      ORDER BY cw.method, cw.timeperiod, cw.agroup",
+    .tbl("calib_weights"), .tbl("curve_lookup"), where), params = params)
+  # Same bigint -> integer64 trap as fetch_design_readiness() -- fix at the
+  # source rather than relying on every caller to remember.
+  if (nrow(out)) out$n <- as.integer(out$n)
+  out
+}
+
+# Per-sample weights + predicted_concentration/pcov_pass for the
+# precision_weight_panel() figure (ported from std-curver's
+# precision_weight_panel_m16.R) -- calib_weights carries neither, so this
+# joins calib_samples (same 6-column identity key as everywhere else) and
+# curve_lookup (antigen/feature/source/plate). Unlike every other *_scoped
+# fetcher, `antigens` is a VECTOR (the Summary tab's multi-select), so the
+# filter is an IN-list built the same $n-placeholder-append way the single-
+# value filters above do, just looped over antigens instead of one value.
+# `source` (singular, e.g. "NIBSC06_140") is an optional single-value filter --
+# the Summary tab plots one calibration source at a time.
+fetch_weights_panel_data <- function(pool, project, study, experiment, method,
+                                     antigens = NULL, source = NULL) {
+  where <- "cl.project_id = $1 AND cl.study_accession = $2
+            AND cl.experiment_accession = $3 AND cw.method = $4"
+  params <- list(project, study, experiment, method)
+  if (!is.null(antigens) && length(antigens)) {
+    ph <- sprintf("$%d", length(params) + seq_along(antigens))
+    where <- paste0(where, sprintf(" AND cl.antigen IN (%s)", paste(ph, collapse = ",")))
+    params <- c(params, as.list(antigens))
+  }
+  if (!is.null(source) && nzchar(source)) { params <- c(params, list(source))
+    where <- paste0(where, sprintf(" AND cl.source = $%d", length(params))) }
+  .calib_q(pool, sprintf(
+    "SELECT cl.antigen, cl.feature, cl.source, cl.plate,
+            cw.curve_id, cw.sampleid, cw.w_norm,
+            cs.predicted_concentration, cs.pcov_pass
+       FROM %s cw
+       JOIN %s cs ON cs.curve_id = cw.curve_id AND cs.method = cw.method
+                  AND cs.sampleid = cw.sampleid AND cs.patientid = cw.patientid
+                  AND cs.timeperiod = cw.timeperiod AND cs.dilution = cw.dilution
+       JOIN %s cl ON cl.curve_id = cw.curve_id
+      WHERE %s",
+    .tbl("calib_weights"), .tbl("calib_samples"), .tbl("curve_lookup"), where),
+    params = params)
+}
+
+# One row per (multiplate_group_id, method) fit, with `source` appended from
+# curve_lookup (calib_weights_fit itself has antigen/feature but not source --
+# an antigen can span multiple sources/multiplate-groups, each with its own
+# phi/beta1). Same antigen-vector IN-list filter as fetch_weights_panel_data()
+# above, plus the same optional single-value `source` filter -- the Summary
+# tab plots one method and one source at a time, so in practice this returns
+# at most one row per antigen once `source` is given.
+fetch_weights_panel_fit <- function(pool, project, study, experiment, method,
+                                    antigens = NULL, source = NULL) {
+  where <- "cl.project_id = $1 AND cl.study_accession = $2
+            AND cl.experiment_accession = $3 AND cwf.method = $4"
+  params <- list(project, study, experiment, method)
+  if (!is.null(antigens) && length(antigens)) {
+    ph <- sprintf("$%d", length(params) + seq_along(antigens))
+    where <- paste0(where, sprintf(" AND cl.antigen IN (%s)", paste(ph, collapse = ",")))
+    params <- c(params, as.list(antigens))
+  }
+  if (!is.null(source) && nzchar(source)) { params <- c(params, list(source))
+    where <- paste0(where, sprintf(" AND cl.source = $%d", length(params))) }
+  .calib_q(pool, sprintf(
+    "SELECT DISTINCT cwf.*, cl.source
+       FROM %s cwf
+       JOIN %s cl ON cl.multiplate_group_id = cwf.multiplate_group_id
+      WHERE %s",
+    .tbl("calib_weights_fit"), .tbl("curve_lookup"), where),
+    params = params)
+}
+
 # curve_lookup registry rows for a study/experiment (unmasked view; masked
 # curves excluded so they can't be offered as fit targets).
 fetch_curve_lookup_scoped <- function(pool, project, study, experiment) {
@@ -1194,6 +1390,72 @@ apply_unmask <- function(pool, std_ids, blk_ids, group_curve_ids, delete_fits = 
 }
 
 
+# AGROUP write (TRANSACTIONAL). Patches calib_samples.agroup from an analyst-
+# filled Excel round-trip (see std_curve_weights_module.R's design-readiness
+# panel) when a study's samples were calibrated without a cohort/treatment-arm
+# column populated -- curveRweights::fit_precision_weights() needs at least
+# one design column with real variation (timeperiod OR agroup) to build its
+# saturated-cell location model.
+#
+# Deliberately agroup-ONLY, never timeperiod: agroup is a plain nullable
+# column, so this is a safe, ordinary UPDATE matched on calib_samples' full
+# EXISTING primary key (curve_id, method, sampleid, patientid, timeperiod,
+# dilution) -- agroup plays no part in that key, so no row can ever collide.
+# timeperiod, by contrast, IS part of the primary key; editing it would mean
+# re-matching on the other key columns and checking for a resulting key
+# collision before committing. No study has been found missing timeperiod
+# (only agroup), so that harder case has nothing concrete to build against
+# yet and is deliberately out of scope here.
+#
+# `updates` : data.frame(curve_id, method, sampleid, patientid, timeperiod,
+#             dilution, agroup) -- the uploaded file's rows, already validated
+#             by the caller (every row matches an existing calib_samples key;
+#             see std_curve_weights_module.R's upload-validation step). All-or-
+#             nothing: any error rolls back every row, not just the failing one.
+update_calib_samples_agroup <- function(pool, updates) {
+  req_cols <- c("curve_id", "method", "sampleid", "patientid", "timeperiod",
+               "dilution", "agroup")
+  missing <- setdiff(req_cols, names(updates))
+  if (length(missing))
+    stop("update_calib_samples_agroup: updates is missing column(s): ",
+         paste(missing, collapse = ", "))
+  if (!nrow(updates)) return(invisible(0L))
+
+  do_txn <- function(co) {
+    DBI::dbBegin(co)
+    tryCatch({
+      n <- 0L
+      sql <- sprintf(
+        "UPDATE %s SET agroup = $1
+          WHERE curve_id = $2 AND method = $3 AND sampleid = $4
+            AND patientid = $5 AND timeperiod = $6 AND dilution = $7",
+        .tbl("calib_samples"))
+      for (i in seq_len(nrow(updates))) {
+        r <- updates[i, ]
+        n <- n + DBI::dbExecute(co, sql, params = list(
+          as.character(r$agroup), as.integer(r$curve_id), as.character(r$method),
+          as.character(r$sampleid), as.character(r$patientid),
+          as.character(r$timeperiod), as.character(r$dilution)))
+      }
+      DBI::dbCommit(co)
+      n
+    }, error = function(e) {
+      DBI::dbRollback(co)
+      stop(sprintf("update_calib_samples_agroup failed (rolled back): %s",
+                   conditionMessage(e)), call. = FALSE)
+    })
+  }
+
+  if (inherits(pool, "Pool")) {
+    co <- pool::poolCheckout(pool)
+    on.exit(pool::poolReturn(co), add = TRUE)
+    do_txn(co)
+  } else {
+    do_txn(pool)
+  }
+}
+
+
 # STANDARDS SUPPORT (read-only). Per curve: how many distinct standard levels
 # (dilutions) and how much replication (wells per level). Drives the sparse-plate
 # hint on the measurement-error toggle -- the measurement-error term is only
@@ -1449,8 +1711,11 @@ fda2018_classify_group <- function(pool, curve_id,
 # Row counts for scoped Results tables in ONE round-trip (was: full-table loads
 # just to test emptiness in the Data-tab status). Every calib_* Results table
 # joins curve_lookup by curve_id EXCEPT calib_run (job_id -> calib_fit ->
-# curve_lookup). Positional params $1/$2/$3 are reused across the UNION, which
-# Postgres allows. Returns a named integer vector (NA for a table that errored).
+# curve_lookup) and calib_weights_fit (keyed by multiplate_group_id, not
+# curve_id -- same reason fetch_calib_weights_fit_scoped() needs its own join
+# instead of .fetch_calib_scoped()'s factory). Positional params $1/$2/$3 are
+# reused across the UNION, which Postgres allows. Returns a named integer
+# vector (NA for a table that errored).
 fetch_scoped_table_counts <- function(pool, project, study, experiment, tables) {
   tables <- tables[!is.na(tables) & nzchar(tables)]
   if (!length(tables)) return(integer(0))
@@ -1460,6 +1725,9 @@ fetch_scoped_table_counts <- function(pool, project, study, experiment, tables) 
     if (identical(tb, "calib_run"))
       sprintf("SELECT '%s'::text AS tbl, count(*) AS n FROM %s r JOIN %s f ON f.job_id = r.job_id JOIN %s c ON c.curve_id = f.curve_id WHERE %s",
               tb, .tbl("calib_run"), .tbl("calib_fit"), cl, scope)
+    else if (identical(tb, "calib_weights_fit"))
+      sprintf("SELECT '%s'::text AS tbl, count(*) AS n FROM %s t JOIN %s c ON c.multiplate_group_id = t.multiplate_group_id WHERE %s",
+              tb, .tbl(tb), cl, scope)
     else
       sprintf("SELECT '%s'::text AS tbl, count(*) AS n FROM %s t JOIN %s c ON c.curve_id = t.curve_id WHERE %s",
               tb, .tbl(tb), cl, scope)

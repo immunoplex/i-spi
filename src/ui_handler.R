@@ -456,7 +456,8 @@ output$view_stored_experiments_ui <- renderUI({
                           radioGroupButtons(
                             inputId = "qc_component",
                             label = "",
-                            choices = c("Bead Count", "Plate Dilution Series", "Standard Curve"),
+                            choices = c("Bead Count", "Plate Dilution Series", "Standard Curve",
+                                        "Precision Weights"),
                             selected = character(0)
                           ),
                           conditionalPanel(
@@ -484,6 +485,16 @@ output$view_stored_experiments_ui <- renderUI({
                           conditionalPanel(
                             condition = "input.qc_component == 'Standard Curve'",
                             uiOutput("std_curver_ui")
+                          ),
+
+                          # Precision Weights: curveRweights precision-weighting jobs
+                          # (Compute weights / Summary sub-tabs). Rendered by
+                          # stdCurveWeightsServer (wired in app.R). Sibling to Standard
+                          # Curve, not nested under it -- a separate, decoupled job
+                          # family (see std_curve_weights_module.R).
+                          conditionalPanel(
+                            condition = "input.qc_component == 'Precision Weights'",
+                            uiOutput("precision_weights_ui")
                           )
 
                           # conditionalPanel(

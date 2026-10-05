@@ -26,7 +26,7 @@
 
 stopifnot(requireNamespace("httr2", quietly = TRUE))
 
-VALID_SCRIPTS <- c("bayesian", "frequentist")
+VALID_SCRIPTS <- c("bayesian", "frequentist", "weights_bayesian", "weights_frequentist")
 
 #' Construct an i-spi-compute API client.
 #' @return a list of functions: submit_job, get_job, list_jobs, cancel_job, health.
@@ -103,7 +103,15 @@ compute_api_client <- function(
     #' @param curve_ids integer vector of curves to fit.
     #' @param multiplate_group_ids uuid vector, parallel to curve_ids (optional;
     #'   the fit-delivery views also carry it, so the worker can group without it).
-    #' @param script_type one of bayesian|frequentist
+    #' @param script_type one of bayesian|frequentist|weights_bayesian|weights_frequentist.
+    #'   The weights_* pair computes curveRweights precision weights from
+    #'   already-persisted calib_samples for that method, instead of fitting
+    #'   calibration curves -- a fully separate job, never affecting a
+    #'   calibration job's status or data. params it expects: design
+    #'   (comma-joined column names, e.g. "timeperiod,agroup"), scale_predictor
+    #'   ("se"|"pcov"), and the MCMC knobs iter/warmup/chains/adapt_delta/seed
+    #'   (brms' own naming -- NOT the same names as the bayesian calibration
+    #'   job's sampling/warmup params).
     #' @param params named list -> passthrough CLI flags (e.g. list(models=...)).
     #' @return parsed response incl. job_id.
     submit_job = function(curve_ids, multiplate_group_ids = NULL, script_type,

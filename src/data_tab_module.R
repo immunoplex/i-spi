@@ -166,7 +166,9 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
     calib_grid        = function() fetch_calib_grid_scoped(db_pool,        project = p, study = s$study, experiment = s$experiment),
     calib_samples     = function() fetch_calib_samples_scoped(db_pool,     project = p, study = s$study, experiment = s$experiment),
     calib_diagnostics = function() fetch_calib_diagnostics_scoped(db_pool, project = p, study = s$study, experiment = s$experiment),
-    calib_loo         = function() fetch_calib_loo_scoped(db_pool,         project = p, study = s$study, experiment = s$experiment)
+    calib_loo         = function() fetch_calib_loo_scoped(db_pool,         project = p, study = s$study, experiment = s$experiment),
+    calib_weights     = function() fetch_calib_weights_scoped(db_pool,     project = p, study = s$study, experiment = s$experiment),
+    calib_weights_fit = function() fetch_calib_weights_fit_scoped(db_pool, project = p, study = s$study, experiment = s$experiment)
   )
 
   # Loaded UP FRONT: the raw frames feed the plate-ops contract
