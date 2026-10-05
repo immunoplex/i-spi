@@ -151,8 +151,17 @@ process_rbx_files <- function(upload_df) {
       cat("    -> wells:", nrow(wi), " analytes:", length(antigen_cols),
           " long rows:", nrow(assay_long), "\n")
 
-      # per-well dilution (authoritative from the .rbx; standards carry the
-      # curve dilution, samples their dilution). Keyed to join into plates_map.
+      # per-well dilution. Authoritative from the .rbx for Samples/Controls --
+      # confirmed against two real files (see
+      # RBX_DILUTION_AUTHORITATIVE_SOURCE_PLAN.md's Phase 0 Findings). NOT
+      # authoritative for Standards: Bio-Plex Manager's binary format does not
+      # store a standard point's defined dilution -- this field reads a
+      # constant placeholder (1) for every Standard in both files checked.
+      # Standards' true dilution lives in the Description's "1:N" ratio text
+      # when the lab writes one, or otherwise needs the experiment-scoped
+      # reference table (assay_shape_rules.R / ai_resolve_one()'s
+      # instrument_dilution param is gated to specimen_type X/C for exactly
+      # this reason). Keyed to join into plates_map via ai_well_inventory().
       dil <- data.frame(
         plateid  = clean_plate_id(fn),
         well     = as.character(wi$well),

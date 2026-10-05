@@ -32,6 +32,13 @@
 #                  to PROPOSE blank/standard identity; never written to the DB.
 #   type_origin    "file" | "proposed" | "user"
 #   desc_origin    "file" | "user"
+#   instrument_dilution  the reader's own authoritative per-well dilution, when
+#                  it supplies one (currently .rbx/.srbx only; NA for every
+#                  other format/adapter). NOT the same thing as a dilution
+#                  parsed from Description text -- see assay_shape_rules.R's
+#                  ai_resolve_one(), which prefers this over text for Samples
+#                  and Controls only (never Standards -- the Bio-Plex binary's
+#                  numeric dilution field is a constant placeholder for those).
 #
 # The inventory is the pre-processor's single piece of mutable state. Stage 1
 # (plate grid) edits type_code/description; stages 2-4 read it and never change
@@ -49,7 +56,8 @@ AI_WELL_INVENTORY_COLS <- c(
   "well", "well_raw", "row_letter", "col_number",
   "type_code", "specimen_type", "description",
   "raw_type_code", "raw_description",
-  "source_file", "response_hint", "type_origin", "desc_origin"
+  "source_file", "response_hint", "type_origin", "desc_origin",
+  "instrument_dilution"
 )
 
 AI_SPECIMEN_TYPES <- c("X", "S", "B", "C")
@@ -204,7 +212,7 @@ get_well_inventory_adapter <- function(assay) {
             "description", "plateid", "plate", "plate_number", "Location",
             "Sample", "Outlier", "Analysis", "Notes")
 
-  data.frame(
+  flat <- data.frame(
     plate_key      = .ai_pick_col(df, c("plateid", "plate_number", "plate", "source_file")),
     well_raw       = .ai_pick_col(df, c("Well", "well", "Location")),
     type_code      = .ai_pick_col(df, c("Type", "type"), NA_character_),
@@ -212,6 +220,20 @@ get_well_inventory_adapter <- function(assay) {
     source_file    = .ai_pick_col(df, "source_file", NA_character_),
     response_hint  = .ai_response_hint(df, meta),
     stringsAsFactors = FALSE)
+
+  # .rbx/.srbx only: the binary's own per-well dilution, keyed (plateid, well)
+  # by reader_bead_rbx.R. Absent (NULL) for every other bead format -- xPONENT
+  # and raw-file uploads carry no such field, so instrument_dilution stays NA
+  # for them via the generic default in ai_well_inventory().
+  dil <- raw$template_seed$dilution_map
+  if (!is.null(dil) && nrow(dil)) {
+    key_flat <- paste(flat$plate_key, ai_normalize_well(flat$well_raw), sep = "\r")
+    key_dil  <- paste(dil$plateid, ai_normalize_well(dil$well), sep = "\r")
+    flat$instrument_dilution <- as.numeric(dil$dilution[match(key_flat, key_dil)])
+  } else {
+    flat$instrument_dilution <- NA_real_
+  }
+  flat
 }
 
 
@@ -291,6 +313,7 @@ register_well_inventory_adapter("flow",  .ai_inventory_flow)
 #' @return a data.frame with AI_WELL_INVENTORY_COLS, ordered plate then well.
 ai_well_inventory <- function(raw, assay, n_wells = 96, opts = list()) {
   flat <- get_well_inventory_adapter(assay)(raw, opts)
+  if (!"instrument_dilution" %in% names(flat)) flat$instrument_dilution <- NA_real_
 
   flat$well <- ai_normalize_well(flat$well_raw)
 
@@ -330,6 +353,7 @@ ai_well_inventory <- function(raw, assay, n_wells = 96, opts = list()) {
       raw_description = src$description[idx],
       source_file     = src$source_file[1],
       response_hint   = src$response_hint[idx],
+      instrument_dilution = suppressWarnings(as.numeric(src$instrument_dilution[idx])),
       stringsAsFactors = FALSE)
   })
 

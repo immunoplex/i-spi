@@ -204,6 +204,65 @@ test_that("C resolves a parenthesised source", {
   expect_equal(r$dilution_value, 2500L)
 })
 
+# ---- instrument-sourced dilution override (RBX_DILUTION_AUTHORITATIVE_SOURCE_PLAN.md) --
+# GBSIGG-WP4-417_test.srbx's real convention: bare "QC1"/"QC2"/"QC3" controls
+# and bare "1".."11" sample indices carry no ratio and no recoverable dilution
+# in text at all -- the true values (450/50,000/125,000 for controls,
+# 500/5,000/50,000 for samples) exist only in the .rbx binary's own numeric
+# dilution field. Confirmed empirically against the real file before writing
+# this fix (see the plan's Phase 0 Findings).
+
+test_that("a bare Control with no ratio stays unresolved without an instrument value", {
+  rule <- mk_rule("C", c("QC1", "QC2", "QC3"))
+  r <- ai_resolve_one("QC1", "C1", rule)
+  expect_false(r$dilution_ok)
+  expect_true(any(r$issues$kind == "missing_required" & r$issues$component == "DilutionFactor"))
+})
+
+test_that("an instrument value resolves a Control whose text carries no ratio", {
+  rule <- mk_rule("C", c("QC1", "QC2", "QC3"))
+  r <- ai_resolve_one("QC1", "C1", rule, instrument_dilution = 450)
+  expect_equal(r$dilution_value, 450L)
+  expect_true(r$dilution_ok)
+  expect_false(any(r$issues$kind == "missing_required" & r$issues$component == "DilutionFactor"))
+  expect_false(any(r$issues$kind == "bad_dilution"))
+})
+
+test_that("an instrument value resolves a Sample whose text is a bare index, without disturbing identity", {
+  rule <- mk_rule("X", c("1", "2", "3"))
+  r <- ai_resolve_one("1", "X", rule, instrument_dilution = 500)
+  expect_equal(r$dilution_value, 500L)
+  expect_true(r$dilution_ok)
+  # the bare index is still the proposed PatientID -- the override must only
+  # ever touch DilutionFactor, never re-litigate identity binding
+  expect_equal(r$values[["PatientID"]], "1")
+})
+
+test_that("the instrument override never applies to Standards, even if one is supplied", {
+  rule <- mk_rule("S", c("S1", "S2"))
+  r <- ai_resolve_one("S1", "S1", rule, instrument_dilution = 1)
+  expect_false(r$dilution_ok)
+  expect_true(any(r$issues$kind == "missing_required" & r$issues$component == "DilutionFactor"))
+})
+
+test_that("a non-finite or non-positive instrument value falls back to text, not an error", {
+  rule <- mk_rule("C", "QC1 (Low) 1:2500")
+  for (bad in list(NA_real_, 0, -5)) {
+    r <- ai_resolve_one("QC1 (Low) 1:2500", "C1", rule, instrument_dilution = bad)
+    expect_equal(r$dilution_value, 2500L)   # the real ratio still wins
+  }
+})
+
+test_that("ai_shape_verdict only treats a shape as instrument-covered if every well sharing it is", {
+  rule <- mk_rule("C", "QC1")
+  v_all <- ai_shape_verdict("C", names(rule$shapes)[1], c("QC1", "QC1"), rule,
+                           instrument_dilution = c(450, 450))
+  expect_true(v_all$ok)
+  v_partial <- ai_shape_verdict("C", names(rule$shapes)[1], c("QC1", "QC1"), rule,
+                               instrument_dilution = c(450, NA))
+  expect_false(v_partial$ok)
+})
+
 test_that("an unmatched shape is an error, never a silent fallthrough", {
   rule <- mk_rule("S", RBX_S)
   r <- ai_resolve_one("Something Else Entirely Here Now", "S1", rule)

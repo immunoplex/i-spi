@@ -114,8 +114,9 @@ ai_shape_ui <- function(id) {
 # ---- Server -----------------------------------------------------------------
 
 ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
-                            assay = reactive(NA_character_)) {
-  force(inventory_rv); force(enabled)
+                            assay = reactive(NA_character_),
+                            reference = reactive(NULL)) {
+  force(inventory_rv); force(enabled); force(reference)
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
@@ -146,6 +147,24 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       d <- inv()
       if (is.null(d) || !nrow(d)) return(character())
       d$plate_key[!is.na(d$specimen_type) & d$specimen_type == t]
+    }
+    inst_of <- function(t) {
+      d <- inv()
+      if (is.null(d) || !nrow(d)) return(numeric())
+      d$instrument_dilution[!is.na(d$specimen_type) & d$specimen_type == t]
+    }
+    # Per-well lookup into the experiment-scoped Standards reference table
+    # (assay_std_reference_ui.R), aligned to desc_of(t)/inst_of(t)'s row order.
+    ref_of <- function(t) {
+      d <- inv()
+      if (is.null(d) || !nrow(d)) return(numeric())
+      sel <- !is.na(d$specimen_type) & d$specimen_type == t
+      desc <- d$description[sel]
+      ref <- reference()
+      if (is.null(ref) || !nrow(ref)) return(rep(NA_real_, sum(sel)))
+      key_d   <- paste(t, trimws(as.character(desc)))
+      key_ref <- paste(ref$specimen_type, trimws(as.character(ref$description)))
+      suppressWarnings(as.numeric(ref$dilution[match(key_d, key_ref)]))
     }
 
     rule_of <- function(t) {
@@ -182,6 +201,8 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
 
           desc   <- desc_of(tt)
           plates <- plates_of(tt)
+          inst   <- inst_of(tt)
+          ref    <- ref_of(tt)
           st <- tryCatch(
             ai_shape_table(desc, rule$delimiters, rule$shape_by, plates = plates),
             error = function(e) {
@@ -192,11 +213,13 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
           if (is.null(st)) return(NULL)
 
           verdicts <- lapply(st$shapes$shape_key, function(k) {
-            strs <- unique(desc[!is.na(st$keys) & st$keys == k])
-            tryCatch(ai_shape_verdict(tt, k, strs, rule),
+            in_shape <- !is.na(st$keys) & st$keys == k
+            strs <- desc[in_shape]
+            tryCatch(ai_shape_verdict(tt, k, strs, rule, instrument_dilution = inst[in_shape],
+                                     reference_dilution = ref[in_shape]),
                      error = function(e)
-                       list(ok = FALSE, n_strings = length(strs), n_failing = length(strs),
-                            failing_examples = utils::head(strs, 1L),
+                       list(ok = FALSE, n_strings = length(unique(strs)), n_failing = length(unique(strs)),
+                            failing_examples = utils::head(unique(strs), 1L),
                             missing_components = "rule error"))
           })
           names(verdicts) <- st$shapes$shape_key
@@ -519,6 +542,20 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         comps <- ai_type_components(tt)
         req_c <- AI_TYPE_REQUIRED[[tt]]
 
+        # DilutionFactor-only: is every well in the CURRENT shape already
+        # covered by the instrument override or the saved reference table?
+        # If so, this binding is never consulted for them -- say so, right
+        # where the user is looking for it, rather than leaving the dropdown
+        # looking like it has no effect for no stated reason.
+        dil_note <- NULL
+        in_k <- !is.na(ss$keys) & ss$keys == k
+        inst_cov <- suppressWarnings(min(inst_of(tt)[in_k], na.rm = FALSE))
+        ref_cov  <- suppressWarnings(min(ref_of(tt)[in_k],  na.rm = FALSE))
+        if (tt %in% c("X", "C") && is.finite(inst_cov) && inst_cov > 0)
+          dil_note <- "Every well in this group already has a dilution read from the instrument file — this binding is not used for them."
+        else if (is.finite(ref_cov) && ref_cov > 0)
+          dil_note <- "Every well in this group already has a dilution from the saved Standards reference table — this binding is not used for them."
+
         lapply(comps, function(cm) {
           cur <- b[[cm]]
           how <- cur$how %||% (if (cm %in% req_c) "constant" else "ignore")
@@ -528,7 +565,9 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
               if (cm %in% req_c) tags$small(" (required)") else NULL)),
             column(3, selectInput(ns(paste0("bh_", tt, "_", cm)), NULL,
                                   choices = AI_HOW_LABELS, selected = how)),
-            column(6, uiOutput(ns(paste0("bd_", tt, "_", cm)))))
+            column(6, uiOutput(ns(paste0("bd_", tt, "_", cm))),
+                   if (identical(cm, "DilutionFactor") && !is.null(dil_note))
+                     tags$div(style = "margin-top:4px;color:#1a73e8;", tags$small(dil_note))))
         })
       })
 
@@ -559,17 +598,45 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
           return(DT::datatable(data.frame(message = "Nothing to preview"),
                                options = list(dom = "t"), rownames = FALSE))
         s <- utils::head(s[order(-nchar(s))], 12L)
+
+        # Per-description coverage for the instrument/reference overrides --
+        # same "every well sharing this description must be covered"
+        # conservatism as ai_shape_verdict(), so this preview can never claim
+        # a value is resolved when the real per-well resolution wouldn't
+        # agree. Without this, this table calls ai_resolve_one() with neither
+        # override and a Standards/Samples/Controls shape whose dilution only
+        # ever came from the instrument file or the saved reference table
+        # looks permanently unresolved here even though it resolves fine at
+        # commit time -- which is exactly backwards for a screen whose whole
+        # purpose is showing the user what will actually happen.
+        desc_all <- desc_of(tt)
+        inst_all <- inst_of(tt)
+        ref_all  <- ref_of(tt)
+        cover <- function(vec, str) {
+          m <- !is.na(desc_all) & desc_all == str
+          if (!any(m)) return(NA_real_)
+          suppressWarnings(min(vec[m], na.rm = FALSE))
+        }
+        src_label <- c(instrument = "from instrument file", reference = "from saved reference",
+                      text = "from description text")
+
         out <- do.call(rbind, lapply(s, function(x) {
-          r <- tryCatch(ai_resolve_one(x, tt, ss$rule), error = function(e) NULL)
+          r <- tryCatch(ai_resolve_one(x, tt, ss$rule,
+                                       instrument_dilution = cover(inst_all, x),
+                                       reference_dilution  = cover(ref_all, x)),
+                       error = function(e) NULL)
           if (is.null(r))
             return(data.frame(Description = x, PatientID = "", TimePeriod = "",
                               Dilution = "", Source = "", GroupA = "", GroupB = "",
                               OK = "no", stringsAsFactors = FALSE))
+          dil_txt <- if (is.na(r$dilution_value)) "" else as.character(r$dilution_value)
+          if (nzchar(dil_txt) && !is.na(r$dilution_src) && r$dilution_src != "text")
+            dil_txt <- sprintf("%s (%s)", dil_txt, src_label[[r$dilution_src]])
           data.frame(
             Description = x,
             PatientID   = r$values[["PatientID"]],
             TimePeriod  = r$values[["TimePeriod"]],
-            Dilution    = if (is.na(r$dilution_value)) "" else as.character(r$dilution_value),
+            Dilution    = dil_txt,
             Source      = r$values[["Source"]],
             GroupA      = r$values[["SampleGroupA"]],
             GroupB      = r$values[["SampleGroupB"]],
@@ -827,23 +894,40 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       if (is.null(d) || !nrow(d) || !length(rules_rv())) return(NULL)
       if (!isTRUE(ready())) return(NULL)
       refresh_rv()
-      tryCatch(ai_resolve_inventory(d, rules_rv()), error = function(e) {
+      tryCatch(ai_resolve_inventory(d, rules_rv(), reference = reference()), error = function(e) {
         warning(paste("resolution failed:", conditionMessage(e)))
         NULL
       })
     })
 
+    # Instrument-sourced dilution coverage for Samples/Controls (G3): a
+    # process-time disclosure only -- never written to plates_map/
+    # assay_response_long (see the plan's decision not to surface
+    # dilution_source downstream).
+    instrument_banner <- function(d) {
+      xc <- !is.na(d$specimen_type) & d$specimen_type %in% c("X", "C")
+      if (!any(xc)) return(NULL)
+      covered <- sum(is.finite(d$instrument_dilution[xc]) & d$instrument_dilution[xc] > 0)
+      total   <- sum(xc)
+      if (!covered) return(NULL)
+      tags$p(tags$small(style = "color:#5f6368;", sprintf(
+        "Dilution read directly from the instrument file for %d/%d Sample and Control well(s) — used instead of the Description text for those wells.",
+        covered, total)))
+    }
+
     output$overall <- renderUI({
       d <- inv()
       if (is.null(d) || !nrow(d)) return(tags$em("Nothing loaded yet."))
+      banner <- instrument_banner(d)
       p <- progress()
-      if (is.null(p)) return(tags$em("No specimen types to configure."))
+      if (is.null(p)) return(tagList(banner, tags$em("No specimen types to configure.")))
 
       # Name a present type that has nothing to configure. The reported fault
       # showed up as an empty tab with no explanation of why the gate was shut.
       cov <- tryCatch(ai_ruleset_coverage(d, rules_rv()), error = function(e) NULL)
       if (!is.null(cov) && nrow(cov))
         return(tagList(
+          banner,
           tags$div(style = "color:#b02a37;font-weight:600;",
                    "A specimen type present on the plates has nothing to configure."),
           tags$ul(lapply(seq_len(nrow(cov)), function(i)
@@ -857,6 +941,7 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         iss  <- if (is.null(res)) NULL else res$issues
         nerr <- if (is.null(iss)) 0L else sum(iss$severity == "error")
         return(tagList(
+          banner,
           tags$div(style = "color:#2e7d32;font-weight:600;",
                    "Every description group is bound and approved. The layout template can be built."),
           if (nerr > 0)
@@ -865,6 +950,7 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       }
 
       tagList(
+        banner,
         tags$div(style = "color:#b02a37;font-weight:600;",
                  sprintf("%d of %d description group(s) approved.",
                          sum(p$approved), sum(p$groups))),

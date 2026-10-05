@@ -743,9 +743,31 @@ ai_rule_refresh_shapes <- function(rule, descriptions) {
 
 #' Resolve one description under a rule.
 #'
+#' @param instrument_dilution the reader's own authoritative per-well dilution
+#'   (e.g. .rbx/.srbx's binary dilution field), or NA if the format/well has
+#'   none. When finite and > 0, and the well is a Sample (X) or Control (C),
+#'   this WINS over whatever the description text would otherwise resolve to,
+#'   and the well is never flagged for a missing/bad DilutionFactor. Never
+#'   applied to Standards (S) or Blanks (B): the Bio-Plex binary's numeric
+#'   dilution field is a constant placeholder for Standards (confirmed empty
+#'   of information against two real files -- see
+#'   RBX_DILUTION_AUTHORITATIVE_SOURCE_PLAN.md), and Blanks already resolve
+#'   correctly without it.
+#' @param reference_dilution a value from the experiment-scoped Standards
+#'   reference table (assay_std_reference_rules.R), or NA if none matches this
+#'   description. A second, LOWER-priority fallback: only applied when
+#'   neither the instrument override nor the text resolves the dilution. Not
+#'   type-gated like `instrument_dilution` -- any type whose DilutionFactor
+#'   survives both checks unresolved is eligible (the generalizable pattern
+#'   from RBX_DILUTION_AUTHORITATIVE_SOURCE_PLAN.md's design; Standards are
+#'   simply the first, and so far only, real consumer).
 #' @return list(shape_key, matched, values (named chr over AI_COMPONENTS),
-#'   dilution_value, dilution_ok, issues data.frame(component, severity, message, kind))
-ai_resolve_one <- function(description, type_code, rule) {
+#'   dilution_value, dilution_ok,
+#'   dilution_src = "text"|"instrument"|"reference"|NA (which source actually
+#'   won, for UI provenance display -- see assay_shape_ui.R's preview table),
+#'   issues data.frame(component, severity, message, kind))
+ai_resolve_one <- function(description, type_code, rule, instrument_dilution = NA_real_,
+                           reference_dilution = NA_real_) {
   tc <- if (exists("ai_type_letter", mode = "function"))
     ai_type_letter(type_code) else toupper(substr(trimws(as.character(type_code)), 1L, 1L))
 
@@ -758,7 +780,7 @@ ai_resolve_one <- function(description, type_code, rule) {
 
   out <- list(shape_key = NA_character_, matched = FALSE, values = vals,
               dilution_value = NA_integer_, dilution_ok = FALSE,
-              issues = NULL)
+              dilution_src = NA_character_, issues = NULL)
 
   blank <- is.na(description) || !nzchar(trimws(as.character(description))) ||
            identical(trimws(as.character(description)), "NA")
@@ -789,15 +811,42 @@ ai_resolve_one <- function(description, type_code, rule) {
   dil <- .ai_sr_dilution(if (nzchar(vals[["DilutionFactor"]])) vals[["DilutionFactor"]] else NA_character_)
   out$dilution_value <- dil$value
   out$dilution_ok    <- isTRUE(dil$ok)
-  if (nzchar(vals[["DilutionFactor"]]) && !isTRUE(dil$ok))
+  if (isTRUE(out$dilution_ok)) out$dilution_src <- "text"
+
+  # Instrument override: authoritative for Samples/Controls, wins over text,
+  # and the well is never faulted for its DilutionFactor below. See the
+  # @param note above for why this is X/C-only.
+  inst_ok <- is.finite(instrument_dilution) && instrument_dilution > 0 &&
+             tc %in% c("X", "C")
+  if (inst_ok) {
+    out$dilution_value <- as.integer(instrument_dilution)
+    out$dilution_ok    <- TRUE
+    out$dilution_src   <- "instrument"
+  }
+
+  # Experiment-scoped reference table: a second, lower-priority fallback --
+  # only applied when neither the instrument override nor the text already
+  # resolved it. See @param reference_dilution above for why this one isn't
+  # type-gated.
+  ref_ok <- !inst_ok && !isTRUE(dil$ok) &&
+            is.finite(reference_dilution) && reference_dilution > 0
+  if (ref_ok) {
+    out$dilution_value <- as.integer(reference_dilution)
+    out$dilution_ok    <- TRUE
+    out$dilution_src   <- "reference"
+  }
+
+  if (!inst_ok && !ref_ok && nzchar(vals[["DilutionFactor"]]) && !isTRUE(dil$ok)) {
     add("DilutionFactor", "error",
         sprintf("Dilution '%s' is not an integer or a 1:N ratio.",
                 vals[["DilutionFactor"]]), "bad_dilution")
-  if (isTRUE(dil$ok)) vals[["DilutionFactor"]] <- as.character(dil$value)
+  }
+  if (isTRUE(out$dilution_ok)) vals[["DilutionFactor"]] <- as.character(out$dilution_value)
 
   req <- AI_TYPE_REQUIRED[[if (tc %in% names(AI_TYPE_REQUIRED)) tc else "X"]]
+  dilution_satisfied <- inst_ok || ref_ok
   for (comp in req)
-    if (!nzchar(vals[[comp]]))
+    if (!(comp == "DilutionFactor" && dilution_satisfied) && !nzchar(vals[[comp]]))
       add(comp, "error", sprintf("Type %s: %s is empty.", tc, comp),
           "missing_required")
 
@@ -808,17 +857,39 @@ ai_resolve_one <- function(description, type_code, rule) {
 
 #' Verdict for one shape: does it satisfy its type's contract for every string?
 #'
-#' @param descriptions the strings belonging to this shape.
+#' @param descriptions the strings belonging to this shape (one per well).
+#' @param instrument_dilution optional, same length/order as `descriptions`:
+#'   each well's instrument-sourced dilution (NA where none). A distinct
+#'   string counts as instrument-covered only if EVERY well carrying it has a
+#'   valid value -- a conservative choice; a well whose text would otherwise
+#'   fail still fails here if even one of its sibling wells lacks coverage,
+#'   even though ai_resolve_inventory() always applies the real per-well
+#'   value regardless of what this gate decides.
+#' @param reference_dilution optional, same shape as `instrument_dilution`,
+#'   sourced from the experiment-scoped Standards reference table instead of
+#'   the instrument file. Same "every well must be covered" conservatism.
 #' @return list(ok, n_strings, n_failing, failing_examples, missing_components)
-ai_shape_verdict <- function(type, shape_key, descriptions, rule) {
-  d <- unique(as.character(descriptions))
-  d <- d[!is.na(d)]
-  if (!length(d))
+ai_shape_verdict <- function(type, shape_key, descriptions, rule,
+                             instrument_dilution = NULL, reference_dilution = NULL) {
+  d_all <- as.character(descriptions)
+  keep  <- !is.na(d_all)
+  d_all <- d_all[keep]
+  inst  <- if (is.null(instrument_dilution)) rep(NA_real_, length(d_all))
+           else as.numeric(instrument_dilution)[keep]
+  ref   <- if (is.null(reference_dilution)) rep(NA_real_, length(d_all))
+           else as.numeric(reference_dilution)[keep]
+  if (!length(d_all))
     return(list(ok = TRUE, n_strings = 0L, n_failing = 0L,
                 failing_examples = character(), missing_components = character()))
+  d <- unique(d_all)
   miss <- character(); fail <- character()
   for (s in d) {
-    r <- ai_resolve_one(s, type, rule)
+    in_s <- d_all == s
+    # NA if ANY well sharing this string lacks coverage from that source.
+    cover_inst <- suppressWarnings(min(inst[in_s], na.rm = FALSE))
+    cover_ref  <- suppressWarnings(min(ref[in_s],  na.rm = FALSE))
+    r <- ai_resolve_one(s, type, rule, instrument_dilution = cover_inst,
+                        reference_dilution = cover_ref)
     if (!is.null(r$issues) && any(r$issues$severity == "error")) {
       fail <- c(fail, s)
       miss <- c(miss, stats::na.omit(r$issues$component))
@@ -838,9 +909,14 @@ ai_shape_verdict <- function(type, shape_key, descriptions, rule) {
 #' Keyed on (plateid, well) -- plateid is the inventory's plate_key, which is the
 #' reader's plateid, so this merges straight onto plate_well_map.
 #'
+#' @param reference optional data.frame(specimen_type, description, dilution)
+#'   from the experiment-scoped Standards reference table
+#'   (assay_std_reference_rules.R / assay_std_reference_ui.R). Matched by
+#'   exact, trimmed (specimen_type, description) -- the same key the
+#'   reference-entry UI groups candidates by.
 #' @return list(resolved = data.frame, issues = data.frame(sheet, severity,
 #'   column, message))
-ai_resolve_inventory <- function(inv, ruleset) {
+ai_resolve_inventory <- function(inv, ruleset, reference = NULL) {
   occupied <- !is.na(inv$type_code) & !is.na(inv$specimen_type)
   d <- inv[occupied, , drop = FALSE]
   empty_iss <- data.frame(sheet = character(), severity = character(),
@@ -850,6 +926,12 @@ ai_resolve_inventory <- function(inv, ruleset) {
     return(list(resolved = data.frame(), issues = empty_iss))
 
   n <- nrow(d)
+  ref_dilution <- rep(NA_real_, n)
+  if (!is.null(reference) && nrow(reference)) {
+    key_d   <- paste(d$specimen_type, trimws(as.character(d$description)))
+    key_ref <- paste(reference$specimen_type, trimws(as.character(reference$description)))
+    ref_dilution <- suppressWarnings(as.numeric(reference$dilution[match(key_d, key_ref)]))
+  }
   res <- data.frame(
     plateid                       = d$plate_key,
     well                          = d$well,
@@ -878,7 +960,9 @@ ai_resolve_inventory <- function(inv, ruleset) {
         stringsAsFactors = FALSE)
       next
     }
-    r <- ai_resolve_one(d$description[i], d$type_code[i], rule)
+    r <- ai_resolve_one(d$description[i], d$type_code[i], rule,
+                        instrument_dilution = d$instrument_dilution[i],
+                        reference_dilution = ref_dilution[i])
     res$shape_key[i]                     <- r$shape_key
     res$subject_id[i]                    <- r$values[["PatientID"]]
     res$timepoint_tissue_abbreviation[i] <- r$values[["TimePeriod"]]
@@ -912,20 +996,35 @@ ai_resolve_inventory <- function(inv, ruleset) {
 }
 
 #' Per-type roll-up: is every shape of every present type satisfied?
-ai_ruleset_ready <- function(inv, ruleset, approved = NULL) {
+#'
+#' @param reference optional data.frame(specimen_type, description, dilution)
+#'   -- see ai_resolve_inventory(). Matched the same way, per type, so a shape
+#'   satisfied only via the Standards reference table doesn't block approval.
+ai_ruleset_ready <- function(inv, ruleset, approved = NULL, reference = NULL) {
   types <- intersect(AI_SPECIMEN_TYPES, unique(stats::na.omit(inv$specimen_type)))
   if (!length(types)) return(FALSE)
   for (t in types) {
     rule <- ruleset[[t]]
     if (is.null(rule)) return(FALSE)
-    d <- inv$description[!is.na(inv$specimen_type) & inv$specimen_type == t]
+    sel <- !is.na(inv$specimen_type) & inv$specimen_type == t
+    d    <- inv$description[sel]
+    dils <- inv$instrument_dilution[sel]
+    refs <- rep(NA_real_, length(d))
+    if (!is.null(reference) && nrow(reference)) {
+      key_d   <- paste(t, trimws(as.character(d)))
+      key_ref <- paste(reference$specimen_type, trimws(as.character(reference$description)))
+      refs <- suppressWarnings(as.numeric(reference$dilution[match(key_d, key_ref)]))
+    }
     st <- ai_shape_table(d, rule$delimiters, rule$shape_by)
     if (!nrow(st$shapes)) return(FALSE)
     for (i in seq_len(nrow(st$shapes))) {
       k <- st$shapes$shape_key[i]
       if (is.null(rule$shapes[[k]]) && is.null(rule$fallback)) return(FALSE)
-      strs <- d[!is.na(st$keys) & st$keys == k]
-      if (!ai_shape_verdict(t, k, strs, rule)$ok) return(FALSE)
+      in_shape <- !is.na(st$keys) & st$keys == k
+      strs <- d[in_shape]
+      if (!ai_shape_verdict(t, k, strs, rule, instrument_dilution = dils[in_shape],
+                           reference_dilution = refs[in_shape])$ok)
+        return(FALSE)
       if (!is.null(approved) && !isTRUE(approved[[paste(t, k, sep = "\r")]]))
         return(FALSE)
     }

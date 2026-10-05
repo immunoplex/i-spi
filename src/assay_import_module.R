@@ -4,27 +4,32 @@
 # ONE assay-agnostic Shiny module implementing the import standard:
 #   1 upload raw files
 #   2 CONFIRM THE LAYOUT        (plate grid: specimen type + description per well)
-#   3 CONFIGURE THE DESCRIPTION (delimiters, shape groups, component bindings)
-#   4 download layout template
-#   5 upload completed template -> validate (issues shown + highlighted)
-#   6 preview
-#   7 commit (enabled only when there are no errors)
+#   3 STANDARDS DILUTION REFERENCE (label -> dilution, for wells neither the
+#                                   instrument file nor the text can resolve)
+#   4 CONFIGURE THE DESCRIPTION (delimiters, shape groups, component bindings)
+#   5 download layout template
+#   6 upload completed template -> validate (issues shown + highlighted)
+#   7 preview
+#   8 commit (enabled only when there are no errors)
 #
-# Steps 2 and 3 are new and replace the descriptor-level flat controls that used
+# Steps 2-4 are new and replace the descriptor-level flat controls that used
 # to sit next to the upload box (delimiter, optional-element toggles, two
 # drag-to-order element lists). Those asked for an element order before any
 # string had been parsed and showed the consequence only in a downloaded
 # workbook, so each new submitter cost a round of trial and error. The
 # pre-processor shows resolved values as the choices are made.
 #
-# Both new steps GATE what follows: the template download stays disabled until
-# every plate has samples, standards and blanks AND every description shape of
-# every present specimen type is bound and approved. A descriptor that omits
-# `preprocess` skips both steps and behaves exactly as before.
+# All three new steps GATE what follows: the template download stays disabled
+# until every plate has samples, standards and blanks, every Standards well
+# the instrument/text cannot resolve has a reference dilution entered, AND
+# every description shape of every present specimen type is bound and
+# approved. A descriptor that omits `preprocess` skips all three and behaves
+# exactly as before.
 #
 # Depends on: assay_import_contract.R (readers/registry/validator),
 # assay_import_backend.R (run_assay_commit), assay_well_inventory.R,
-# assay_shape_rules.R, assay_plate_grid.R, assay_shape_ui.R. Source AFTER all.
+# assay_shape_rules.R, assay_std_reference_rules.R, assay_plate_grid.R,
+# assay_shape_ui.R, assay_std_reference_ui.R. Source AFTER all.
 #
 # scope: a reactive returning list(project_id, study, experiment, user).
 # =============================================================================
@@ -63,11 +68,13 @@ assay_import_ui <- function(id, descriptor) {
         condition = sprintf("output['%s']", ns("has_raw")),
         tags$h4("2. Confirm the plate layout"),
         ai_plate_grid_ui(ns("grid")),
-        tags$h4("3. Configure the description field"),
+        tags$h4("3. Standards dilution reference"),
+        ai_std_reference_ui(ns("stdref")),
+        tags$h4("4. Configure the description field"),
         ai_shape_ui(ns("shape"))),
 
     wellPanel(
-      tags$h4(sprintf("%d. Layout template", step(4L, 2L))),
+      tags$h4(sprintf("%d. Layout template", step(5L, 2L))),
       uiOutput(ns("template_state")),
       downloadButton(ns("template"), "Download layout template"),
       tags$p(tags$small(
@@ -76,23 +83,23 @@ assay_import_ui <- function(id, descriptor) {
     ),
 
     wellPanel(
-      tags$h4(sprintf("%d. Upload completed layout template", step(5L, 3L))),
+      tags$h4(sprintf("%d. Upload completed layout template", step(6L, 3L))),
       fileInput(ns("layout_file"), NULL, accept = c(".xlsx", ".xls"))
     ),
 
     wellPanel(
-      tags$h4(sprintf("%d. Validation", step(6L, 4L))),
+      tags$h4(sprintf("%d. Validation", step(7L, 4L))),
       textOutput(ns("issue_summary")),
       DT::dataTableOutput(ns("issues"))
     ),
 
     wellPanel(
-      tags$h4(sprintf("%d. Preview", step(7L, 5L))),
+      tags$h4(sprintf("%d. Preview", step(8L, 5L))),
       tableOutput(ns("preview"))
     ),
 
     wellPanel(
-      tags$h4(sprintf("%d. Commit", step(8L, 6L))),
+      tags$h4(sprintf("%d. Commit", step(9L, 6L))),
       conditionalPanel(
         condition = sprintf("output['%s']", ns("ready")),
         actionButton(ns("commit"), "Upload to database", class = "btn-primary")
@@ -127,17 +134,21 @@ assay_import_server <- function(id, pool, descriptor, scope) {
       get_assay_reader(descriptor$assay, fmt)
     })
 
-    # ── pre-processor: stage 1 (grid) then stages 2-3 (shapes) ───────────────
+    # ── pre-processor: stage 1 (grid), 1.5 (standards reference), 2-3 (shapes) ──
     # Mounted unconditionally so the server shape is static; the UI renders only
-    # when the descriptor opts in, and with no inventory both modules idle.
-    grid  <- ai_plate_grid_server("grid", inventory_rv, detected_n_wells)
-    shape <- ai_shape_server("shape", inventory_rv,
-                             enabled = reactive(isTRUE(grid$ready())),
-                             assay   = reactive(descriptor$assay))
+    # when the descriptor opts in, and with no inventory all three modules idle.
+    grid   <- ai_plate_grid_server("grid", inventory_rv, detected_n_wells)
+    stdref <- ai_std_reference_server("stdref", inventory_rv, pool, scope,
+                                      enabled = reactive(isTRUE(grid$ready())),
+                                      specimen_type = "S")
+    shape  <- ai_shape_server("shape", inventory_rv,
+                             enabled   = reactive(isTRUE(grid$ready()) && isTRUE(stdref$ready())),
+                             assay     = reactive(descriptor$assay),
+                             reference = stdref$reference)
 
     pre_ready <- reactive({
       if (!use_pre) return(TRUE)
-      isTRUE(grid$ready()) && isTRUE(shape$ready())
+      isTRUE(grid$ready()) && isTRUE(stdref$ready()) && isTRUE(shape$ready())
     })
 
     # Plate size, in priority order: inferred by the inventory (which already
