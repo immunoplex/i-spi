@@ -285,15 +285,23 @@
 #' @param fit_df      fetch_weights_panel_fit() result (antigen/feature/
 #'   source/multiplate_group_id/method/phi/beta1/n_eff/interpretation/...).
 #' @param antigens    antigen values to include (one panel each).
+#' @param features    optional, same length as `antigens`: a feature to pin
+#'   that panel to (NA = combine all of that antigen's features, today's
+#'   behavior). Lets one antigen carrying several analytes (e.g. a combined
+#'   flow experiment) get one panel per analyte instead of pooling them.
 #' @param ncol         panel grid width (default 3).
 #' @param x_log        log10 x-axis? (default TRUE)
 #' @param point_size   point size (default 2.0).
 #' @return a patchwork figure.
-precision_weight_panel <- function(weights_df, fit_df, antigens,
+precision_weight_panel <- function(weights_df, fit_df, antigens, features = NULL,
                                    ncol = 3L, x_log = TRUE, point_size = 2.0) {
   antigens <- as.character(antigens)
   n_ag <- length(antigens)
   if (n_ag == 0L) stop("precision_weight_panel: no antigens to plot.")
+  if (is.null(features)) features <- rep(NA_character_, n_ag)
+  features <- as.character(features)
+  if (length(features) != n_ag)
+    stop("precision_weight_panel: features must be the same length as antigens.")
 
   all_plates <- if (nrow(weights_df))
     .pwp_natural_sort_plates(unique(as.character(weights_df$plate))) else character(0)
@@ -301,16 +309,27 @@ precision_weight_panel <- function(weights_df, fit_df, antigens,
 
   panels <- vector("list", n_ag)
   for (i in seq_len(n_ag)) {
-    ag <- antigens[i]
-    d_ag   <- weights_df[weights_df$antigen == ag, , drop = FALSE]
-    fit_ag <- if (nrow(fit_df)) fit_df[fit_df$antigen == ag, , drop = FALSE] else fit_df
+    ag   <- antigens[i]
+    feat <- features[i]
+    ag_rows <- weights_df[weights_df$antigen == ag, , drop = FALSE]
+    has_feat_col <- "feature" %in% names(ag_rows)
+    d_ag <- if (!is.na(feat) && has_feat_col)
+      ag_rows[ag_rows$feature == feat, , drop = FALSE] else ag_rows
+    fit_ag_all <- if (nrow(fit_df)) fit_df[fit_df$antigen == ag, , drop = FALSE] else fit_df
+    fit_ag <- if (!is.na(feat) && "feature" %in% names(fit_ag_all))
+      fit_ag_all[fit_ag_all$feature == feat, , drop = FALSE] else fit_ag_all
     is_first <- ((i - 1L) %% ncol) == 0L
-    panel_title <- toupper(ag)
+    # One subplot title per (antigen, feature) when the antigen actually
+    # carries more than one feature in scope; bare antigen otherwise --
+    # identical to today's title when every antigen has a single feature.
+    ag_feature_count <- if (has_feat_col) length(unique(ag_rows$feature)) else 1L
+    panel_title <- if (is.na(feat) || ag_feature_count <= 1L) toupper(ag)
+                   else sprintf("%s / %s", toupper(feat), toupper(ag))
 
     if (nrow(d_ag) == 0L) {
       panels[[i]] <- ggplot2::ggplot() + ggplot2::theme_void() +
         ggplot2::annotate("text", x = .5, y = .5,
-                          label = paste0("no weights data\n(", ag, ")"),
+                          label = paste0("no weights data\n(", panel_title, ")"),
                           colour = "grey50", size = 3.5) +
         ggplot2::labs(title = panel_title)
       next
@@ -333,7 +352,7 @@ precision_weight_panel <- function(weights_df, fit_df, antigens,
   }
 
   cap <- paste0(
-    "Precision weights for ", n_ag, " antigen", if (n_ag > 1L) "s" else "",
+    "Precision weights for ", n_ag, " target", if (n_ag > 1L) "s" else "",
     ". Model: sigma_i = phi * se_i^beta1 (curveRweights joint Bayesian/frequentist ",
     "location-scale fit); w_i = 1/sigma_i^2, normalised to mean = 1 (w_norm; dashed ",
     "blue line). Annotation per panel: one line per contributing standard curve ",

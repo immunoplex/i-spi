@@ -16,7 +16,10 @@ descriptor_flow <- list(
     tagList(
       numericInput(ns("n_wells"), "Wells per plate", value = 96, min = 1),
       textInput(ns("feature_value"), "Feature (isotype), e.g. MFI",
-                value = "MFI", placeholder = "\u226415 chars")
+                value = "MFI", placeholder = "\u226415 chars"),
+      checkboxInput(ns("combine_experiment"),
+                    "Also create a combined experiment (all analytes, one antigen)",
+                    value = TRUE)
     )
   }
 )

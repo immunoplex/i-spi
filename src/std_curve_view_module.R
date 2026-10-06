@@ -102,9 +102,40 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
                   input$antigen %||% "NULL", input$curve %||% "NULL", input$method %||% "NULL"))))
     })
 
-    output$antigen_ui <- shiny::renderUI({
+    # Antigen selector choices: plain antigen names when every antigen in scope
+    # has exactly one feature (today's behavior, unchanged); otherwise
+    # feature/antigen composite keys so curves sharing one antigen across
+    # several analytes (e.g. a combined flow experiment) stay distinguishable.
+    # Same "\u001f"-joined composite-key convention as
+    # std_curve_weights_module.R's fit_target selector.
+    antigen_choices <- shiny::reactive({
       lk <- lookup()
-      ags <- if (!is.null(lk) && nrow(lk)) sort(unique(lk$antigen)) else character(0)
+      if (is.null(lk) || !nrow(lk)) return(setNames(character(0), character(0)))
+      pairs <- unique(lk[, c("feature", "antigen")])
+      pairs <- pairs[order(pairs$feature, pairs$antigen), , drop = FALSE]
+      if (length(unique(pairs$feature)) <= 1) {
+        ags <- sort(unique(pairs$antigen))
+        return(setNames(ags, ags))
+      }
+      vals <- paste(pairs$feature, pairs$antigen, sep = "\u001f")
+      labs <- sprintf("%s / %s", pairs$feature, pairs$antigen)
+      setNames(vals, labs)
+    })
+
+    # Parse an antigen_ui selection back into (feature, antigen); feature is
+    # NA when the plain (non-composite) form is in use.
+    .parse_antigen_sel <- function(x) {
+      if (is.null(x) || !nzchar(x)) return(list(feature = NA_character_, antigen = NA_character_))
+      if (grepl("\u001f", x, fixed = TRUE)) {
+        fa <- strsplit(x, "\u001f", fixed = TRUE)[[1]]
+        list(feature = fa[1], antigen = fa[2])
+      } else {
+        list(feature = NA_character_, antigen = x)
+      }
+    }
+
+    output$antigen_ui <- shiny::renderUI({
+      ags <- antigen_choices()
       keep <- shiny::isolate(input$antigen)
       sel <- if (!is.null(keep) && nzchar(keep) && keep %in% ags) keep
              else if (length(ags)) ags[1] else NULL
@@ -126,7 +157,11 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       shiny::req(input$antigen)
       lk <- lookup()
       if (is.null(lk) || !nrow(lk)) return(lk[0, , drop = FALSE])
-      lk[lk$antigen == input$antigen, , drop = FALSE]
+      sel <- .parse_antigen_sel(input$antigen)
+      if (!is.na(sel$feature))
+        lk[lk$antigen == sel$antigen & lk$feature == sel$feature, , drop = FALSE]
+      else
+        lk[lk$antigen == sel$antigen, , drop = FALSE]
     })
 
     # Distinct standard-curve sources present for the current antigen.

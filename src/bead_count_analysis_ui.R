@@ -94,8 +94,9 @@ beadCountModuleUI <- function(id) {
       ),
       mainPanel(
         fluidRow(
-          column(6, uiOutput(ns("plateSelection_bead_count_UI"))),
-          column(6,uiOutput(ns("sample_data_antigenUI"))),
+          column(4, uiOutput(ns("plateSelection_bead_count_UI"))),
+          column(4, uiOutput(ns("sample_data_antigenUI"))),
+          column(4, uiOutput(ns("sample_data_featureUI"))),
         ),
         plotlyOutput(ns("beadCountPlot"), width = "75vw"),
         br(),
@@ -261,6 +262,27 @@ beadCountServer <- function(id, selected_study, selected_experiment,currentuser)
                   label = "Antigen",
                   choices = unique(dat_antigen$antigen))
     })
+
+    # Feature (analyte) selector -- rendered ONLY when the selected antigen
+    # carries more than one feature (e.g. a combined flow experiment with
+    # several analytes under one antigen). A lone feature needs no picker, so
+    # every existing single-feature experiment sees no change at all.
+    output$sample_data_featureUI <- renderUI({
+      req(sample_data_bc$study_accession, sample_data_bc$experiment_accession)
+      req(input$plateSelection_bead, input$antigenSelectionBead)
+
+      dat_feat <- sample_data_bc[
+        sample_data_bc$study_accession %in% selected_study() &
+          sample_data_bc$experiment_accession %in% selected_experiment() &
+          sample_data_bc$plate_nom %in% input$plateSelection_bead &
+          sample_data_bc$antigen %in% input$antigenSelectionBead,
+      ]
+      feats <- if ("feature" %in% names(dat_feat)) unique(dat_feat$feature) else character(0)
+      if (length(feats) <= 1) return(NULL)
+
+      selectInput(ns("featureSelectionBead"), label = "Feature", choices = feats)
+    })
+
     output$beadCountPlot <- renderPlotly({
       req(sample_data_bc)
       req(input$plateSelection_bead, input$antigenSelectionBead)
@@ -272,6 +294,8 @@ beadCountServer <- function(id, selected_study, selected_experiment,currentuser)
       # req(upper_bc_threshold)
       # req(lower_bc_threshold)
       sub_sample_data_bc <- sample_data_bc[sample_data_bc$plate_nom == input$plateSelection_bead & sample_data_bc$antigen == input$antigenSelectionBead,]
+      if (!is.null(input$featureSelectionBead) && "feature" %in% names(sub_sample_data_bc))
+        sub_sample_data_bc <- sub_sample_data_bc[sub_sample_data_bc$feature == input$featureSelectionBead,]
       plot_bead_count(df_well = sub_sample_data_bc, lower_threshold = lower_bc_threshold,
                       upper_threshold = upper_bc_threshold , failed_well_criteria =  failed_well_criteria)
       # plot_bead_count(df_well = sample_data_well(), lower_threshold = lower_threshold_rv(),
@@ -288,6 +312,8 @@ beadCountServer <- function(id, selected_study, selected_experiment,currentuser)
      # req(input$plateSelection_bead, input$antigenSelectionBead)
       req(study_configuration)
       sub_sample_data_bc <- sample_data_bc[sample_data_bc$plate_nom == input$plateSelection_bead & sample_data_bc$antigen == input$antigenSelectionBead,]
+      if (!is.null(input$featureSelectionBead) && "feature" %in% names(sub_sample_data_bc))
+        sub_sample_data_bc <- sub_sample_data_bc[sub_sample_data_bc$feature == input$featureSelectionBead,]
       bead_count_gc_table <- bead_count_gc(df_well = sub_sample_data_bc, lower_threshold = lower_bc_threshold,
                                            upper_threshold = upper_bc_threshold , failed_well_criteria =  failed_well_criteria)
 

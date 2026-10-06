@@ -20,6 +20,11 @@
 #      feature so the (feature-required) antigen-family landing is satisfied.
 #      This makes the feature EXPLICIT in the antigen_list column as well as the
 #      experiment name (legacy flow encoded it only in the experiment name).
+#      Unless opts$combine_experiment is FALSE, an ADDITIONAL unit landing all
+#      features together (exp_accession -> exp_accessioncomb, truncated to the
+#      15-char accession limit) is appended alongside the per-feature ones, so
+#      multi-analyte/single-antigen tabs (std curve, dilution series) can see
+#      every analyte at once without disturbing the per-feature experiments.
 #
 # Option A (wrap-then-lift): delegates parsing to existing functions (lift in
 # Phase 4, then retire the source):
@@ -203,7 +208,8 @@
   frames$controls <- .flow_resolve_dilution(frames$controls, opts$dilutions_ref)
 
   # stash the base experiment so split_experiments() can build exp_<feature>
-  attr(frames, "base_experiment") <- scope$experiment
+  attr(frames, "base_experiment")     <- scope$experiment
+  attr(frames, "combine_experiment")  <- isTRUE(opts$combine_experiment)
   frames
 }
 
@@ -240,6 +246,54 @@
   sort(unique(feats[!is.na(feats) & nzchar(trimws(feats))]))
 }
 
+# The real antigen for a unit: flow has exactly one target antigen per
+# experiment, listed (possibly repeated per feature) in antigen_list.
+.flow_resolve_antigen <- function(al) {
+  ag_vals <- if (!is.null(al) && "antigen_abbreviation" %in% names(al))
+    unique(as.character(al$antigen_abbreviation)) else character()
+  ag_vals <- ag_vals[!is.na(ag_vals) & nzchar(trimws(ag_vals)) &
+                     tolower(trimws(ag_vals)) != tolower(AI_TEXT_WILDCARD)]
+  if (length(ag_vals) == 1L) ag_vals else NA_character_
+}
+
+# Thread the antigen onto a specimen frame so curve_lookup records it (flow
+# response has no per-well antigen). Only fills when absent/blank/none.
+.flow_stamp_antigen <- function(df, antigen_val) {
+  if (is.null(df) || !nrow(df) || is.na(antigen_val)) return(df)
+  if (!"antigen" %in% names(df)) {
+    df$antigen <- antigen_val
+  } else {
+    empty <- is.na(df$antigen) | !nzchar(trimws(as.character(df$antigen))) |
+             tolower(trimws(as.character(df$antigen))) == tolower(AI_TEXT_WILDCARD)
+    df$antigen[empty] <- antigen_val
+  }
+  df
+}
+
+# Combined unit: every feature (analyte) together under the single shared
+# antigen, landed as its own experiment (base name + "comb", truncated to the
+# 15-char accession limit) ALONGSIDE the per-feature units -- never replacing
+# them.
+.flow_combined_unit <- function(frames) {
+  base_exp    <- attr(frames, "base_experiment")
+  al          <- frames$antigen_list
+  antigen_val <- .flow_resolve_antigen(al)
+
+  suffix     <- "comb"
+  base_trunc <- substr(base_exp %||% "", 1, max(0L, 15L - nchar(suffix)))
+  exp_comb   <- paste0(base_trunc, suffix)
+
+  list(
+    experiment   = exp_comb,
+    header       = frames$header,
+    samples      = .flow_stamp_antigen(frames$samples,   antigen_val),
+    standards    = .flow_stamp_antigen(frames$standards, antigen_val),
+    blanks       = .flow_stamp_antigen(frames$blanks,    antigen_val),
+    controls     = .flow_stamp_antigen(frames$controls,  antigen_val),
+    antigen_list = al
+  )
+}
+
 .flow_split_experiments <- function(frames) {
   feats    <- .flow_feature_set(frames)
   base_exp <- attr(frames, "base_experiment")
@@ -253,7 +307,7 @@
     out
   }
 
-  lapply(feats, function(feat) {
+  per_feature <- lapply(feats, function(feat) {
     exp_feat <- if (!is.null(base_exp)) paste0(base_exp, "_", feat) else feat
 
     # antigen_list for this isotype: slice if it already carries feature,
@@ -268,37 +322,25 @@
       rownames(al) <- NULL
     }
 
-    # the real antigen for this unit (flow has one target per experiment)
-    ag_vals <- if (!is.null(al) && "antigen_abbreviation" %in% names(al))
-      unique(as.character(al$antigen_abbreviation)) else character()
-    ag_vals <- ag_vals[!is.na(ag_vals) & nzchar(trimws(ag_vals)) &
-                       tolower(trimws(ag_vals)) != tolower(AI_TEXT_WILDCARD)]
-    antigen_val <- if (length(ag_vals) == 1L) ag_vals else NA_character_
-
-    # thread the antigen onto specimen frames so curve_lookup records it
-    # (flow response has no per-well antigen). Only fills when absent/blank/none.
-    stamp_ag <- function(df) {
-      if (is.null(df) || !nrow(df) || is.na(antigen_val)) return(df)
-      if (!"antigen" %in% names(df)) {
-        df$antigen <- antigen_val
-      } else {
-        empty <- is.na(df$antigen) | !nzchar(trimws(as.character(df$antigen))) |
-                 tolower(trimws(as.character(df$antigen))) == tolower(AI_TEXT_WILDCARD)
-        df$antigen[empty] <- antigen_val
-      }
-      df
-    }
+    antigen_val <- .flow_resolve_antigen(al)
 
     list(
       experiment   = exp_feat,
       header       = frames$header,          # all plates; backend stamps experiment
-      samples      = stamp_ag(slice_feat(frames$samples,   feat)),
-      standards    = stamp_ag(slice_feat(frames$standards, feat)),
-      blanks       = stamp_ag(slice_feat(frames$blanks,    feat)),
-      controls     = stamp_ag(slice_feat(frames$controls,  feat)),
+      samples      = .flow_stamp_antigen(slice_feat(frames$samples,   feat), antigen_val),
+      standards    = .flow_stamp_antigen(slice_feat(frames$standards, feat), antigen_val),
+      blanks       = .flow_stamp_antigen(slice_feat(frames$blanks,    feat), antigen_val),
+      controls     = .flow_stamp_antigen(slice_feat(frames$controls,  feat), antigen_val),
       antigen_list = al
     )
   })
+
+  # Land every analyte together under the shared antigen too, unless the
+  # uploader opted out. Nothing to combine when there's only one feature.
+  if (length(feats) > 1L && isTRUE(attr(frames, "combine_experiment")))
+    per_feature <- c(per_feature, list(.flow_combined_unit(frames)))
+
+  per_feature
 }
 
 

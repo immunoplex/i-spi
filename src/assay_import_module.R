@@ -184,6 +184,7 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         user           = s$user,
         n_wells        = detected_n_wells(),
         feature_value  = input$feature_value,
+        combine_experiment = isTRUE(input$combine_experiment),
         # The description is no longer described by a delimiter plus one element
         # order per type. The pre-processor hands over already-resolved identity
         # per well, plus the ruleset for the workbook's audit sheet.

@@ -691,47 +691,80 @@ stdCurveWeightsServer <- function(id, pool, api = compute_api_client(), scope = 
                         choices = srcs, selected = if (length(srcs)) srcs[1] else character(0))
     })
 
+    # Panel target choices: bare antigen names when every antigen in scope has
+    # exactly one feature (today's behavior, unchanged); otherwise
+    # feature/antigen composite keys -- same "\u001f"-joined convention as
+    # `fit_target` above -- so one antigen carrying several analytes (e.g. a
+    # combined flow experiment) can be compared side by side instead of
+    # pooled into one subplot.
     output$panel_antigens_ui <- shiny::renderUI({
       lk <- lookup()
-      ags <- if (is.null(lk) || !nrow(lk)) character(0) else sort(unique(lk$antigen))
-      default_sel <- if (length(ags) > PANEL_MAX_ANTIGENS) ags[seq_len(PANEL_MAX_ANTIGENS)] else ags
+      if (is.null(lk) || !nrow(lk)) {
+        return(shiny::selectizeInput(session$ns("panel_antigens"),
+          sprintf("Antigens (up to %d)", PANEL_MAX_ANTIGENS),
+          choices = character(0), selected = character(0), multiple = TRUE))
+      }
+      pairs <- unique(lk[, c("feature", "antigen")])
+      pairs <- pairs[order(pairs$feature, pairs$antigen), , drop = FALSE]
+      one_feature <- length(unique(pairs$feature)) <= 1
+      choices <- if (one_feature) {
+        ags <- sort(unique(pairs$antigen)); stats::setNames(ags, ags)
+      } else {
+        vals <- paste(pairs$feature, pairs$antigen, sep = "\u001f")
+        labs <- sprintf("%s / %s", pairs$feature, pairs$antigen)
+        stats::setNames(vals, labs)
+      }
+      default_sel <- if (length(choices) > PANEL_MAX_ANTIGENS)
+        choices[seq_len(PANEL_MAX_ANTIGENS)] else choices
       shiny::tagList(
         shiny::selectizeInput(session$ns("panel_antigens"),
           sprintf("Antigens (up to %d)", PANEL_MAX_ANTIGENS),
-          choices = ags, selected = default_sel, multiple = TRUE,
+          choices = choices, selected = default_sel, multiple = TRUE,
           options = list(maxItems = PANEL_MAX_ANTIGENS, plugins = list("remove_button"))),
-        if (length(ags) > PANEL_MAX_ANTIGENS)
+        if (length(choices) > PANEL_MAX_ANTIGENS)
           shiny::tags$small(style = "color:#787878;",
-            sprintf("%d antigens available -- remove one to add another.", length(ags)))
+            sprintf("%d targets available -- remove one to add another.", length(choices)))
         else NULL
       )
+    })
+
+    # Selected panel targets parsed back into (antigen, feature); feature is
+    # NA for the plain (non-composite) form.
+    panel_targets <- shiny::reactive({
+      sel <- input$panel_antigens; shiny::req(length(sel) > 0)
+      is_composite <- grepl("\u001f", sel, fixed = TRUE)
+      parts <- strsplit(sel, "\u001f", fixed = TRUE)
+      feat <- ifelse(is_composite, vapply(parts, `[`, character(1), 1), NA_character_)
+      ag   <- ifelse(is_composite, vapply(parts, `[`, character(1), 2), sel)
+      data.frame(antigen = ag, feature = feat, stringsAsFactors = FALSE)
     })
 
     panel_weights_data <- shiny::reactive({
       design_dirty(); job_checked_at()
       s <- cur(); shiny::req(s$study, s$experiment, input$panel_method, input$panel_source)
-      ags <- input$panel_antigens; shiny::req(length(ags) > 0)
+      tg <- panel_targets()
       fetch_weights_panel_data(pool, project = s$project_id, study = s$study,
                                experiment = s$experiment, method = input$panel_method,
-                               antigens = ags, source = input$panel_source)
+                               antigens = unique(tg$antigen), source = input$panel_source)
     })
 
     panel_fit_data <- shiny::reactive({
       design_dirty(); job_checked_at()
       s <- cur(); shiny::req(s$study, s$experiment, input$panel_method, input$panel_source)
-      ags <- input$panel_antigens; shiny::req(length(ags) > 0)
+      tg <- panel_targets()
       fetch_weights_panel_fit(pool, project = s$project_id, study = s$study,
                               experiment = s$experiment, method = input$panel_method,
-                              antigens = ags, source = input$panel_source)
+                              antigens = unique(tg$antigen), source = input$panel_source)
     })
 
     output$weights_panel_plot <- shiny::renderPlot({
-      ags <- input$panel_antigens; shiny::req(length(ags) > 0)
+      tg <- panel_targets()
       wd <- panel_weights_data(); shiny::req(nrow(wd) > 0)
       fd <- panel_fit_data()
-      precision_weight_panel(wd, fd, antigens = ags, ncol = min(3L, length(ags)))
+      precision_weight_panel(wd, fd, antigens = tg$antigen, features = tg$feature,
+                             ncol = min(3L, nrow(tg)))
     }, height = function() {
-      ags <- input$panel_antigens; n <- max(1L, length(ags))
+      tg <- panel_targets(); n <- max(1L, nrow(tg))
       ncol <- min(3L, n)
       ceiling(n / ncol) * 340
     })
