@@ -20,9 +20,13 @@
 # Public surface:
 #   ai_std_reference_ui(id)
 #   ai_std_reference_server(id, inventory_rv, pool, scope,
-#                           enabled = reactive(TRUE), specimen_type = "S")
+#                           enabled = reactive(TRUE), specimen_type = "S",
+#                           refresh = reactive(NULL))
 #     scope: a reactive returning list(project_id, study, experiment, user) --
 #       the SAME shape assay_import_module.R's own `scope` argument has.
+#     refresh: optional reactive whose changing value (any change, any type)
+#       forces a reload of the saved reference from the DB -- for a caller
+#       that writes to it from outside this module (e.g. an auto-seed step).
 #     returns list(ready = reactive(lgl), reference = reactive(data.frame or NULL))
 #
 # Depends on assay_std_reference_rules.R (pure logic), assay_well_inventory.R
@@ -52,8 +56,10 @@ ai_std_reference_ui <- function(id) {
 }
 
 ai_std_reference_server <- function(id, inventory_rv, pool, scope,
-                                    enabled = reactive(TRUE), specimen_type = "S") {
+                                    enabled = reactive(TRUE), specimen_type = "S",
+                                    refresh = reactive(NULL)) {
   force(inventory_rv); force(pool); force(scope); force(enabled); force(specimen_type)
+  force(refresh)
 
   PARAM <- "standard_dilution_reference"
 
@@ -69,7 +75,12 @@ ai_std_reference_server <- function(id, inventory_rv, pool, scope,
       paste(s$project_id %||% "", s$study %||% "", s$experiment %||% "", sep = "\r")
     })
 
-    observeEvent(scope_key(), {
+    # Re-read whenever the scope changes OR `refresh` ticks -- the latter lets
+    # a caller force a reload after writing to the saved reference from
+    # elsewhere (e.g. assay_import_module.R auto-seeding it from a reader's
+    # own authoritative source right after parsing), without which this
+    # already-mounted module would keep showing a stale saved_rv.
+    observeEvent(list(scope_key(), refresh()), {
       s <- scope() %||% list()
       if (is.null(s$project_id) || is.null(s$study) || !nzchar(s$experiment %||% "")) {
         saved_rv(AI_STD_REFERENCE_EMPTY)

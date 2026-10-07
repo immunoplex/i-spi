@@ -153,6 +153,12 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       if (is.null(d) || !nrow(d)) return(numeric())
       d$instrument_dilution[!is.na(d$specimen_type) & d$specimen_type == t]
     }
+    inst_source_of <- function(t) {
+      d <- inv()
+      if (is.null(d) || !nrow(d) || !"instrument_source" %in% names(d))
+        return(character())
+      d$instrument_source[!is.na(d$specimen_type) & d$specimen_type == t]
+    }
     # Per-well lookup into the experiment-scoped Standards reference table
     # (assay_std_reference_ui.R), aligned to desc_of(t)/inst_of(t)'s row order.
     ref_of <- function(t) {
@@ -203,6 +209,7 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
           plates <- plates_of(tt)
           inst   <- inst_of(tt)
           ref    <- ref_of(tt)
+          inst_src <- inst_source_of(tt)
           st <- tryCatch(
             ai_shape_table(desc, rule$delimiters, rule$shape_by, plates = plates),
             error = function(e) {
@@ -216,7 +223,8 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
             in_shape <- !is.na(st$keys) & st$keys == k
             strs <- desc[in_shape]
             tryCatch(ai_shape_verdict(tt, k, strs, rule, instrument_dilution = inst[in_shape],
-                                     reference_dilution = ref[in_shape]),
+                                     reference_dilution = ref[in_shape],
+                                     instrument_source = inst_src[in_shape]),
                      error = function(e)
                        list(ok = FALSE, n_strings = length(unique(strs)), n_failing = length(unique(strs)),
                             failing_examples = utils::head(unique(strs), 1L),
@@ -609,13 +617,20 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         # looks permanently unresolved here even though it resolves fine at
         # commit time -- which is exactly backwards for a screen whose whole
         # purpose is showing the user what will actually happen.
-        desc_all <- desc_of(tt)
-        inst_all <- inst_of(tt)
-        ref_all  <- ref_of(tt)
+        desc_all     <- desc_of(tt)
+        inst_all     <- inst_of(tt)
+        ref_all      <- ref_of(tt)
+        inst_src_all <- inst_source_of(tt)
         cover <- function(vec, str) {
           m <- !is.na(desc_all) & desc_all == str
           if (!any(m)) return(NA_real_)
           suppressWarnings(min(vec[m], na.rm = FALSE))
+        }
+        cover_chr <- function(vec, str) {
+          m <- !is.na(desc_all) & desc_all == str
+          if (!any(m)) return(NA_character_)
+          u <- unique(vec[m])
+          if (length(u) == 1L) u else NA_character_
         }
         src_label <- c(instrument = "from instrument file", reference = "from saved reference",
                       text = "from description text")
@@ -623,7 +638,8 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         out <- do.call(rbind, lapply(s, function(x) {
           r <- tryCatch(ai_resolve_one(x, tt, ss$rule,
                                        instrument_dilution = cover(inst_all, x),
-                                       reference_dilution  = cover(ref_all, x)),
+                                       reference_dilution  = cover(ref_all, x),
+                                       instrument_source    = cover_chr(inst_src_all, x)),
                        error = function(e) NULL)
           if (is.null(r))
             return(data.frame(Description = x, PatientID = "", TimePeriod = "",

@@ -12,6 +12,7 @@ descriptor_flow <- list(
   assay          = "flow",
   label          = "Post-gating Flow Cytometry",
   default_format = "flowjo",
+  preprocess     = TRUE,   # mount the description pre-processor
   assay_controls = function(ns) {
     tagList(
       numericInput(ns("n_wells"), "Wells per plate", value = 96, min = 1),

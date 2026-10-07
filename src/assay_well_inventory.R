@@ -33,12 +33,21 @@
 #   type_origin    "file" | "proposed" | "user"
 #   desc_origin    "file" | "user"
 #   instrument_dilution  the reader's own authoritative per-well dilution, when
-#                  it supplies one (currently .rbx/.srbx only; NA for every
-#                  other format/adapter). NOT the same thing as a dilution
-#                  parsed from Description text -- see assay_shape_rules.R's
-#                  ai_resolve_one(), which prefers this over text for Samples
-#                  and Controls only (never Standards -- the Bio-Plex binary's
-#                  numeric dilution field is a constant placeholder for those).
+#                  it supplies one (currently .rbx/.srbx and flow; NA for
+#                  every other format/adapter). NOT the same thing as a
+#                  dilution parsed from Description text -- see
+#                  assay_shape_rules.R's ai_resolve_one(), which prefers this
+#                  over text for Samples and Controls only (never Standards --
+#                  the Bio-Plex binary's numeric dilution field is a constant
+#                  placeholder for those; flow's own Standards dilutions are
+#                  seeded into the experiment-scoped reference table instead,
+#                  see reader_flow.R's std_reference_seed).
+#   instrument_source  the reader's own authoritative per-well specimen
+#                  source/vendor label, when it supplies one (currently flow
+#                  only, from its uploaded "dilutions" tab; NA otherwise).
+#                  ai_resolve_one() prefers this over text for every specimen
+#                  type -- unlike dilution there's no placeholder quirk to
+#                  exclude any type from.
 #
 # The inventory is the pre-processor's single piece of mutable state. Stage 1
 # (plate grid) edits type_code/description; stages 2-4 read it and never change
@@ -57,7 +66,7 @@ AI_WELL_INVENTORY_COLS <- c(
   "type_code", "specimen_type", "description",
   "raw_type_code", "raw_description",
   "source_file", "response_hint", "type_origin", "desc_origin",
-  "instrument_dilution"
+  "instrument_dilution", "instrument_source"
 )
 
 AI_SPECIMEN_TYPES <- c("X", "S", "B", "C")
@@ -293,6 +302,55 @@ get_well_inventory_adapter <- function(assay) {
   out <- flat[first, setdiff(names(flat), "resp"), drop = FALSE]
   out$response_hint <- as.numeric(hint[key[first]])
   rownames(out) <- NULL
+
+  # Instrument-authoritative dilution from the uploaded "dilutions" reference
+  # tab, when present (raw$template_seed$dilutions, reader_flow.R), for X and
+  # C -- same role as .rbx's dilution_map above, same X/C-only gate
+  # ai_resolve_one() already applies. X's dilution doesn't vary by patientid
+  # (only by feature), so any one representative value satisfies the gate; C
+  # varies by WHICH control the well's (plate-number-stripped) description
+  # names, so it's looked up by patientid == description.
+  out$instrument_dilution <- NA_real_
+  dil <- raw$template_seed$dilutions
+  if (!is.null(dil) && nrow(dil) &&
+      all(c("stype", "patientid", "dilution_factor") %in% names(dil))) {
+    x_dil <- suppressWarnings(as.numeric(
+      dil$dilution_factor[dil$stype == "X" & !is.na(dil$dilution_factor)]))
+    x_dil <- x_dil[is.finite(x_dil) & x_dil > 0]
+    if (length(x_dil))
+      out$instrument_dilution[!is.na(out$type_code) & out$type_code == "X"] <- x_dil[1]
+
+    c_sel <- dil$stype == "C" & !is.na(dil$patientid) & !is.na(dil$dilution_factor)
+    c_lkp <- dil[c_sel, c("patientid", "dilution_factor"), drop = FALSE]
+    c_lkp <- c_lkp[!duplicated(trimws(as.character(c_lkp$patientid))), , drop = FALSE]
+    is_c  <- !is.na(out$type_code) & out$type_code == "C"
+    c_val <- suppressWarnings(as.numeric(c_lkp$dilution_factor[
+      match(trimws(as.character(out$description[is_c])),
+           trimws(as.character(c_lkp$patientid)))]))
+    out$instrument_dilution[is_c] <- ifelse(is.finite(c_val) & c_val > 0, c_val, NA_real_)
+  }
+
+  # Instrument-authoritative SOURCE from the same dilutions tab, for S/B/C --
+  # not type-gated (unlike dilution, there's no placeholder quirk to exclude
+  # any type from). Looked up by (stype, patientid == description), since
+  # that's the natural key the tab already uses and the well's description
+  # already carries (plate-number-stripped, so "QC1"/"STD1"/"empty1" match
+  # exactly). X is left NA -- its source is already "sample" by convention.
+  out$instrument_source <- NA_character_
+  if (!is.null(dil) && nrow(dil) &&
+      all(c("stype", "patientid", "source") %in% names(dil))) {
+    for (t in c("S", "B", "C")) {
+      sel <- dil$stype == t & !is.na(dil$patientid) & !is.na(dil$source) & nzchar(dil$source)
+      lkp <- dil[sel, c("patientid", "source"), drop = FALSE]
+      if (!nrow(lkp)) next
+      lkp <- lkp[!duplicated(trimws(as.character(lkp$patientid))), , drop = FALSE]
+      is_t <- !is.na(out$type_code) & out$type_code == t
+      src_val <- lkp$source[match(trimws(as.character(out$description[is_t])),
+                                  trimws(as.character(lkp$patientid)))]
+      out$instrument_source[is_t] <- trimws(as.character(src_val))
+    }
+  }
+
   out
 }
 
@@ -314,6 +372,7 @@ register_well_inventory_adapter("flow",  .ai_inventory_flow)
 ai_well_inventory <- function(raw, assay, n_wells = 96, opts = list()) {
   flat <- get_well_inventory_adapter(assay)(raw, opts)
   if (!"instrument_dilution" %in% names(flat)) flat$instrument_dilution <- NA_real_
+  if (!"instrument_source" %in% names(flat)) flat$instrument_source <- NA_character_
 
   flat$well <- ai_normalize_well(flat$well_raw)
 
@@ -354,6 +413,7 @@ ai_well_inventory <- function(raw, assay, n_wells = 96, opts = list()) {
       source_file     = src$source_file[1],
       response_hint   = src$response_hint[idx],
       instrument_dilution = suppressWarnings(as.numeric(src$instrument_dilution[idx])),
+      instrument_source   = as.character(src$instrument_source[idx]),
       stringsAsFactors = FALSE)
   })
 

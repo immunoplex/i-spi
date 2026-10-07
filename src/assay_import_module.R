@@ -140,7 +140,8 @@ assay_import_server <- function(id, pool, descriptor, scope) {
     grid   <- ai_plate_grid_server("grid", inventory_rv, detected_n_wells)
     stdref <- ai_std_reference_server("stdref", inventory_rv, pool, scope,
                                       enabled = reactive(isTRUE(grid$ready())),
-                                      specimen_type = "S")
+                                      specimen_type = "S",
+                                      refresh = reactive(rv$raw))
     shape  <- ai_shape_server("shape", inventory_rv,
                              enabled   = reactive(isTRUE(grid$ready()) && isTRUE(stdref$ready())),
                              assay     = reactive(descriptor$assay),
@@ -230,6 +231,38 @@ assay_import_server <- function(id, pool, descriptor, scope) {
       tryCatch({
         rv$raw    <- rdr$parse_raw(input$raw_files, build_opts())
         rv$sheets <- NULL; rv$issues <- NULL; rv$committed <- FALSE
+
+        # Auto-seed the persisted Standards Dilution Reference from a reader's
+        # own authoritative source, when it supplies one (currently: flow's
+        # uploaded "dilutions" tab, reader_flow.R's std_reference_seed). Fills
+        # the SAME cascade setting ai_std_reference_server()'s own "Save"
+        # button writes, using the SAME merge -- the seed overwrites any
+        # existing saved value for a description it covers (the uploaded tab
+        # is the source of truth, refreshed on every upload). Optional and
+        # generic: a reader that doesn't set this is unaffected. Non-fatal --
+        # a failure here just leaves the step asking for manual entry.
+        seed <- rv$raw$template_seed$std_reference_seed
+        if (use_pre && !is.null(seed) && nrow(seed)) {
+          tryCatch({
+            s <- scope()
+            if (!is.null(s$project_id) && !is.null(s$study) && nzchar(s$experiment %||% "")) {
+              PARAM    <- "standard_dilution_reference"
+              existing <- resolve_settings_scoped(pool, project = s$project_id,
+                                                  study = s$study, experiment = s$experiment)
+              erow     <- existing[existing$param_name == PARAM, , drop = FALSE]
+              saved    <- ai_std_reference_parse(if (nrow(erow)) erow$value_text[1] else NULL)
+              merged   <- ai_std_reference_merge(saved, seed[, c("description", "dilution")])
+              set_setting(pool, project = s$project_id, study = s$study,
+                         param_name = PARAM, value = ai_std_reference_serialize(merged),
+                         user = s$user, experiment = s$experiment)
+              cat(sprintf(
+                "[assay_import] auto-seeded %d standard dilution reference value(s) from the uploaded dilutions tab\n",
+                nrow(seed)))
+            }
+          }, error = function(e)
+            cat("[assay_import] std-reference auto-seed skipped:", conditionMessage(e), "\n"))
+        }
+
         setProgress(value = 0.70, detail = "Building the well inventory\u2026")
 
         # Normalise the reader's preview into the editable well inventory. A

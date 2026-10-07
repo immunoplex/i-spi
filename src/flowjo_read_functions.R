@@ -31,15 +31,21 @@ parse_sample_id <- function(df,
                                         stringsAsFactors = FALSE)
   colnames(split_cols) <- new_cols
 
-  # Classify stype
+  # Classify stype. Standards/Controls/Blanks have a recognizable keyword
+  # prefix; test samples don't -- a lab's own subject-id convention varies
+  # (pure integer "10004", or an alphanumeric id with a site/cohort prefix
+  # like "UG-10004"), so X is the DEFAULT for anything that isn't clearly an
+  # S/C/B, not something that itself requires a pure-digit match. Requiring
+  # digits-only previously left every alphanumeric-prefixed sample
+  # unclassified (stype NA) -- excluded from the dilutions-tab join AND
+  # invisible to the plate-grid pre-processor as type X.
   classify_stype <- function(pid) {
     pid <- trimws(as.character(pid))
-    if (is.na(pid))                                        return(NA)
-    if (grepl("^\\d+$",         pid))                     return("X")
+    if (is.na(pid) || !nzchar(pid))                       return(NA)
     if (grepl("^STD",           pid, ignore.case = TRUE)) return("S")
     if (grepl("^QC",            pid, ignore.case = TRUE)) return("C")
     if (grepl("^(Blank|empty)", pid, ignore.case = TRUE)) return("B")
-    return(NA)
+    return("X")
   }
 
   split_cols$stype <- sapply(split_cols[[new_cols[1]]], classify_stype)

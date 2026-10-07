@@ -767,7 +767,7 @@ ai_rule_refresh_shapes <- function(rule, descriptions) {
 #'   won, for UI provenance display -- see assay_shape_ui.R's preview table),
 #'   issues data.frame(component, severity, message, kind))
 ai_resolve_one <- function(description, type_code, rule, instrument_dilution = NA_real_,
-                           reference_dilution = NA_real_) {
+                           reference_dilution = NA_real_, instrument_source = NA_character_) {
   tc <- if (exists("ai_type_letter", mode = "function"))
     ai_type_letter(type_code) else toupper(substr(trimws(as.character(type_code)), 1L, 1L))
 
@@ -806,6 +806,13 @@ ai_resolve_one <- function(description, type_code, rule, instrument_dilution = N
   for (comp in names(bindings))
     if (comp %in% AI_COMPONENTS)
       vals[[comp]] <- .ai_eval_binding(bindings[[comp]], toks, cls, type_code)
+
+  # Instrument override for Source: authoritative when supplied, wins over
+  # whatever the text binding produced -- same philosophy as DilutionFactor's
+  # instrument override below, but not type-gated (there's no placeholder
+  # quirk for source the way the Bio-Plex binary's dilution field has).
+  if (!is.na(instrument_source) && nzchar(trimws(instrument_source)))
+    vals[["Source"]] <- trimws(instrument_source)
 
   # dilution normalises to the integer denominator: 1:100 / 1/100 / 100 -> 100
   dil <- .ai_sr_dilution(if (nzchar(vals[["DilutionFactor"]])) vals[["DilutionFactor"]] else NA_character_)
@@ -868,9 +875,14 @@ ai_resolve_one <- function(description, type_code, rule, instrument_dilution = N
 #' @param reference_dilution optional, same shape as `instrument_dilution`,
 #'   sourced from the experiment-scoped Standards reference table instead of
 #'   the instrument file. Same "every well must be covered" conservatism.
+#' @param instrument_source optional, same length/order as `descriptions`:
+#'   each well's instrument-sourced Source label (NA where none). A distinct
+#'   string counts as covered only if every well carrying it agrees on the
+#'   SAME value -- same conservatism as the dilution overrides.
 #' @return list(ok, n_strings, n_failing, failing_examples, missing_components)
 ai_shape_verdict <- function(type, shape_key, descriptions, rule,
-                             instrument_dilution = NULL, reference_dilution = NULL) {
+                             instrument_dilution = NULL, reference_dilution = NULL,
+                             instrument_source = NULL) {
   d_all <- as.character(descriptions)
   keep  <- !is.na(d_all)
   d_all <- d_all[keep]
@@ -878,6 +890,8 @@ ai_shape_verdict <- function(type, shape_key, descriptions, rule,
            else as.numeric(instrument_dilution)[keep]
   ref   <- if (is.null(reference_dilution)) rep(NA_real_, length(d_all))
            else as.numeric(reference_dilution)[keep]
+  src   <- if (is.null(instrument_source)) rep(NA_character_, length(d_all))
+           else as.character(instrument_source)[keep]
   if (!length(d_all))
     return(list(ok = TRUE, n_strings = 0L, n_failing = 0L,
                 failing_examples = character(), missing_components = character()))
@@ -888,8 +902,12 @@ ai_shape_verdict <- function(type, shape_key, descriptions, rule,
     # NA if ANY well sharing this string lacks coverage from that source.
     cover_inst <- suppressWarnings(min(inst[in_s], na.rm = FALSE))
     cover_ref  <- suppressWarnings(min(ref[in_s],  na.rm = FALSE))
+    # character analogue: covered only if every well sharing this string
+    # agrees on one non-NA value.
+    src_u <- unique(src[in_s])
+    cover_src <- if (length(src_u) == 1L) src_u else NA_character_
     r <- ai_resolve_one(s, type, rule, instrument_dilution = cover_inst,
-                        reference_dilution = cover_ref)
+                        reference_dilution = cover_ref, instrument_source = cover_src)
     if (!is.null(r$issues) && any(r$issues$severity == "error")) {
       fail <- c(fail, s)
       miss <- c(miss, stats::na.omit(r$issues$component))
@@ -962,7 +980,9 @@ ai_resolve_inventory <- function(inv, ruleset, reference = NULL) {
     }
     r <- ai_resolve_one(d$description[i], d$type_code[i], rule,
                         instrument_dilution = d$instrument_dilution[i],
-                        reference_dilution = ref_dilution[i])
+                        reference_dilution = ref_dilution[i],
+                        instrument_source = if ("instrument_source" %in% names(d))
+                          d$instrument_source[i] else NA_character_)
     res$shape_key[i]                     <- r$shape_key
     res$subject_id[i]                    <- r$values[["PatientID"]]
     res$timepoint_tissue_abbreviation[i] <- r$values[["TimePeriod"]]

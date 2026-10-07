@@ -209,7 +209,8 @@ build_flowjo_plates_map <- function(flowjo_long,
                                      study_name,
                                      experiment_name,
                                      antigen_name = NA_character_,
-                                     feature = "MFI") {
+                                     feature = "MFI",
+                                     resolved = NULL) {
 
   cat("=== BUILD_FLOWJO_PLATES_MAP ===\n")
 
@@ -227,8 +228,26 @@ build_flowjo_plates_map <- function(flowjo_long,
   # group_by + summarise is intentionally avoided: pre-1.0.0 dplyr drops
   # grouping variables from the output and treats .groups as a data column.
   fl          <- flowjo_long
-  fl$well_96  <- convert_384_to_96_well(fl$well)
+  # `well` already arrives in 96-well form (reader_flow.R's .flow_parse_raw
+  # converts it before the well-inventory pre-processor ever sees it) --
+  # well_96 is just an alias kept for the rest of this function's naming.
+  fl$well_96  <- fl$well
   fl$tp_work  <- tp_vec
+
+  # ── Identity: resolved by the pre-processor (X only), or legacy (all) ───────
+  # `well` is already the 96-well label (converted in .flow_parse_raw), the
+  # same one the well inventory / resolved table used, so matching on
+  # fl$well is correct here. Only X's identity (subject_id/timepoint/groupa/
+  # groupb) actually changes: S/B/C's real source/dilution keep coming from
+  # the dilutions-tab join below, unaffected by this merge (see the
+  # derivation block further down).
+  has_resolved <- !is.null(resolved) && nrow(resolved) > 0
+  if (has_resolved) {
+    cat("\n  -> Applying confirmed layout + description rules (",
+        nrow(resolved), " resolved well(s))\n", sep = "")
+    fl <- ai_merge_resolved(fl, resolved, plate_col = "plateid", well_col = "well",
+                            keep_description = TRUE)
+  }
 
   # One row per plate x well_96
   well_key  <- paste(fl$plate, fl$well_96, sep = "\x1f")
@@ -247,7 +266,9 @@ build_flowjo_plates_map <- function(flowjo_long,
 
   # ── Build plates_map_raw ────────────────────────────────────────────────────
   keep_cols <- intersect(
-    c("plate", "well_96", "stype", "source", "patientid", "tp_work", "Sample_ID"),
+    c("plate", "well_96", "stype", "source", "patientid", "tp_work", "Sample_ID",
+      "specimen_type", "subject_id", "timepoint_tissue_abbreviation",
+      "groupa", "groupb"),
     names(fl_unique)
   )
   pmr <- fl_unique[, keep_cols, drop = FALSE]
@@ -270,29 +291,69 @@ build_flowjo_plates_map <- function(flowjo_long,
   pmr$study_name      <- study_name
   pmr$experiment_name <- experiment_name
 
-  pmr$specimen_type <- ifelse(pmr$stype == "X", "X",
-                       ifelse(pmr$stype == "C", "C",
-                       ifelse(pmr$stype == "B", "B",
-                       ifelse(pmr$stype == "S", "S", ""))))
+  if (has_resolved) {
+    pmr$specimen_type <- as.character(pmr$specimen_type)
+    pmr$specimen_type[is.na(pmr$specimen_type)] <- ""
+  } else {
+    pmr$specimen_type <- ifelse(pmr$stype == "X", "X",
+                         ifelse(pmr$stype == "C", "C",
+                         ifelse(pmr$stype == "B", "B",
+                         ifelse(pmr$stype == "S", "S", ""))))
+  }
+  is_x <- pmr$specimen_type == "X"
 
+  if (has_resolved) {
+    # X identity comes from the pre-processor (handles whatever delimiter /
+    # element pattern the lab used -- the actual point of this change). S/B/C
+    # keep the legacy patientid-based identity: it already distinguishes QC1
+    # vs QC2 vs QC3 / STD1..STD9 / empty1 correctly, and is exactly what the
+    # dilutions-tab join below (unaffected by this merge) matches against --
+    # collapsing it to the generic engine's bare Type-suffix convention would
+    # lose that distinction in the committed patientid column.
+    pmr$subject_id <- ifelse(is_x, as.character(pmr$subject_id),
+                             ifelse(pmr$stype == "B", "1", as.character(pmr$patientid)))
+    pmr$subject_id[is.na(pmr$subject_id) | pmr$subject_id == ""] <- "1"
+
+    pmr$timepoint_tissue_abbreviation <- ifelse(
+      is_x, as.character(pmr$timepoint_tissue_abbreviation), NA_character_)
+    pmr$timepoint_tissue_abbreviation[
+      is_x & (is.na(pmr$timepoint_tissue_abbreviation) |
+              pmr$timepoint_tissue_abbreviation == "")
+    ] <- "T0"
+
+    pmr$groupa <- ifelse(is_x, as.character(pmr$groupa), "")
+    pmr$groupb <- ifelse(is_x, as.character(pmr$groupb), "")
+    pmr$groupa[is.na(pmr$groupa)] <- ""
+    pmr$groupb[is.na(pmr$groupb)] <- ""
+
+    pmr$biosample_id_barcode <- ifelse(is_x, pmr$subject_id, as.character(pmr$patientid))
+  } else {
+    pmr$subject_id <- ifelse(pmr$stype == "B", "1", as.character(pmr$patientid))
+    pmr$subject_id[is.na(pmr$subject_id) | pmr$subject_id == ""] <- "1"
+
+    pmr$biosample_id_barcode <- as.character(pmr$patientid)
+
+    pmr$timepoint_tissue_abbreviation <- ifelse(
+      is_x, as.character(pmr$timepoint_val), NA_character_
+    )
+    pmr$timepoint_tissue_abbreviation[
+      is_x &
+      (is.na(pmr$timepoint_tissue_abbreviation) |
+       pmr$timepoint_tissue_abbreviation == "")
+    ] <- "T0"
+
+    pmr$groupa <- ""
+    pmr$groupb <- ""
+  }
+
+  # specimen_source ALWAYS comes from the dilutions-tab join (flowjo_long's
+  # stype/source, via pivot_flowjo_long()), never the pre-processor's
+  # resolution -- flow's existing per-type source reference stays
+  # authoritative regardless of has_resolved.
   pmr$specimen_source <- ifelse(
     pmr$stype == "X", "sample",
     ifelse(pmr$stype %in% c("C", "B", "S"), as.character(pmr$source), "")
   )
-
-  pmr$subject_id <- ifelse(pmr$stype == "B", "1", as.character(pmr$patientid))
-  pmr$subject_id[is.na(pmr$subject_id) | pmr$subject_id == ""] <- "1"
-
-  pmr$biosample_id_barcode <- as.character(pmr$patientid)
-
-  pmr$timepoint_tissue_abbreviation <- ifelse(
-    pmr$specimen_type == "X", as.character(pmr$timepoint_val), NA_character_
-  )
-  pmr$timepoint_tissue_abbreviation[
-    pmr$specimen_type == "X" &
-    (is.na(pmr$timepoint_tissue_abbreviation) |
-     pmr$timepoint_tissue_abbreviation == "")
-  ] <- "T0"
 
   # antigen = the antigen being tested (e.g. "PT").
   # The isotype (IgG/IgM/IgA) is the feature and lives in assay_response_long$feature.
@@ -311,7 +372,7 @@ build_flowjo_plates_map <- function(flowjo_long,
                   "specimen_source", "specimen_dilution_factor",
                   "experiment_name", "antigen", "subject_id",
                   "biosample_id_barcode", "timepoint_tissue_abbreviation",
-                  "plateid")
+                  "plateid", "groupa", "groupb")
   plates_map <- pmr[, intersect(final_cols, names(pmr)), drop = FALSE]
 
   cat("  Plates_map rows:", nrow(plates_map), "\n")
@@ -329,18 +390,27 @@ build_flowjo_plates_map <- function(flowjo_long,
 # BUILD: subject_groups tab
 # ==============================================================
 build_flowjo_subject_groups <- function(plates_map,
-                                         study_name) {
+                                         study_name,
+                                         resolved = FALSE) {
 
   cat("=== BUILD_FLOWJO_SUBJECT_GROUPS ===\n")
 
+  # The pre-processor already bound SampleGroupA/B per description shape, so
+  # the real values are already on plates_map (build_flowjo_plates_map()).
+  # Re-deriving them as "Unknown" here would discard that binding -- mirrors
+  # build_subject_groups()'s same `resolved` branch for bead/ELISA
+  # (generate_layout_template_ref.R).
+  has_groups <- isTRUE(resolved) && all(c("groupa", "groupb") %in% names(plates_map))
+
   subject_groups <- plates_map %>%
     filter(specimen_type == "X") %>%
-    select(study_name, subject_id) %>%
+    { if (has_groups) select(., study_name, subject_id, groupa, groupb)
+      else select(., study_name, subject_id) } %>%
     distinct() %>%
-    mutate(
-      groupa = "Unknown",
-      groupb = "Unknown"
-    ) %>%
+    { if (has_groups) mutate(.,
+        groupa = ifelse(is.na(groupa) | !nzchar(groupa), "Unknown", groupa),
+        groupb = ifelse(is.na(groupb) | !nzchar(groupb), "Unknown", groupb))
+      else mutate(., groupa = "Unknown", groupb = "Unknown") } %>%
     arrange(as.numeric(subject_id))
 
   if (nrow(subject_groups) == 0) {
@@ -422,7 +492,15 @@ build_flowjo_assay_response_long <- function(flowjo_long,
   names(pid)[names(pid) == "plate_number"] <- "plate"
 
   fl         <- flowjo_long
-  fl$well_96 <- convert_384_to_96_well(fl$well)
+  # flowjo_long may already carry its own plateid (reader_flow.R's
+  # .flow_parse_raw attaches one -- same formula plate_id$plateid uses -- so
+  # the well-inventory pre-processor has a globally-unique plate key). Drop it
+  # before merging so the join introduces a clean `plateid`, not a
+  # `plateid.x`/`plateid.y` pair that leaves `fl$plateid` NULL below.
+  fl$plateid <- NULL
+  # `well` already arrives in 96-well form (reader_flow.R's .flow_parse_raw) --
+  # well_96 is just an alias kept for the rest of this function's naming.
+  fl$well_96 <- fl$well
   fl         <- merge(fl, pid, by = "plate", all.x = TRUE)
 
   arl <- data.frame(
@@ -583,7 +661,9 @@ generate_flowjo_layout_template <- function(flowjo_long,
                                              output_file,
                                              source_filepath = NULL,
                                              feature  = "MFI",
-                                             n_wells  = 96) {
+                                             n_wells  = 96,
+                                             resolved_wells      = NULL,
+                                             description_ruleset = NULL) {
 
   cat("\n╔══════════════════════════════════════════════════════════╗\n")
   cat("║  GENERATING FLOWJO LAYOUT TEMPLATE                       ║\n")
@@ -643,7 +723,8 @@ generate_flowjo_layout_template <- function(flowjo_long,
     study_name      = study_name,
     experiment_name = experiment_name,
     antigen_name    = antigen_actual,
-    feature         = feature
+    feature         = feature,
+    resolved        = resolved_wells
   )
 
   # ----------------------------------------------------------
@@ -651,7 +732,8 @@ generate_flowjo_layout_template <- function(flowjo_long,
   # ----------------------------------------------------------
   subject_groups <- build_flowjo_subject_groups(
     plates_map = plates_map,
-    study_name = study_name
+    study_name = study_name,
+    resolved   = !is.null(resolved_wells) && nrow(resolved_wells) > 0
   )
 
   # ----------------------------------------------------------
@@ -692,6 +774,13 @@ generate_flowjo_layout_template <- function(flowjo_long,
     assay_response_long = assay_response_long,
     cell_valid          = cell_valid
   )
+
+  # Audit: record the approved description ruleset next to the data it
+  # produced (mirrors generate_layout_template()'s bead/ELISA behaviour).
+  if (!is.null(description_ruleset) && length(description_ruleset) &&
+      exists("ai_shape_ruleset_to_sheet", mode = "function")) {
+    workbook$parse_rule <- ai_shape_ruleset_to_sheet(description_ruleset)
+  }
 
   write_flowjo_workbook_sheets(wb, workbook)
   saveWorkbook(wb, output_file, overwrite = TRUE)

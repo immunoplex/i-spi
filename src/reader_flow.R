@@ -70,20 +70,83 @@
   flowjo_df <- result$flowjo_df
   dilutions <- result$dilutions
 
+  # The "Sample" text's trailing "_<plate_number>" (e.g. "STD1_1".."STD1_4",
+  # "10004-TP4_1") is a pure echo of which of the 4 subplates the well is on --
+  # plate identity is already tracked via plate/plateid, so it carries no
+  # information parse_sample_id() (above) hasn't already used. Left in, the
+  # SAME standard/control/blank/sample looks like a different description on
+  # every plate, multiplying the Standards Dilution Reference entries needed
+  # (and the sample-shape groups) by the subplate count. Strip it here, after
+  # parse_sample_id() has derived patientid/stype from the full original text,
+  # so the identity the pre-processor sees is just "STD1", not "STD1_1".
+  # Only strips an exact "_<that row's own plate_number>" suffix -- never a
+  # guess -- so a row that doesn't carry this echo is left untouched.
+  expected_suffix <- paste0("_", as.character(flowjo_df$plate_number))
+  has_suffix <- endsWith(as.character(flowjo_df$Sample_ID), expected_suffix)
+  if (any(!has_suffix, na.rm = TRUE))
+    warning(sprintf(
+      "flow: %d Sample_ID value(s) do not end in their own plate number ('_%s'); left unstripped.",
+      sum(!has_suffix, na.rm = TRUE), "<plate_number>"), call. = FALSE)
+  flowjo_df$Sample_ID[has_suffix] <- substr(
+    flowjo_df$Sample_ID[has_suffix], 1L,
+    nchar(flowjo_df$Sample_ID[has_suffix]) - nchar(expected_suffix[has_suffix]))
+
   flowjo_df$source_file     <- src_name
   flowjo_df$project_id      <- opts$project_id
   flowjo_df$study_name      <- opts$study
   flowjo_df$experiment_name <- opts$experiment %||% NA_character_
 
+  # Globally-unique plate key (same formula build_flowjo_plate_id() uses later,
+  # generate_flowjo_layout_template.R) so the well-inventory pre-processor's
+  # plate_key doesn't collide across multiple uploaded files that each number
+  # their subplates "plate_1".."plate_4".
+  flowjo_df$plateid <- make_plateid(flowjo_df$source_file, flowjo_df$plate)
+
+  # Each `plate` is a 96-well physical plate, but the "Sample" column embeds
+  # the FULL 384-well-grid position ("A01".."P24") -- the raw layout of the
+  # instrument's combined 384-well read, before FlowJo's 4-way subplate split.
+  # Converting to the per-subplate 96-well label HERE, before the well
+  # inventory is built, is what makes the plate-grid pre-processor see a
+  # 96-well plate (8x12) instead of mistakenly inferring a 384-well plate
+  # (16x24) from row letters up to "O"/"P" and odd/even columns up to 23/24.
+  # build_flowjo_plates_map()/build_flowjo_assay_response_long() (generate_
+  # flowjo_layout_template.R) no longer need to convert `well` themselves --
+  # it already arrives in 96-well form.
+  flowjo_df$well <- convert_384_to_96_well(flowjo_df$well)
+
   flowjo_long <- pivot_flowjo_long(flowjo_df, dilutions)
+
+  # Seed for the generic "Standards Dilution Reference" step
+  # (assay_std_reference_ui.R): the dilutions tab already has every Standard's
+  # true dilution (STD1..STD12 etc, one value per patientid -- doesn't vary by
+  # feature for this purpose, any one representative value is fine), so the
+  # user shouldn't have to retype what's already in the file they just
+  # uploaded. assay_import_module.R merges this into the persisted reference
+  # right after parsing.
+  std_reference_seed <- NULL
+  if (all(c("stype", "patientid", "dilution_factor") %in% names(dilutions))) {
+    s_dil <- dilutions[
+      dilutions$stype == "S" & !is.na(dilutions$patientid) & !is.na(dilutions$dilution_factor),
+      c("patientid", "dilution_factor"), drop = FALSE]
+    if (nrow(s_dil)) {
+      s_dil <- s_dil[!duplicated(trimws(as.character(s_dil$patientid))), , drop = FALSE]
+      std_reference_seed <- data.frame(
+        description = trimws(as.character(s_dil$patientid)),
+        dilution    = suppressWarnings(as.numeric(s_dil$dilution_factor)),
+        stringsAsFactors = FALSE)
+      std_reference_seed <- std_reference_seed[
+        is.finite(std_reference_seed$dilution) & std_reference_seed$dilution > 0, , drop = FALSE]
+    }
+  }
 
   list(
     preview        = flowjo_long,
     plate_metadata = NULL,
     template_seed  = list(
-      flowjo_long     = flowjo_long,
-      dilutions       = dilutions,
-      source_filepath = path
+      flowjo_long         = flowjo_long,
+      dilutions           = dilutions,
+      source_filepath     = path,
+      std_reference_seed  = std_reference_seed
     )
   )
 }
@@ -108,7 +171,12 @@
     output_file     = out,
     source_filepath = seed$source_filepath,
     feature         = feat,
-    n_wells         = opts$n_wells %||% 96
+    n_wells         = opts$n_wells %||% 96,
+    # Confirmed layout + bound description rules from the pre-processor. When
+    # present these are authoritative for specimen_type/subject_id/timepoint/
+    # groupa/groupb; dilution and source keep coming from the dilutions tab.
+    resolved_wells      = opts$resolved_wells,
+    description_ruleset = opts$description_ruleset
   )
   out
 }
