@@ -1,6 +1,6 @@
 # =============================================================================
 # i-spi-compute — Kubernetes manifests (namespace: madi-preprod)
-# curveRcore v0.3.0 - uncheck stop
+# curveRcore v0.4.3 - uncheck stop
 # A NEW, parallel stack that must NOT collide with the running production batch
 # calculator. The existing prod stack uses:
 #   - services/pods:  immunoplex-batch-cal-api, immunoplex-batch-cal-worker,
@@ -68,7 +68,7 @@ spec:
       containers:
         - name: i-spi-compute-redis
           image: redis:7
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args: ["--requirepass", "$(REDIS_AUTH)"]
           env:
             - name: REDIS_AUTH
@@ -182,10 +182,10 @@ spec:
             - { name: PROGRESS_DIR, value: /tmp }
             # --- CPU cap: MUST equal the CPU limit below (detectCores is not
             #     cgroup-aware). Also caps Stan parallel_chains. ---
-            - { name: WORKER_CORES, value: "4" }
+            - { name: WORKER_CORES, value: "16" }
           resources:
             requests: { cpu: "1",  memory: 2Gi }
-            limits:   { cpu: "4",  memory: 4Gi }   # tune to study size; keep == WORKER_CORES
+            limits:   { cpu: "16",  memory: 16Gi }   # tune to study size; keep == WORKER_CORES
 
 ---
 apiVersion: networking.k8s.io/v1

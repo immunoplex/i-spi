@@ -1206,6 +1206,7 @@ server <- function(input, output, session) {
       source("study_overview_calib_access.R", local = TRUE)
       source("study_overview_xmap_access.R", local = TRUE)
       source("compute_api_client.R", local = TRUE)
+      source("compute_cluster_registry.R", local = TRUE)
       # source("std_curve_module.R",   local = TRUE)
       source("std_curve_view_module.R", local = TRUE)
       source("std_curve_calc_module.R", local = TRUE)
@@ -1234,6 +1235,15 @@ server <- function(input, output, session) {
       observeEvent(input$readxMap_experiment_accession, {
         reload_trigger(isolate(reload_trigger()) + 1)
       }, ignoreInit = TRUE)
+
+      # Re-resolved whenever calib_scope() changes (project/study/experiment
+      # switch mid-session) -- see dev/HANDOFF_configurable_compute_backend.md
+      # §4.3. Construction is cheap (closures only, no I/O; see
+      # compute_api_client.R) so rebuilding on every scope change is fine.
+      compute_api <- reactive({
+        cl <- resolve_compute_cluster(db_pool, calib_scope())
+        compute_api_client(base_url = cl$base_url, api_key = cl$api_key)
+      })
 
       # Standard-curve tab: module renders into the existing slot. Uses the pool.
       # output$std_curver_ui <- renderUI({ stdCurveModuleUI("std_curve") })
@@ -1276,10 +1286,10 @@ server <- function(input, output, session) {
       sc_scope <- calib_scope
       sc_view <- stdCurveViewServer("sc_view", pool = db_pool, scope = sc_scope,
                                       calib_dirty = calib_dirty, selected_curve = selected_curve)
-      stdCurveCalcServer("sc_calc", pool = db_pool, api = compute_api_client(),
+      stdCurveCalcServer("sc_calc", pool = db_pool, api = compute_api,
                          scope = sc_scope, calib_dirty = calib_dirty,
                          selected_curve = selected_curve)
-      stdCurveWeightsServer("sc_weights", pool = db_pool, api = compute_api_client(),
+      stdCurveWeightsServer("sc_weights", pool = db_pool, api = compute_api,
                             scope = sc_scope)
       stdCurveCompareServer("sc_compare", pool = db_pool, scope = sc_scope,
                             selected_curve = selected_curve)

@@ -108,7 +108,7 @@ stdCurveCalcUI <- function(id) {
   )
 }
 
-stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NULL,
+stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), scope = NULL,
                                calib_dirty = shiny::reactiveVal(0),
                                selected_curve = shiny::reactiveVal(NULL)) {
   shiny::moduleServer(id, function(input, output, session) {
@@ -144,8 +144,8 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
     # Queued jobs are ordered FIFO by created_at (the worker consumes the Redis
     # list in submission/rpush order), which is the true wait order.
     fetch_queue_view <- function() {
-      running <- tryCatch(api$list_jobs(status = "running")$jobs, error = function(e) NULL) %||% list()
-      queued  <- tryCatch(api$list_jobs(status = "queued")$jobs,  error = function(e) NULL) %||% list()
+      running <- tryCatch(api()$list_jobs(status = "running")$jobs, error = function(e) NULL) %||% list()
+      queued  <- tryCatch(api()$list_jobs(status = "queued")$jobs,  error = function(e) NULL) %||% list()
       if (length(queued) > 1) {
         key <- vapply(queued, function(j) {
           t <- .parse_iso(chr0(j$created_at)); if (is.null(t)) Inf else as.numeric(t)
@@ -387,6 +387,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
     job_checked_at <- shiny::reactiveVal(NULL)  # when we last polled (for display)
     queue_pos      <- shiny::reactiveVal(NULL)  # list(pos,total) while queued
     job_batch      <- shiny::reactiveVal(NULL)  # data.frame(curve_id, ...) we submitted (diag)
+    job_api        <- shiny::reactiveVal(NULL)  # client THIS job was submitted/resumed through
 
     # Escalating poll cadence keyed off elapsed time since the job started:
     #   < 2 min -> 10s,  2-10 min -> 30s,  > 10 min -> 60s.
@@ -451,7 +452,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       vmsg(">>> params keys = ", paste(names(params), collapse = ", "))
       vmsg(">>> ====================================================")
       res <- tryCatch(
-        api$submit_job(
+        api()$submit_job(
           curve_ids            = batch$curve_id,
           multiplate_group_ids = batch$multiplate_group_id,
           script_type          = input$fit_engine,
@@ -461,6 +462,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       if (!is.null(res)) {
         jid <- if (!is.null(res$job_id)) res$job_id else res$id
         job_id(jid)
+        job_api(api())                      # freeze: this job's client for its whole lifecycle
         job_batch(batch)                    # remember curve_ids for the diagnostic
         job_started_at(Sys.time())
         ng <- length(unique(batch$multiplate_group_id))
@@ -477,7 +479,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
     poll_once <- function() {
       jid <- job_id(); if (is.null(jid)) return(invisible())
       job_checked_at(Sys.time())          # stamp EVERY attempt, even on error
-      st <- tryCatch(api$get_job(jid),
+      st <- tryCatch(job_api()$get_job(jid),
                      error = function(e) {
                        job_state(paste("check failed:", conditionMessage(e))); NULL })
       if (!is.null(st)) {
@@ -490,7 +492,7 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
         # position. Only meaningful while WE are queued.
         if (identical(st$status, "queued")) {
           queue_pos(tryCatch({
-            js   <- api$list_jobs(status = "queued")$jobs
+            js   <- job_api()$list_jobs(status = "queued")$jobs
             mine <- .parse_iso(st$created_at)
             if (length(js) && !is.null(mine)) {
               ahead <- 0L
@@ -533,9 +535,9 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
         out$blk_rows <- cnt("blank_for_fit")
         out$smp_rows <- cnt("sample_for_fit")
       }
-      out$n_queued  <- tryCatch(length(api$list_jobs(status = "queued")$jobs),
+      out$n_queued  <- tryCatch(length(api()$list_jobs(status = "queued")$jobs),
                                 error = function(e) NA_integer_)
-      out$n_running <- tryCatch(length(api$list_jobs(status = "running")$jobs),
+      out$n_running <- tryCatch(length(api()$list_jobs(status = "running")$jobs),
                                 error = function(e) NA_integer_)
       out
     })
@@ -601,13 +603,14 @@ stdCurveCalcServer <- function(id, pool, api = compute_api_client(), scope = NUL
       }
       # Prefer an in-flight job (running, then queued); else the most recent.
       job <- tryCatch(
-        pick(api$list_jobs(status = "running")) %||%
-        pick(api$list_jobs(status = "queued"))  %||%
-        pick(api$list_jobs()),
+        pick(api()$list_jobs(status = "running")) %||%
+        pick(api()$list_jobs(status = "queued"))  %||%
+        pick(api()$list_jobs()),
         error = function(e) NULL)
       if (is.null(job)) return()
 
       job_id(job$job_id)
+      job_api(api())           # freeze: recovered via the LIVE client, so that's this job's home
       job_state(job$status %||% "unknown")
       job_detail(job)
       job_checked_at(Sys.time())

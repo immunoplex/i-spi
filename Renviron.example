@@ -7,6 +7,21 @@
 ISPI_COMPUTE_URL=https://madi-preprod.dartmouth.edu/i-spi-compute
 # From the sealed secret `i-spi-compute`, key API_KEY. Placeholder here:
 ISPI_COMPUTE_API_KEY=REPLACE_ME
+#
+# Additional compute clones: add a parallel pair per clone, naming it
+# ISPI_COMPUTE_URL__<LABEL> / ISPI_COMPUTE_API_KEY__<LABEL> with the SAME
+# <LABEL> suffix on both. A project/study is routed to it by setting its
+# `compute_cluster` setting (via the Settings tab) to that label
+# (case-insensitive, "-"/"_" interchangeable). New clones require an app pod
+# restart to be picked up.
+#
+# "sim" clone (dev/i-spi-compute-sim.k8s.yaml) -- a second, real preprod
+# stack. It deliberately reuses the i-spi-compute SealedSecret's API_KEY
+# (see that manifest's header), so its key is the SAME value as
+# ISPI_COMPUTE_API_KEY above, not a different secret. Set compute_cluster =
+# "sim" on a study to route it here.
+ISPI_COMPUTE_URL__SIM=https://madi-preprod.dartmouth.edu/i-spi-compute-sim
+ISPI_COMPUTE_API_KEY__SIM=REPLACE_ME
 
 # ---- Database (unchanged) ----------------------------------------------------
 db=REPLACE_ME

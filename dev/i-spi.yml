@@ -133,6 +133,22 @@ spec:
                 secretKeyRef:
                   name: i-spi-compute
                   key: API_KEY
+            # Second compute clone ("sim" -- see i-spi-compute-sim.k8s.yaml),
+            # routed to per-project/study via the `compute_cluster` cascade
+            # setting (src/compute_cluster_registry.R: an ISPI_COMPUTE_URL__<X>
+            # / ISPI_COMPUTE_API_KEY__<X> pair is picked up automatically and
+            # selected by setting compute_cluster = "<x>" lower-cased, e.g.
+            # "sim" here). The sim clone deliberately reuses the SAME
+            # i-spi-compute secret (own Redis/API/worker, no separate
+            # SealedSecret was minted for it) -- so this key ref is identical
+            # to ISPI_COMPUTE_API_KEY above, not a copy/paste error.
+            - name: ISPI_COMPUTE_URL__SIM
+              value: "https://madi-preprod.dartmouth.edu/i-spi-compute-sim"
+            - name: ISPI_COMPUTE_API_KEY__SIM
+              valueFrom:
+                secretKeyRef:
+                  name: i-spi-compute
+                  key: API_KEY
             # - name: ISPI_COMPUTE_VERBOSE   # set "TRUE" to log each request/response
             #   value: "FALSE"
             - name: SHINY_LOG_LEVEL

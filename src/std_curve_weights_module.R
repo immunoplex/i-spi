@@ -198,7 +198,7 @@ stdCurveWeightsSummaryUI <- function(id) {
 # ---------------------------------------------------------------------------
 # Server (backs BOTH UI halves above, same namespace id)
 # ---------------------------------------------------------------------------
-stdCurveWeightsServer <- function(id, pool, api = compute_api_client(), scope = NULL) {
+stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(), scope = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
     `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
 
@@ -229,8 +229,8 @@ stdCurveWeightsServer <- function(id, pool, api = compute_api_client(), scope = 
     }
 
     fetch_queue_view <- function() {
-      running <- tryCatch(api$list_jobs(status = "running")$jobs, error = function(e) NULL) %||% list()
-      queued  <- tryCatch(api$list_jobs(status = "queued")$jobs,  error = function(e) NULL) %||% list()
+      running <- tryCatch(api()$list_jobs(status = "running")$jobs, error = function(e) NULL) %||% list()
+      queued  <- tryCatch(api()$list_jobs(status = "queued")$jobs,  error = function(e) NULL) %||% list()
       if (length(queued) > 1) {
         key <- vapply(queued, function(j) {
           t <- .parse_iso(chr0(j$created_at)); if (is.null(t)) Inf else as.numeric(t)
@@ -572,6 +572,7 @@ stdCurveWeightsServer <- function(id, pool, api = compute_api_client(), scope = 
     job_started_at <- shiny::reactiveVal(NULL)
     job_detail     <- shiny::reactiveVal(NULL)
     job_checked_at <- shiny::reactiveVal(NULL)
+    job_api        <- shiny::reactiveVal(NULL)  # client THIS job was submitted through
 
     shiny::observeEvent(input$submit, {
       s <- cur()
@@ -594,11 +595,12 @@ stdCurveWeightsServer <- function(id, pool, api = compute_api_client(), scope = 
       if (!is.null(input$seed) && !is.na(input$seed)) params$seed <- as.character(input$seed)
 
       res <- tryCatch(
-        api$submit_job(curve_ids = batch$curve_id, multiplate_group_ids = batch$multiplate_group_id,
-                       script_type = paste0("weights_", input$weight_method), params = params),
+        api()$submit_job(curve_ids = batch$curve_id, multiplate_group_ids = batch$multiplate_group_id,
+                         script_type = paste0("weights_", input$weight_method), params = params),
         error = function(e) { job_state(paste("submit failed:", conditionMessage(e))); NULL })
       if (!is.null(res)) {
         job_id(res$job_id %||% res$id)
+        job_api(api())
         job_started_at(Sys.time())
         ng <- length(unique(batch$multiplate_group_id))
         job_state(sprintf("queued: %d curve%s in %d group%s",
@@ -610,7 +612,7 @@ stdCurveWeightsServer <- function(id, pool, api = compute_api_client(), scope = 
     poll_once <- function() {
       jid <- job_id(); if (is.null(jid)) return(invisible())
       job_checked_at(Sys.time())
-      st <- tryCatch(api$get_job(jid), error = function(e) {
+      st <- tryCatch(job_api()$get_job(jid), error = function(e) {
         job_state(paste("check failed:", conditionMessage(e))); NULL })
       if (!is.null(st)) {
         job_detail(st)
