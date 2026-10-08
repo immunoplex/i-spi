@@ -43,6 +43,7 @@ test_that("bare pair only registers as 'default'", {
     expect_equal(names(reg), "default")
     expect_equal(reg$default$base_url, "https://host/i-spi-compute")
     expect_equal(reg$default$api_key, "k1")
+    expect_equal(reg$default$label, "default")
   })
 })
 

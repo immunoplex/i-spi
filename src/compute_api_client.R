@@ -29,12 +29,19 @@ stopifnot(requireNamespace("httr2", quietly = TRUE))
 VALID_SCRIPTS <- c("bayesian", "frequentist", "weights_bayesian", "weights_frequentist")
 
 #' Construct an i-spi-compute API client.
-#' @return a list of functions: submit_job, get_job, list_jobs, cancel_job, health.
+#' @param label optional cluster label this client points at (e.g. "default",
+#'   "sim" -- see compute_cluster_registry.R). Purely informational: carried
+#'   on the returned list so UI code (the Compute-fits/Compute-weights status
+#'   boxes) can show which clone a job is actually running against. Not used
+#'   for any request -- base_url/api_key alone determine where calls go.
+#' @return a list of functions: submit_job, get_job, list_jobs, cancel_job,
+#'   health; plus `label` (the cluster label passed in, or NULL).
 compute_api_client <- function(
     base_url = Sys.getenv("ISPI_COMPUTE_URL", "https://localhost/i-spi-compute"),
     api_key  = Sys.getenv("ISPI_COMPUTE_API_KEY"),
     timeout  = 30,
-    verbose  = isTRUE(as.logical(Sys.getenv("ISPI_COMPUTE_VERBOSE", "FALSE")))) {
+    verbose  = isTRUE(as.logical(Sys.getenv("ISPI_COMPUTE_VERBOSE", "FALSE"))),
+    label    = NULL) {
 
   base_url <- sub("/+$", "", base_url)  # tolerate a trailing slash in config
   `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
@@ -151,7 +158,10 @@ compute_api_client <- function(
       .json(httr2::req_method(.req("jobs", job_id), "DELETE")),
 
     #' Liveness check (no auth).
-    health = function() .json(.req("health", auth = FALSE))
+    health = function() .json(.req("health", auth = FALSE)),
+
+    #' Which cluster this client points at (informational; see @param label).
+    label = label
   )
 }
 

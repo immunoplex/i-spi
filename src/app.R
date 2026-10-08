@@ -1242,7 +1242,7 @@ server <- function(input, output, session) {
       # compute_api_client.R) so rebuilding on every scope change is fine.
       compute_api <- reactive({
         cl <- resolve_compute_cluster(db_pool, calib_scope())
-        compute_api_client(base_url = cl$base_url, api_key = cl$api_key)
+        compute_api_client(base_url = cl$base_url, api_key = cl$api_key, label = cl$label)
       })
 
       # Standard-curve tab: module renders into the existing slot. Uses the pool.

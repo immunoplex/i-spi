@@ -629,7 +629,13 @@ stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), 
                else "background:#eef7ee;"
       chr <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "" else as.character(x[1])
 
-      rows <- list()
+      # Cluster THIS status box is actually watching: the job's own frozen
+      # client while one is tracked (it may differ from the live scope's
+      # cluster if compute_cluster was reassigned mid-session -- see job_api),
+      # else the live cluster a new submission would go to.
+      cluster_lbl <- (job_api() %||% api())$label %||% "default"
+      rows <- list(shiny::div(style = "color:#555;font-size:11px;margin-bottom:3px;",
+                              sprintf("Compute cluster: %s", cluster_lbl)))
 
       # ---- YOUR job (only once you've submitted, or a job was resumed) ------
       if (!is.null(s)) {

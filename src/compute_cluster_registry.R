@@ -26,8 +26,13 @@
 
 #' Scan Sys.getenv() for ISPI_COMPUTE_URL[__SUFFIX] / ISPI_COMPUTE_API_KEY[__SUFFIX]
 #' pairs and return a named list keyed by lower-cased, "-"->"_" normalized label.
-#' @return list(label = list(base_url=, api_key=), ...). Always has "default"
-#'   when ISPI_COMPUTE_URL is set (today's deployments always set it).
+#' @return list(label = list(base_url=, api_key=, label=), ...). Each entry
+#'   carries its own `label` (identical to the list name) so callers that hand
+#'   the {base_url, api_key} pair onward (e.g. compute_api_client()) can also
+#'   surface which cluster it is -- used by the Compute-fits/Compute-weights
+#'   status boxes to confirm which clone a job is actually running against.
+#'   Always has "default" when ISPI_COMPUTE_URL is set (today's deployments
+#'   always set it).
 compute_cluster_registry <- function() {
   env_names <- names(Sys.getenv())
   url_vars  <- grep("^ISPI_COMPUTE_URL(__.+)?$", env_names, perl = TRUE, value = TRUE)
@@ -45,7 +50,7 @@ compute_cluster_registry <- function() {
         label, vn), call. = FALSE)
       next
     }
-    reg[[label]] <- list(base_url = base_url, api_key = Sys.getenv(key_var))
+    reg[[label]] <- list(base_url = base_url, api_key = Sys.getenv(key_var), label = label)
   }
   reg
 }
@@ -64,7 +69,8 @@ resolve_compute_cluster <- function(pool, scope) {
   registry <- compute_cluster_registry()
   default_cluster <- registry[["default"]] %||%
     list(base_url = Sys.getenv("ISPI_COMPUTE_URL", "https://localhost/i-spi-compute"),
-         api_key  = Sys.getenv("ISPI_COMPUTE_API_KEY"))
+         api_key  = Sys.getenv("ISPI_COMPUTE_API_KEY"),
+         label    = "default")
 
   pid <- scope$project_id
   label <- if (is.null(pid) || length(pid) == 0 || is.na(pid)) {

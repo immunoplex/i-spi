@@ -642,7 +642,13 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       # last-checked stamp (your last poll, else the queue snapshot time) --
       # same convention as std_curve_calc_module.R's sidebar status box.
       ck <- job_checked_at() %||% (if (!is.null(qv)) qv$at else NULL)
+      # Cluster THIS status box is actually watching: the job's own frozen
+      # client while one is tracked (see job_api), else the live cluster a
+      # new submission would go to.
+      cluster_lbl <- (job_api() %||% api())$label %||% "default"
       shiny::tagList(
+        shiny::div(style = "color:#555;font-size:11px;margin-bottom:3px;",
+                   sprintf("Compute cluster: %s", cluster_lbl)),
         if (!is.null(job_state())) shiny::tags$div(shiny::strong("Your job: "), job_state()) else NULL,
         render_queue_block(qv, mine = job_id()),
         if (!is.null(ck)) shiny::div(style = "color:#787878;font-size:11px;margin-top:3px;",
