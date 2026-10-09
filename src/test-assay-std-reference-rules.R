@@ -135,3 +135,65 @@ test_that("merging in nothing new returns the saved set unchanged", {
   out <- ai_std_reference_merge(saved, NULL)
   expect_equal(out, saved)
 })
+
+
+# ---- paste-from-spreadsheet --------------------------------------------------
+
+test_that("ai_std_reference_parse_pasted() parses the user's real 11-point example, header included, tab-delimited", {
+  txt <- paste(
+    "Standard point\tDilution factor",
+    "STD_1\t50", "STD_2\t125", "STD_3\t313", "STD_4\t781", "STD_5\t1953",
+    "STD_6\t4883", "STD_7\t12207", "STD_8\t30518", "STD_9\t76294",
+    "STD_10\t190735", "STD_11\t476837",
+    sep = "\n")
+  out <- ai_std_reference_parse_pasted(txt)
+  expect_equal(nrow(out), 11L)
+  expect_equal(out$description, paste0("STD_", 1:11))
+  expect_equal(out$dilution,
+              c(50, 125, 313, 781, 1953, 4883, 12207, 30518, 76294, 190735, 476837))
+  expect_equal(attr(out, "skipped"), character(0))   # header dropped silently, not "skipped"
+})
+
+test_that("ai_std_reference_parse_pasted() also handles space-delimited paste and no header", {
+  txt <- "STD_1    50\nSTD_2    125\nSTD_3    313"
+  out <- ai_std_reference_parse_pasted(txt)
+  expect_equal(nrow(out), 3L)
+  expect_equal(out$dilution, c(50, 125, 313))
+})
+
+test_that("ai_std_reference_parse_pasted() skips malformed lines and reports them, never errors", {
+  txt <- "STD_1\t50\nnonsense line\nSTD_2\t-5\n\tnotanumber\nSTD_3\t313"
+  out <- ai_std_reference_parse_pasted(txt)
+  expect_equal(out$description, c("STD_1", "STD_3"))
+  expect_true(length(attr(out, "skipped")) >= 1L)
+})
+
+test_that("ai_std_reference_parse_pasted() returns zero rows, never an error, for empty/NULL input", {
+  for (bad in list(NULL, "", "   ", NA_character_)) {
+    out <- ai_std_reference_parse_pasted(bad)
+    expect_equal(nrow(out), 0L)
+  }
+})
+
+test_that("ai_std_reference_match_pasted() matches exact descriptions first", {
+  pasted <- data.frame(description = c("S1", "S2"), dilution = c(50, 125),
+                       stringsAsFactors = FALSE)
+  out <- ai_std_reference_match_pasted(c("S1", "S2"), pasted)
+  expect_equal(out$dilution, c(50, 125))
+  expect_equal(out$matched_from, c("S1", "S2"))
+})
+
+test_that("ai_std_reference_match_pasted() falls back to trailing-digit match when exact text differs", {
+  pasted <- data.frame(description = paste0("STD_", 1:3), dilution = c(50, 125, 313),
+                       stringsAsFactors = FALSE)
+  out <- ai_std_reference_match_pasted(c("S1", "S2", "S3"), pasted)
+  expect_equal(out$dilution, c(50, 125, 313))
+  expect_equal(out$matched_from, c("STD_1", "STD_2", "STD_3"))
+})
+
+test_that("ai_std_reference_match_pasted() leaves an uncovered candidate as NA rather than guessing", {
+  pasted <- data.frame(description = "STD_1", dilution = 50, stringsAsFactors = FALSE)
+  out <- ai_std_reference_match_pasted(c("S1", "S2"), pasted)
+  expect_equal(out$dilution, c(50, NA_real_))
+  expect_true(is.na(out$matched_from[2]))
+})

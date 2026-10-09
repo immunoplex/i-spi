@@ -473,6 +473,12 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96)) {
         colnames = c("Plate", "Well", "Now", "Suggested", "Confidence", "Why"),
         options = list(dom = "tp", pageLength = 10, scrollX = TRUE))
     })
+    # Same reasoning as has_proposals's suspendWhenHidden=FALSE above: this
+    # table lives inside a conditionalPanel gated on has_proposals, which can
+    # toggle hidden/visible more than once per session (new proposals appear
+    # as the grid is edited). Without this a suspended render can come back
+    # stale on re-show instead of redrawing from the current proposals().
+    outputOptions(output, "proposals", suspendWhenHidden = FALSE)
 
     apply_props <- function(rows) {
       inv <- inv_or_null(); p <- proposals()

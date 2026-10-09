@@ -157,3 +157,109 @@ ai_std_reference_merge <- function(saved, new) {
   out <- rbind(saved[keep, , drop = FALSE], new)
   out[order(out$description), , drop = FALSE]
 }
+
+
+# ---- Paste-from-spreadsheet (both UI entry points) --------------------------
+
+#' Parse a two-column table pasted from a spreadsheet (Excel, etc.) into
+#' data.frame(description, dilution) -- the same shape ai_std_reference_merge()
+#' takes as `new`. One row per line; Excel's clipboard format is tab-delimited,
+#' so that is tried first, falling back to runs of 2+ spaces, then a comma --
+#' covers a paste that lands as plain text too.
+#'
+#' A header row ("Standard point" / "Dilution factor" or similar) is detected
+#' and dropped automatically when it is the FIRST line and its second field
+#' isn't a positive number -- no need to strip it before pasting. A header
+#' appearing anywhere else, or any other line that doesn't yield a
+#' nonempty label plus a positive number, is skipped (never an error) and
+#' listed in the "skipped" attribute of the result so the caller can tell the
+#' user what didn't parse.
+#'
+#' @param text the raw pasted text.
+#' @return data.frame(description, dilution), possibly zero rows, with a
+#'   "skipped" attribute (character() of the raw lines that didn't parse).
+ai_std_reference_parse_pasted <- function(text) {
+  empty <- structure(AI_STD_REFERENCE_EMPTY, skipped = character(0))
+  if (is.null(text) || !length(text) || is.na(text[1]) ||
+      !nzchar(trimws(as.character(text)[1])))
+    return(empty)
+
+  lines <- strsplit(as.character(text)[1], "\r\n|\r|\n")[[1]]
+  lines <- trimws(lines)
+  lines <- lines[nzchar(lines)]
+  if (!length(lines)) return(empty)
+
+  split_line <- function(ln) {
+    parts <- strsplit(ln, "\t")[[1]]
+    if (length(parts) < 2) parts <- strsplit(ln, "[ ]{2,}")[[1]]
+    if (length(parts) < 2) parts <- strsplit(ln, ",")[[1]]
+    trimws(parts)
+  }
+  parsed <- lapply(lines, split_line)
+
+  desc <- vapply(parsed, function(r)
+    if (length(r) >= 1 && nzchar(r[1])) r[1] else NA_character_, character(1))
+  dil_txt <- vapply(parsed, function(r)
+    if (length(r) >= 2) r[2] else NA_character_, character(1))
+  dil <- suppressWarnings(as.numeric(gsub(",", "", dil_txt)))
+
+  valid <- !is.na(desc) & is.finite(dil) & dil > 0
+
+  is_header_row1 <- length(lines) > 1 && !valid[1] && !is.na(desc[1]) && is.na(dil[1])
+  skipped <- lines[!valid]
+  if (is_header_row1) skipped <- skipped[skipped != lines[1]]
+
+  out <- data.frame(description = desc[valid], dilution = dil[valid],
+                    stringsAsFactors = FALSE)
+  structure(out, skipped = skipped)
+}
+
+#' Match a pasted (description, dilution) table against the CURRENT candidate
+#' descriptions -- the exact Description text read from the well inventory.
+#' Exact match first (trimmed, case-insensitive); whatever that leaves
+#' unmatched falls back to matching by TRAILING DIGITS (pasted "STD_1"
+#' matches candidate description "S1" -- both end in "1"), since the
+#' instrument's own label and a lab's spreadsheet convention for the same
+#' standard point are rarely written identically, and the join has to happen
+#' on something more forgiving than exact text to be useful in practice.
+#'
+#' @param candidate_desc character() of candidate descriptions, e.g.
+#'   ai_std_reference_candidates()'s $description column.
+#' @param pasted data.frame(description, dilution) from
+#'   ai_std_reference_parse_pasted().
+#' @return data.frame(description, dilution, matched_from) aligned 1:1 with
+#'   candidate_desc -- dilution is NA_real_ and matched_from is NA_character_
+#'   for a candidate the paste didn't cover.
+ai_std_reference_match_pasted <- function(candidate_desc, pasted) {
+  out <- data.frame(description = candidate_desc, dilution = NA_real_,
+                    matched_from = NA_character_, stringsAsFactors = FALSE)
+  if (is.null(pasted) || !nrow(pasted) || !length(candidate_desc)) return(out)
+
+  norm <- function(x) tolower(trimws(as.character(x)))
+  trailing_num <- function(x) {
+    m <- regmatches(x, regexpr("[0-9]+$", x))
+    ifelse(nzchar(m), m, NA_character_)
+  }
+
+  cand_n <- norm(candidate_desc)
+  past_n <- norm(pasted$description)
+
+  # pass 1: exact (trimmed, case-insensitive) match
+  idx <- match(cand_n, past_n)
+  hit <- !is.na(idx)
+  out$dilution[hit]     <- pasted$dilution[idx[hit]]
+  out$matched_from[hit] <- pasted$description[idx[hit]]
+
+  # pass 2: trailing-digits match, for whatever pass 1 left uncovered
+  remain <- !hit
+  if (any(remain)) {
+    cand_num <- trailing_num(cand_n[remain])
+    past_num <- trailing_num(past_n)
+    idx2 <- match(cand_num, past_num)
+    hit2 <- !is.na(idx2)
+    ri <- which(remain)[hit2]
+    out$dilution[ri]     <- pasted$dilution[idx2[hit2]]
+    out$matched_from[ri] <- pasted$description[idx2[hit2]]
+  }
+  out
+}

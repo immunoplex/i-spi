@@ -385,6 +385,25 @@ ai_well_inventory <- function(raw, assay, n_wells = 96, opts = list()) {
   flat <- flat[!is.na(flat$plate_key) & nzchar(trimws(flat$plate_key)), , drop = FALSE]
   if (!nrow(flat)) stop("no identifiable plates in the uploaded file(s)", call. = FALSE)
 
+  # plate_key is derived from the filename (clean_plate_id()); two DIFFERENT
+  # uploaded files can legitimately clean down to the SAME plate_key (e.g.
+  # near-duplicate instrument-export naming). Left alone, the (plate, well)
+  # dedup just below treats every well of the second file as a duplicate of
+  # the first and silently drops it -- a whole plate vanishes with no error.
+  # Disambiguate by source_file whenever more than one file maps to the same
+  # plate_key, so every physical plate stays represented.
+  if ("source_file" %in% names(flat)) {
+    grp <- split(flat$source_file, flat$plate_key)
+    colliding <- names(grp)[vapply(grp, function(sf) length(unique(sf)) > 1L, logical(1))]
+    if (length(colliding)) {
+      sel <- flat$plate_key %in% colliding
+      flat$plate_key[sel] <- paste(flat$plate_key[sel], flat$source_file[sel], sep = " | ")
+      warning(sprintf(
+        "well inventory: %d file(s) produced a plate id already used by another file in this batch; disambiguated by filename (%s).",
+        length(colliding), paste(colliding, collapse = ", ")), call. = FALSE)
+    }
+  }
+
   # A duplicate (plate, well) means two source rows claim the same well. Keep
   # the first and report it -- silently collapsing would hide a real layout bug.
   dupe_key <- paste(flat$plate_key, flat$well, sep = "\r")

@@ -140,6 +140,40 @@ settingsCascadeServer <- function(id, pool, scope) {
       }, error = function(e) shiny::showNotification(paste0("Could not set ", p$param, ": ", e$message),
                                                      type = "error"))
     })
+    # "Convert & merge" for standard_dilution_reference's paste box (see
+    # .value_control()): parse the pasted table, merge it into whatever is
+    # already saved for the standard_dilution_reference param AT THIS SCOPE,
+    # and write the result back whole (set_setting() replaces the value, it
+    # doesn't patch it -- same reason ai_std_reference_ui.R's own save button
+    # reads-merges-writes rather than appending).
+    shiny::observeEvent(input$stdref_paste_apply, {
+      PARAM <- "standard_dilution_reference"
+      es <- eff_scope()
+      pasted <- tryCatch(ai_std_reference_parse_pasted(input$stdref_paste_box),
+                         error = function(e) NULL)
+      if (is.null(pasted) || !nrow(pasted)) {
+        shiny::showNotification("Nothing parseable in the pasted text.", type = "warning")
+        return()
+      }
+      tryCatch({
+        existing <- resolve_settings_scoped(pool, project = proj(), study = study(),
+                                            experiment = es$experiment, feature = es$feature,
+                                            antigen = es$antigen)
+        erow   <- existing[existing$param_name == PARAM, , drop = FALSE]
+        saved  <- ai_std_reference_parse(if (nrow(erow)) erow$value_text[1] else NULL)
+        merged <- ai_std_reference_merge(saved, pasted)
+        set_setting(pool, project = proj(), study = study(),
+                    experiment = es$experiment, feature = es$feature, antigen = es$antigen,
+                    param_name = PARAM, value = ai_std_reference_serialize(merged),
+                    user = currentuser())
+        skipped <- attr(pasted, "skipped")
+        msg <- sprintf("Merged %d row(s) into %s at this scope.", nrow(pasted), PARAM)
+        if (length(skipped)) msg <- paste0(msg, sprintf(" %d line(s) couldn't be parsed.", length(skipped)))
+        shiny::showNotification(msg, type = "message", duration = 8)
+      }, error = function(e)
+        shiny::showNotification(paste("Could not save:", e$message), type = "error"))
+    })
+
     shiny::observeEvent(input$revert_param, {
       es <- eff_scope()
       tryCatch({
@@ -224,6 +258,28 @@ settingsCascadeServer <- function(id, pool, scope) {
   ctl <- if (length(r$param_control_type) == 1 && !is.na(r$param_control_type)) r$param_control_type else "textInput"
   choices <- if (length(r$param_choices_list) == 1 && !is.na(r$param_choices_list) && nzchar(r$param_choices_list))
     trimws(strsplit(r$param_choices_list, ",")[[1]]) else character(0)
+
+  # ---- standard_dilution_reference: a raw-JSON param that's unreasonable to
+  # hand-type into the one-line text fallback below. Give it a textarea for
+  # the JSON itself (same onchange -> set_param path as everything else, so
+  # someone who DOES know the format can still edit it directly), plus a
+  # paste box that converts a pasted spreadsheet table and MERGES it into
+  # this scope's value via settingsCascadeServer's "stdref_paste_apply"
+  # handler, using the exact same ai_std_reference_* pure functions
+  # assay_std_reference_ui.R's import-time "Standards dilution reference"
+  # step uses -- one parser/matcher/merge, two entry points.
+  if (identical(pname, "standard_dilution_reference")) {
+    return(tagList(
+      tags$textarea(class = "form-control", rows = "3", style = "font-family:monospace;font-size:12px;",
+                    onchange = onchg, val),
+      tags$div(style = "margin-top:6px;",
+        tags$small(style = "color:#5f6368;",
+          "Paste a Standard point / Dilution factor table from a spreadsheet to merge into the JSON above:"),
+        textAreaInput(ns("stdref_paste_box"), NULL, rows = 3,
+                     placeholder = "STD_1\t50\nSTD_2\t125\nSTD_3\t313\n..."),
+        actionButton(ns("stdref_paste_apply"), "Convert & merge", class = "btn-sm"))
+    ))
+  }
 
   # ---- MULTI-SELECT (checkbox group): the authorized SET, e.g. model_form_list.
   # Every choice from param_choices_list is a checkbox; those in the resolved

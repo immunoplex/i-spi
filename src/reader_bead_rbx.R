@@ -72,8 +72,20 @@
 process_rbx_files <- function(upload_df) {
   cat("Processing", nrow(upload_df), ".rbx file(s)...\n")
 
+  # Every downstream identity (source_file, header$plateid, dil$plateid, and
+  # therefore ai_well_inventory()'s plate_key) is keyed off this `fn`. If two
+  # uploads in the SAME batch carry the same name -- the same physical file
+  # picked twice, or two different plates exported under identical/near-
+  # identical instrument filenames -- those keys collide and the SECOND
+  # plate's wells get silently treated as duplicates of the first's and
+  # dropped (see ai_well_inventory()'s (plate, well) dedup). Disambiguate up
+  # front, once, here, so collision is impossible further down the pipeline.
+  seen_names <- character(0)
+
   results <- lapply(seq_len(nrow(upload_df)), function(i) {
-    fp <- upload_df$datapath[i]; fn <- upload_df$name[i]
+    fp <- upload_df$datapath[i]; fn0 <- upload_df$name[i]
+    fn <- if (fn0 %in% seen_names) sprintf("%s (upload %d)", fn0, i) else fn0
+    seen_names <<- c(seen_names, fn0)
     cat("  Processing .rbx:", fn, "\n")
     tryCatch({
       doc  <- parse_rbx(fp)
