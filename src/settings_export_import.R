@@ -33,6 +33,16 @@
 
 settingsExportImportServer <- function(id, pool, scope, user) {
   shiny::moduleServer(id, function(input, output, session) {
+    ns <- session$ns
+
+    shiny::observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      shiny::showModal(shiny::modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
+    })
 
     cur <- shiny::reactive({
       s <- scope()

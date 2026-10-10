@@ -1,0 +1,15 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL", fk: "calib_fit.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: "calib_fit.method"}
+  - {name: model_name, type: text, description: "Primary key; NOT NULL", fk: "calib_fit.model_name"}
+  - {name: gate, type: text, description: "Primary key; NOT NULL; at_bound | vcov_condition | rel_se | dynamic_range", fk: ""}
+  - {name: passed, type: boolean, description: "", fk: ""}
+  - {name: detail, type: text, description: "", fk: ""}
+indexes:
+  - {name: calib_gate_pkey, column: curve_id, type: btree}
+  - {name: calib_gate_pkey, column: method, type: btree}
+  - {name: calib_gate_pkey, column: model_name, type: btree}
+  - {name: calib_gate_pkey, column: gate, type: btree}
+referenced_by: []

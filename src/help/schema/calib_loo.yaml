@@ -1,0 +1,23 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL", fk: "calib_fit.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL DEFAULT 'bayesian'", fk: "calib_fit.method"}
+  - {name: model_name, type: text, description: "Primary key; NOT NULL", fk: "calib_fit.model_name"}
+  - {name: elpd_loo, type: numeric, description: "", fk: ""}
+  - {name: se_elpd_loo, type: numeric, description: "", fk: ""}
+  - {name: p_loo, type: numeric, description: "", fk: ""}
+  - {name: looic, type: numeric, description: "LOO information criterion", fk: ""}
+  - {name: elpd_diff, type: numeric, description: "Gap vs. the best candidate", fk: ""}
+  - {name: se_diff, type: numeric, description: "", fk: ""}
+  - {name: pareto_k_good, type: integer, description: "Count with k < 0.5", fk: ""}
+  - {name: pareto_k_ok, type: integer, description: "Count with 0.5 <= k < 0.7", fk: ""}
+  - {name: pareto_k_bad, type: integer, description: "Count with 0.7 <= k < 1", fk: ""}
+  - {name: pareto_k_vbad, type: integer, description: "Count with k >= 1", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+indexes:
+  - {name: calib_loo_pkey, column: curve_id, type: btree}
+  - {name: calib_loo_pkey, column: method, type: btree}
+  - {name: calib_loo_pkey, column: model_name, type: btree}
+referenced_by: []

@@ -291,11 +291,83 @@ output$body_tabs <- renderUI({
       tabItem(tabName = "study_settings", uiOutput("studyParameters_UI")),
       tabItem(tabName = "import_tab", uiOutput("readxMapData")),
       tabItem(tabName = "manage_project_tab", uiOutput("manage_project_ui")),
-      tabItem(tabName = "study_overview", studyOverviewUI("study_overview"))
+      tabItem(tabName = "study_overview", studyOverviewUI("study_overview")),
+      tabItem(tabName = "glossary_page", uiOutput("glossary_page_ui"))
     )
    # dynamic_tabs  # append dynamic tabs here
   ))
 
+})
+
+# Glossary page (sidebar "Glossary" menu item, tabName = "glossary_page").
+# Lists every help/glossary/*.md note (category: glossary) alphabetically by
+# title, each rendered with the same help_modal_body() used for the modal
+# popups elsewhere -- so "More detail" disclosures, see_also cross-links,
+# and references all work identically here, just shown inline instead of
+# behind a click. A see_also/[[link]] click on this page still opens that
+# OTHER note in a modal via the shared flat help_show observer below
+# (ns = function(x) x), which is fine -- it's just a deeper dive.
+#
+# Below the glossary terms, a second section lists every database table's
+# schema (help/schema/schema.<table>.md, category: schema) grouped the same
+# way as the Data tab (CALIB_TABLE_ORDER, data_dictionary.R -- sourced into
+# this same local server scope, see app.R). No table schema renders inline
+# inside a glossary term's own definition any more -- a term that needs one
+# links to it via see_also (e.g. glossary.blank_wells -> schema.xmap_buffer)
+# instead, and the reader lands here.
+output$glossary_page_ui <- renderUI({
+  reg <- .help_registry(NULL)
+  entries <- Filter(function(e) identical(e$category, "glossary"), reg)
+  if (!length(entries)) {
+    return(fluidRow(column(8, offset = 2,
+      tags$h3("Glossary"),
+      tags$p("No glossary terms are defined yet.")
+    )))
+  }
+  titles <- vapply(entries, function(e) tolower(.hv(e$title, "")), character(1))
+  entries <- entries[order(titles)]
+
+  schema_entries  <- Filter(function(e) identical(e$category, "schema"), reg)
+  schema_by_table <- setNames(schema_entries,
+                              vapply(schema_entries, function(e) .hv(e$schema_table, ""), character(1)))
+
+  schema_section <- if (length(schema_entries)) {
+    tagList(
+      tags$h3("Database Table Reference"),
+      tags$p(class = "text-muted",
+            "Column-level schema for every table behind the Data tab, grouped the same way as there."),
+      tags$hr(),
+      lapply(names(CALIB_TABLE_ORDER), function(grp) {
+        tagList(
+          tags$h4(grp),
+          lapply(CALIB_TABLE_ORDER[[grp]], function(tbl) {
+            e <- schema_by_table[[tbl]]
+            if (is.null(e)) return(NULL)
+            tagList(
+              tags$h5(.hv(e$title, e$id)),
+              help_modal_body(e$id, function(x) x, help = reg),
+              tags$hr()
+            )
+          })
+        )
+      })
+    )
+  } else NULL
+
+  fluidRow(column(8, offset = 2,
+    tags$h3("Glossary"),
+    tags$p(class = "text-muted",
+          "Definitions of terms used throughout I-SPI. Click an underlined link below to open that term's own entry."),
+    tags$hr(),
+    lapply(entries, function(e) {
+      tagList(
+        tags$h4(.hv(e$title, e$id)),
+        help_modal_body(e$id, function(x) x, help = reg),
+        tags$hr()
+      )
+    }),
+    schema_section
+  ))
 })
 
 output$load_ui <- renderUI({
@@ -875,7 +947,7 @@ output$manage_project_ui <- renderUI({
            # Create Project Section
            h3("Project Management"),
            wellPanel(
-             h4("Create New Project"),
+             h4("Create New Project", help_icon("project.create_new", function(x) x)),
              bsCollapse(
                id = "createNewProjectCollapse",
                bsCollapsePanel(
@@ -893,7 +965,7 @@ output$manage_project_ui <- renderUI({
            hr(),
            # Add Project Section
            wellPanel(
-             h4("Add New Project"),
+             h4("Add New Project", help_icon("glossary.access_key", function(x) x)),
              bsCollapse(
                id = "addProjectDocumentation",
                bsCollapsePanel(
@@ -920,5 +992,22 @@ output$manage_project_ui <- renderUI({
   } else {
      NULL
   }
+})
+
+# Single shared help_show handler for every FLAT (non-namespaced) module's
+# help_icon() -- data_tab_module.R, delete_study_components_ui.R,
+# study_overview_ui.R's flat pieces if any, and any other file sourced
+# directly into this top-level server scope. A namespaced (moduleServer)
+# file registers its OWN observer instead (see e.g. std_curve_calc_module.R,
+# ai_shape_server, ai_std_reference_server) since its input$help_show lives
+# in its own namespace, not this flat one. ns = identity here, matching
+# every flat help_icon() call's own ns argument.
+observeEvent(input$help_show, {
+  hid <- input$help_show
+  body <- help_modal_body(hid, function(x) x)
+  if (is.null(body)) return()
+  showModal(modalDialog(
+    title = help_modal_title(hid), body,
+    easyClose = TRUE, size = "l", footer = modalButton("Close")))
 })
 

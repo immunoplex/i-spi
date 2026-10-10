@@ -82,6 +82,10 @@ ai_shape_ui <- function(id) {
     ', fixed = TRUE))),
 
     tags$div(id = ns("wrap"),
+      # help_icon("compute.import.description_shape_binding", ...) lives on
+      # the parent's "4. Configure the description field" h4
+      # (assay_import_module.R), not here -- avoids a duplicate icon on its
+      # own line below this module's own content.
       uiOutput(ns("gate_notice")),
       uiOutput(ns("type_tabs")),
 
@@ -119,6 +123,15 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
   force(inventory_rv); force(enabled); force(reference)
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      showModal(modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = modalButton("Close")))
+    })
 
     rules_rv    <- reactiveVal(list())
     approved_rv <- reactiveVal(list())     # key "T\rshape_key" -> TRUE
@@ -567,10 +580,19 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         lapply(comps, function(cm) {
           cur <- b[[cm]]
           how <- cur$how %||% (if (cm %in% req_c) "constant" else "ignore")
-          fluidRow(
-            column(3, tags$div(style = "margin-top:28px;",
+          # display:flex + align-items:center on the ROW (not a fixed
+          # margin-top on column 1) is what actually keeps the label lined up
+          # with the control: column 3's content changes shape by `how`
+          # (selectInput/textInput each carry Shiny's own empty label-row
+          # above the control, "from_type" is a bare <div>, "ignore" is
+          # empty) and a single hardcoded offset can only ever be correct for
+          # one of those -- flex centering adapts to whichever is showing
+          # instead of guessing a pixel value that drifts out of alignment
+          # for every other case.
+          fluidRow(style = "display:flex; align-items:center;",
+            column(3,
               tags$span(class = if (cm %in% req_c) "ai-req" else "", cm),
-              if (cm %in% req_c) tags$small(" (required)") else NULL)),
+              if (cm %in% req_c) tags$small(" (required)") else NULL),
             column(3, selectInput(ns(paste0("bh_", tt, "_", cm)), NULL,
                                   choices = AI_HOW_LABELS, selected = how)),
             column(6, uiOutput(ns(paste0("bd_", tt, "_", cm))),
@@ -798,9 +820,8 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
                                  placeholder = if (cc == "Source") "e.g. PBS"
                                                else if (cc == "DilutionFactor") "e.g. 1"
                                                else "value used for every well"),
-            from_type = tags$div(style = "margin-top:30px;",
-                                 tags$small(style = "color:#5f6368;",
-                                   "Taken from the number after the type letter, e.g. S3 \u2192 3.")),
+            from_type = tags$small(style = "color:#5f6368;",
+                                   "Taken from the number after the type letter, e.g. S3 \u2192 3."),
             tags$div())
         })
       })))

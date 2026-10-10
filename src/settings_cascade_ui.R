@@ -26,11 +26,17 @@
 settingsCascadeUI <- function(id) {
   ns <- shiny::NS(id)
   shiny::tagList(
-    if (exists("help_styles", mode = "function")) help_styles(),
+    # help_styles() now injected once, app-wide, in app.R's dashboardBody
+    # head (2026-10-09) -- help_icon() is usable from any module now, not
+    # just this one.
     shiny::div(class = "settings-scope-bar",
       shiny::strong("Scope: "),
-      shiny::uiOutput(ns("breadcrumb"), inline = TRUE)
+      shiny::uiOutput(ns("breadcrumb"), inline = TRUE),
+      help_icon("settings.calibration.overview", ns)
     ),
+    shiny::helpText(class = "param-desc",
+      "Settings below apply at this scope; a narrower scope inherits every ",
+      "value from the broader ones above it unless you override it here."),
     shiny::hr(),
     shiny::uiOutput(ns("editor"))
   )
@@ -186,13 +192,18 @@ settingsCascadeServer <- function(id, pool, scope) {
 
     # ---- help drill-down (Layer 3): open a modal with the concept note --------
     # BS3-safe: shiny modals work under shinydashboard, unlike a bslib popover.
+    # help_modal_body()/help_modal_title() (not the settings_help_* versions)
+    # since this ONE observer handles input$help_show from two different kinds
+    # of icon in this module: a per-row drill icon (settings_help_icon(),
+    # sends a calib_settings param_name) AND this page's own "Scope:" bar icon
+    # (help_icon(), sends a direct help_id) -- help_entry_for_id() resolves
+    # either, see help_utils.R.
     shiny::observeEvent(input$help_show, {
-      pn <- input$help_show
-      if (!exists("settings_help_content", mode = "function")) return()
-      body <- settings_help_content(pn, audience = "user")
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns, audience = "user")
       if (is.null(body)) return()
       shiny::showModal(shiny::modalDialog(
-        title     = settings_help_title(pn),
+        title     = help_modal_title(hid),
         body, easyClose = TRUE, size = "l",
         footer = shiny::modalButton("Close")))
     })

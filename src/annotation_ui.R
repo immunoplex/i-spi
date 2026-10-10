@@ -70,7 +70,8 @@ annotation_ui <- function(id) {
   ns <- NS(id)
   tagList(
     fluidRow(
-      column(5, uiOutput(ns("experiment_ui"))),
+      column(5, uiOutput(ns("experiment_ui")),
+             help_icon("settings.annotations", ns)),
       column(7, tags$p(tags$small(
         "Annotations are saved per experiment at (project, study, experiment). ",
         "Pick an experiment, edit, and Save each section.")))
@@ -132,6 +133,16 @@ annotation_server <- function(id, pool, project_id, study, user) {
   .ann_dbg(sprintf("[annotation] annotation_server() WIRED for id='%s'\n", id))
   moduleServer(id, function(input, output, session) {
     .ann_dbg(sprintf("[annotation] module '%s' server INITIALISING\n", id))
+    ns <- session$ns
+
+    observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      showModal(modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = modalButton("Close")))
+    })
 
     refresh <- reactiveVal(0)
     bump    <- function() refresh(isolate(refresh()) + 1)

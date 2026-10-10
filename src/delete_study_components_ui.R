@@ -11,6 +11,9 @@
 # two-step confirm: Preview (dry-run counts) -> Delete permanently -> shinyalert.
 # =============================================================================
 
+# help_icon()'s click handled by ui_handler.R's single shared flat-module
+# observeEvent(input$help_show, ...) -- this file is flat too (no NS), so it
+# deliberately does NOT register its own observer.
 output$delete_study_components_ui <- renderUI({
   study <- input$readxMap_study_accession
   proj  <- tryCatch(userWorkSpaceID(), error = function(e) NA)
@@ -34,7 +37,8 @@ output$delete_study_components_ui <- renderUI({
                      stats::setNames(exps, exps))
 
   tagList(
-    h3(sprintf("Delete Study Components \u2014 %s", study)),
+    h3(sprintf("Delete Study Components \u2014 %s", study),
+       help_icon("settings.delete_components", function(x) x)),
     div(class = "alert alert-danger",
       strong("Permanent. This cannot be undone."), br(),
       "Deletes raw plate data, the curve registry, fit results, dilution analysis,",

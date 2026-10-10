@@ -1,0 +1,31 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql + migration 003 (agroup column,
+# authoritative DDL, not a live DB query -- regenerate via
+# dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL; ON DELETE CASCADE", fk: "curve_lookup.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: ""}
+  - {name: sampleid, type: "varchar(128)", description: "Primary key; NOT NULL", fk: ""}
+  - {name: patientid, type: "varchar(128)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
+  - {name: timeperiod, type: "varchar(64)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
+  - {name: dilution, type: "varchar(64)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
+  - {name: predicted_concentration, type: numeric, description: "Log10 scale (when is_log_independent)", fk: ""}
+  - {name: final_concentration, type: numeric, description: "Natural scale, dilution-corrected", fk: ""}
+  - {name: se_concentration, type: numeric, description: "", fk: ""}
+  - {name: pcov, type: numeric, description: "", fk: ""}
+  - {name: pcov_rmse, type: numeric, description: "", fk: ""}
+  - {name: pcov_pass, type: boolean, description: "", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+  - {name: agroup, type: "varchar(40)", description: "Added by migration 003; treatment-arm/cohort design column for curveRweights", fk: ""}
+indexes:
+  - {name: calib_samples_pkey, column: curve_id, type: btree}
+  - {name: calib_samples_pkey, column: method, type: btree}
+  - {name: calib_samples_pkey, column: sampleid, type: btree}
+  - {name: calib_samples_pkey, column: patientid, type: btree}
+  - {name: calib_samples_pkey, column: timeperiod, type: btree}
+  - {name: calib_samples_pkey, column: dilution, type: btree}
+  - {name: idx_calib_samples_patient, column: curve_id, type: btree}
+  - {name: idx_calib_samples_patient, column: patientid, type: btree}
+  - {name: idx_calib_samples_agroup, column: curve_id, type: btree}
+  - {name: idx_calib_samples_agroup, column: agroup, type: btree}
+referenced_by: []

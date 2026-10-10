@@ -1,0 +1,28 @@
+# Source: i-spi-compute/worker/migrations/004_calib_weights.sql (authoritative
+# DDL, not a live DB query -- regenerate via dev/data_tab_schema_report.sql if
+# this drifts). multiplate_group_id is uuid, matching curve_lookup's column of
+# the same name/type, but is NOT a declared foreign key (see migration 004's
+# comment) -- no fk entry below is accurate, not an omission.
+columns:
+  - {name: multiplate_group_id, type: uuid, description: "Primary key; NOT NULL", fk: ""}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: ""}
+  - {name: antigen, type: "varchar(64)", description: "", fk: ""}
+  - {name: feature, type: "varchar(15)", description: "", fk: ""}
+  - {name: design_cols, type: text, description: "e.g. 'timeperiod,agroup'", fk: ""}
+  - {name: scale_predictor, type: text, description: "'se' or 'pcov'", fk: ""}
+  - {name: phi, type: "double precision", description: "Baseline scaling factor", fk: ""}
+  - {name: phi_lo, type: "double precision", description: "", fk: ""}
+  - {name: phi_hi, type: "double precision", description: "", fk: ""}
+  - {name: beta1, type: "double precision", description: "Precision exponent", fk: ""}
+  - {name: beta1_lo, type: "double precision", description: "", fk: ""}
+  - {name: beta1_hi, type: "double precision", description: "", fk: ""}
+  - {name: interpretation, type: text, description: "Plain-language label for this phi/beta1 combination", fk: ""}
+  - {name: n_fit, type: integer, description: "", fk: ""}
+  - {name: n_eff, type: "double precision", description: "", fk: ""}
+  - {name: weight_ratio, type: "double precision", description: "", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+indexes:
+  - {name: calib_weights_fit_pkey, column: multiplate_group_id, type: btree}
+  - {name: calib_weights_fit_pkey, column: method, type: btree}
+referenced_by: []

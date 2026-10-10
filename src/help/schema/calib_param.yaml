@@ -1,0 +1,18 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL", fk: "calib_fit.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: "calib_fit.method"}
+  - {name: model_name, type: text, description: "Primary key; NOT NULL", fk: "calib_fit.model_name"}
+  - {name: term, type: text, description: "Primary key; NOT NULL; a, b, c, d, g", fk: ""}
+  - {name: estimate, type: numeric, description: "Freq $estimate / bayes $mean", fk: ""}
+  - {name: std_error, type: numeric, description: "Freq $std_error / bayes $sd", fk: ""}
+  - {name: q_lo, type: numeric, description: "Bayes q2.5 (NULL for freq)", fk: ""}
+  - {name: q_med, type: numeric, description: "Bayes q50 (NULL for freq)", fk: ""}
+  - {name: q_hi, type: numeric, description: "Bayes q97.5 (NULL for freq)", fk: ""}
+indexes:
+  - {name: calib_param_pkey, column: curve_id, type: btree}
+  - {name: calib_param_pkey, column: method, type: btree}
+  - {name: calib_param_pkey, column: model_name, type: btree}
+  - {name: calib_param_pkey, column: term, type: btree}
+referenced_by: []

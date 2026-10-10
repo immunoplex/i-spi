@@ -1,0 +1,41 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL; ON DELETE CASCADE", fk: "curve_lookup.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: ""}
+  - {name: model_name, type: text, description: "", fk: ""}
+  - {name: lloq_log10, type: numeric, description: "pcov-threshold LOQ (log10)", fk: ""}
+  - {name: uloq_log10, type: numeric, description: "pcov-threshold LOQ (log10)", fk: ""}
+  - {name: lloq_conc, type: numeric, description: "pcov-threshold LOQ (natural)", fk: ""}
+  - {name: uloq_conc, type: numeric, description: "pcov-threshold LOQ (natural)", fk: ""}
+  - {name: shape_lloq_log10, type: numeric, description: "Curvature (shape) LOQ", fk: ""}
+  - {name: shape_uloq_log10, type: numeric, description: "Curvature (shape) LOQ", fk: ""}
+  - {name: shape_lloq_conc, type: numeric, description: "Curvature (shape) LOQ", fk: ""}
+  - {name: shape_uloq_conc, type: numeric, description: "Curvature (shape) LOQ", fk: ""}
+  - {name: inflect_x, type: numeric, description: "Inflection point", fk: ""}
+  - {name: inflect_y, type: numeric, description: "Inflection point", fk: ""}
+  - {name: inflect_x_lower, type: numeric, description: "Credible/confidence interval on x (bayes only)", fk: ""}
+  - {name: inflect_x_upper, type: numeric, description: "Credible/confidence interval on x (bayes only)", fk: ""}
+  - {name: lower_lod_response, type: numeric, description: "", fk: ""}
+  - {name: upper_lod_response, type: numeric, description: "", fk: ""}
+  - {name: lower_lod_log10_conc, type: numeric, description: "", fk: ""}
+  - {name: upper_lod_log10_conc, type: numeric, description: "", fk: ""}
+  - {name: lower_lod_conc, type: numeric, description: "", fk: ""}
+  - {name: upper_lod_conc, type: numeric, description: "", fk: ""}
+  - {name: mdc_lower_log10, type: numeric, description: "Minimum detectable concentration", fk: ""}
+  - {name: mdc_upper_log10, type: numeric, description: "Minimum detectable concentration", fk: ""}
+  - {name: mdc_lower_conc, type: numeric, description: "Minimum detectable concentration", fk: ""}
+  - {name: mdc_upper_conc, type: numeric, description: "Minimum detectable concentration", fk: ""}
+  - {name: rdl_lower_log10, type: numeric, description: "Reliable detection limit", fk: ""}
+  - {name: rdl_upper_log10, type: numeric, description: "Reliable detection limit", fk: ""}
+  - {name: rdl_lower_conc, type: numeric, description: "Reliable detection limit", fk: ""}
+  - {name: rdl_upper_conc, type: numeric, description: "Reliable detection limit", fk: ""}
+  - {name: pcov_threshold, type: numeric, description: "", fk: ""}
+  - {name: cv_x_max, type: numeric, description: "", fk: ""}
+  - {name: alpha, type: numeric, description: "", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+indexes:
+  - {name: calib_diagnostics_pkey, column: curve_id, type: btree}
+  - {name: calib_diagnostics_pkey, column: method, type: btree}
+referenced_by: []

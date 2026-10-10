@@ -39,6 +39,55 @@
 
 # ---- UI ---------------------------------------------------------------------
 
+#' assay ("bead"/"elisa"/"flow") -> the per-format upload-procedure help_id.
+#' "bead" has three formats with materially different upload behavior (only
+#' .rbx/.srbx carries an instrument-reported dilution -- see
+#' assay_well_inventory.R's .ai_inventory_bead()), so it's keyed one level
+#' deeper than the other two assays, which have exactly one format each.
+.ASSAY_UPLOAD_HELP_ID_BY_FORMAT <- list(
+  bead = c(raw = "import.bead.raw.upload", xponent = "import.bead.xponent.upload",
+          rbx = "import.bead.rbx.upload")
+)
+.ASSAY_UPLOAD_HELP_ID <- c(elisa = "import.elisa.upload", flow = "import.flow.upload")
+
+#' Resolve the upload-step help_id for an assay + (possibly NULL/not-yet-
+#' chosen) format_id. Falls back to the assay-level id when the assay has no
+#' per-format entries or the format isn't recognized, so this never errors on
+#' a stale/unset format_id.
+.upload_help_id <- function(assay, format_id = NULL) {
+  by_fmt <- .ASSAY_UPLOAD_HELP_ID_BY_FORMAT[[assay]]   # [[ on a LIST: NULL-safe on a miss
+  if (!is.null(by_fmt) && !is.null(format_id) && format_id %in% names(by_fmt))
+    return(by_fmt[[format_id]])
+  # [[ on .ASSAY_UPLOAD_HELP_ID would NOT be safe here -- it's a plain named
+  # character VECTOR, and [[ on a vector throws "subscript out of bounds" for
+  # a missing name instead of returning NULL the way a list does (caught by
+  # a direct unit test, not by this file's own parse/syntax checks).
+  if (assay %in% names(.ASSAY_UPLOAD_HELP_ID)) .ASSAY_UPLOAD_HELP_ID[[assay]] else NULL
+}
+
+# One accent color per numbered step, keyed by the step's STABLE conceptual
+# position (1-9), not its displayed number -- a non-preprocessor descriptor
+# (step() below collapses 2-4 away) still colors "Layout template" the same
+# color whether it displays as "5." or "2.", so a box's color always means
+# the same section regardless of which descriptor is rendering it.
+.IMPORT_STEP_COLORS <- c(
+  "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+  "#8c564b", "#e377c2", "#7f7f7f", "#17becf"
+)
+#' Wrap one numbered import-step's content in a colored box (a tinted left
+#' border, not a full-saturation fill, so the section reads as distinct
+#' without fighting the content inside it for attention). `step_key` is the
+#' STABLE 1-9 index into .IMPORT_STEP_COLORS, independent of the step's
+#' displayed number.
+.import_step_box <- function(step_key, ...) {
+  color <- .IMPORT_STEP_COLORS[[step_key]]
+  tags$div(
+    style = sprintf(
+      "border-left: 5px solid %s; background-color: %s14; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px;",
+      color, color),
+    ...)
+}
+
 assay_import_ui <- function(id, descriptor) {
   ns <- NS(id)
   formats <- list_assay_formats(descriptor$assay)
@@ -52,8 +101,8 @@ assay_import_ui <- function(id, descriptor) {
       selectInput(ns("format_id"), "File format",
                   choices = stats::setNames(formats$format_id, formats$label)),
 
-    wellPanel(
-      tags$h4("1. Upload instrument file(s)"),
+    .import_step_box(1,
+      tags$h4("1. Upload instrument file(s)", uiOutput(ns("upload_help_icon"), inline = TRUE)),
       fileInput(ns("raw_files"), NULL, multiple = TRUE, accept = accept),
       if (!is.null(descriptor$assay_controls)) descriptor$assay_controls(ns),
       actionButton(ns("parse_btn"), "Parse uploaded file(s)", class = "btn-primary"),
@@ -66,15 +115,21 @@ assay_import_ui <- function(id, descriptor) {
     if (pre)
       conditionalPanel(
         condition = sprintf("output['%s']", ns("has_raw")),
-        tags$h4("2. Confirm the plate layout"),
-        ai_plate_grid_ui(ns("grid")),
-        tags$h4("3. Standards dilution reference"),
-        ai_std_reference_ui(ns("stdref")),
-        tags$h4("4. Configure the description field"),
-        ai_shape_ui(ns("shape"))),
+        .import_step_box(2,
+          tags$h4("2. Confirm the plate layout", help_icon("import.plate_grid.confirm", ns)),
+          ai_plate_grid_ui(ns("grid"))),
+        .import_step_box(3,
+          tags$h4("3. Standards dilution reference",
+                  help_icon("compute.import.dilution_source_precedence", ns)),
+          ai_std_reference_ui(ns("stdref"))),
+        .import_step_box(4,
+          tags$h4("4. Configure the description field",
+                  help_icon("compute.import.description_shape_binding", ns)),
+          ai_shape_ui(ns("shape")))),
 
-    wellPanel(
-      tags$h4(sprintf("%d. Layout template", step(5L, 2L))),
+    .import_step_box(5,
+      tags$h4(sprintf("%d. Layout template", step(5L, 2L)),
+              help_icon("import.wizard.layout_template", ns)),
       uiOutput(ns("template_state")),
       downloadButton(ns("template"), "Download layout template"),
       tags$p(tags$small(
@@ -82,24 +137,28 @@ assay_import_ui <- function(id, descriptor) {
         "above. Edit it if anything still needs changing, then upload it below."))
     ),
 
-    wellPanel(
-      tags$h4(sprintf("%d. Upload completed layout template", step(6L, 3L))),
+    .import_step_box(6,
+      tags$h4(sprintf("%d. Upload completed layout template", step(6L, 3L)),
+              help_icon("import.wizard.upload_completed", ns)),
       fileInput(ns("layout_file"), NULL, accept = c(".xlsx", ".xls"))
     ),
 
-    wellPanel(
-      tags$h4(sprintf("%d. Validation", step(7L, 4L))),
+    .import_step_box(7,
+      tags$h4(sprintf("%d. Validation", step(7L, 4L)),
+              help_icon("import.wizard.validation", ns)),
       textOutput(ns("issue_summary")),
       DT::dataTableOutput(ns("issues"))
     ),
 
-    wellPanel(
-      tags$h4(sprintf("%d. Preview", step(8L, 5L))),
+    .import_step_box(8,
+      tags$h4(sprintf("%d. Preview", step(8L, 5L)),
+              help_icon("import.wizard.preview", ns)),
       tableOutput(ns("preview"))
     ),
 
-    wellPanel(
-      tags$h4(sprintf("%d. Commit", step(9L, 6L))),
+    .import_step_box(9,
+      tags$h4(sprintf("%d. Commit", step(9L, 6L)),
+              help_icon("import.wizard.commit", ns)),
       conditionalPanel(
         condition = sprintf("output['%s']", ns("ready")),
         actionButton(ns("commit"), "Upload to database", class = "btn-primary")
@@ -121,6 +180,16 @@ assay_import_server <- function(id, pool, descriptor, scope) {
   # (guards against lazy loop-capture -- see mount_assay_import).
   force(id); force(pool); force(descriptor); force(scope)
   moduleServer(id, function(input, output, session) {
+    ns <- session$ns
+
+    observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      showModal(modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = modalButton("Close")))
+    })
 
     rv <- reactiveValues(raw = NULL, sheets = NULL, issues = NULL,
                          status = "", committed = FALSE, parse_status = "")
@@ -132,6 +201,18 @@ assay_import_server <- function(id, pool, descriptor, scope) {
       fmt <- input$format_id %||% descriptor$default_format %||%
         list_assay_formats(descriptor$assay)$format_id[1]
       get_assay_reader(descriptor$assay, fmt)
+    })
+
+    # Step 1's help icon depends on the chosen FORMAT, not just the assay --
+    # "bead" has three formats with materially different upload behavior
+    # (.upload_help_id()) -- so it's a renderUI keyed on input$format_id
+    # rather than the static help_icon() every other step uses.
+    output$upload_help_icon <- renderUI({
+      fmt <- input$format_id %||% descriptor$default_format %||%
+        list_assay_formats(descriptor$assay)$format_id[1]
+      hid <- .upload_help_id(descriptor$assay, fmt)
+      if (is.null(hid)) return(NULL)
+      help_icon(hid, ns)
     })
 
     # ── pre-processor: stage 1 (grid), 1.5 (standards reference), 2-3 (shapes) ──

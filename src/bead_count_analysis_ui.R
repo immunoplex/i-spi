@@ -60,37 +60,8 @@ beadCountModuleUI <- function(id) {
       "))),
     br(),
     fluidRow(
-      bsCollapse(
-        id = ns("bead_count_collapse"),
-        bsCollapsePanel(
-          title = "Bead Count Analysis Methods",
-          tagList(
-            tags$p("Use the dropdown menu labeled ‘Plate in Sample Data’ to select a plate from the sample data in the currently selected experiment. Then, choose an antigen from the selected plate to analyze bead counts for that antigen."),
-            tags$p("The figure below the dropdown menus displays bead counts on the y-axis for each of the 96 wells in the multiplex bead assay on the x-axis (Matson, Zachary et al). In the figure:"),
-            tags$ul(
-              tags$li("The red dotted horizontal line represents the lower threshold value."),
-              tags$li("The blue dotted horizontal line represents the upper threshold value."),
-              tags$li("The default lower and upper thresholds are 35 and 50, respectively."),
-              tags$li("The black solid horizontal line represents the average bead count across all wells."),
-              tags$li("Red-colored wells indicate a low bead count, while blue-colored wells have sufficient bead counts based on the failed well criterion.")
-            ),
-
-            tags$p("The failed well criterion is either wells with bead counts below the upper threshold or wells with bead counts below the upper threshold.
-                     To adjust the lower and upper thresholds and modify the failed well criterion, go to the Study Overview tab and navigate to Bead Count Options."),
-
-            tags$p("Below the figure, a table titled ‘Sample Values with Low Bead Counts’ lists samples that meet the low bead count criteria. The table includes:"),
-            tags$ul(
-              tags$li("bead_count_gc: The gate class of the bead count, indicating whether it is sufficient or low."),
-              tags$li("is_low_bead_count: A Boolean column where true indicates a low bead count and false indicates a sufficient bead count.")
-            ),
-
-            tags$p("To download the bead count gate class for all samples in the currently selected experiment within the selected study, click the download button below the table."),
-            tags$h3("References"),
-            tags$p("Matson, Zachary et al. “shinyMBA: a novel R shiny application for quality control of the multiplex bead assay for serosurveillance studies.” Scientific reports vol. 14,1 7442. 28 Mar. 2024, doi:10.1038/s41598-024-57652-4")
-          ), #end tagList
-          style = "success"
-        )
-
+      div(style = "padding: 0 15px;",
+        tags$h4("Bead Count Analysis", help_icon("qc.bead_count.methods", ns), style = "display:inline-flex; align-items:center; gap:.4rem;")
       ),
       mainPanel(
         fluidRow(
@@ -124,6 +95,15 @@ beadCountModuleUI <- function(id) {
 beadCountServer <- function(id, selected_study, selected_experiment,currentuser) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      showModal(modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = modalButton("Close")))
+    })
 
     # selected_study <- selected_studyexpplate$study_accession
     # selected_experiment <- selected_studyexpplate$experiment_accession

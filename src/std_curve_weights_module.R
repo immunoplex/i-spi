@@ -69,6 +69,7 @@ stdCurveWeightsComputeUI <- function(id) {
       shiny::wellPanel(
         shiny::h4("Compute weights"),
         shiny::tags$p(shiny::tags$strong("curveRweights precision weighting"),
+                      help_icon("qc.precision_weights.method", ns),
                       style = "margin-bottom:4px;color:#555;"),
         shiny::radioButtons(ns("weight_method"), "Method to weight",
                             choices = c("Bayesian" = "bayesian",
@@ -200,7 +201,17 @@ stdCurveWeightsSummaryUI <- function(id) {
 # ---------------------------------------------------------------------------
 stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(), scope = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
+    ns <- session$ns
     `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+
+    shiny::observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      shiny::showModal(shiny::modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
+    })
 
     # --- queue-panel helpers (namespaced duplicate -- see file header) ------
     chr0 <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "" else as.character(x[1])
@@ -400,7 +411,10 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       if (!length(varying_cols()))
         shiny::tags$div(style = "color:#b02a37;font-weight:bold;margin-top:4px;",
           "⚠ Neither timeperiod nor agroup varies for this scope — ",
-          "curveRweights needs at least one. See the sidebar to fill in agroup.")
+          "curveRweights needs at least one to tell real study-design ",
+          "differences apart from measurement noise. See the sidebar to ",
+          "fill in agroup.",
+          help_icon("qc.precision_weights.method", ns))
       else NULL
     })
 

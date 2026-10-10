@@ -1,0 +1,26 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL; ON DELETE CASCADE", fk: "curve_lookup.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: ""}
+  - {name: point_index, type: integer, description: "Primary key; NOT NULL; 1..n_grid", fk: ""}
+  - {name: model_name, type: text, description: "Best model this grid is for", fk: ""}
+  - {name: log10_concentration, type: numeric, description: "", fk: ""}
+  - {name: concentration, type: numeric, description: "", fk: ""}
+  - {name: predicted_response, type: numeric, description: "Fitted curve (MFI/OD scale)", fk: ""}
+  - {name: ci_lower, type: numeric, description: "", fk: ""}
+  - {name: ci_upper, type: numeric, description: "", fk: ""}
+  - {name: predicted_concentration, type: numeric, description: "Back-calc precision profile", fk: ""}
+  - {name: se_concentration, type: numeric, description: "Uncapped log10-scale SD", fk: ""}
+  - {name: pcov, type: numeric, description: "Capped percent CV", fk: ""}
+  - {name: pcov_rmse, type: numeric, description: "", fk: ""}
+  - {name: pcov_pass, type: boolean, description: "", fk: ""}
+  - {name: d2y_dx2, type: numeric, description: "", fk: ""}
+  - {name: noise_mode, type: text, description: "Bayes only; NULL for freq", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+indexes:
+  - {name: calib_grid_pkey, column: curve_id, type: btree}
+  - {name: calib_grid_pkey, column: method, type: btree}
+  - {name: calib_grid_pkey, column: point_index, type: btree}
+referenced_by: []

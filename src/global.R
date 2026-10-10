@@ -223,13 +223,24 @@ reloadReactive <- function(conn, userWorkSpaceID) {
 }
 
 
-# ---- Help/docs engine + settings concept registry (loaded ONCE per process) --
-# help_utils.R defines the parser and the render helpers; HELP_SETTINGS is the
-# concept registry the settings-cascade UI reads for Layer-3 drill-downs. Fails
-# soft: a missing help/ dir warns and disables drill-downs rather than crashing.
-# NOTE: source(local=FALSE) puts the engine functions in globalenv(); global.R
-# itself is sourced local=TRUE (into the app env), so we must assign the registry
-# into globalenv() explicitly or the engine's get0() lookup can't reach it.
+# ---- Help/docs engine + app-wide concept registry (loaded ONCE per process) --
+# help_utils.R defines the parser and the render helpers; HELP_REGISTRY is the
+# merged concept registry every help_icon()/help_modal_body() call and the
+# settings-cascade's Layer-3 drill-downs read from. Fails soft per directory:
+# a missing help/ subdirectory warns and just yields no entries from it,
+# rather than crashing. NOTE: source(local=FALSE) puts the engine functions in
+# globalenv(); global.R itself is sourced local=TRUE (into the app env), so we
+# must assign the registry into globalenv() explicitly or the engine's get0()
+# lookup can't reach it.
 source("help_utils.R")
-assign("HELP_SETTINGS", load_help("help/settings"), envir = globalenv())
+assign("HELP_REGISTRY", load_help_merged(HELP_CONTENT_DIRS), envir = globalenv())
+# Back-compat alias: any code still reading HELP_SETTINGS by name (there
+# shouldn't be any after the 2026-10-09 generalization, but keep this cheap
+# safety net) sees the same merged registry.
+assign("HELP_SETTINGS", get("HELP_REGISTRY", envir = globalenv()), envir = globalenv())
+
+# Database table schema docs (Columns/Indexes/Referenced By) a data.* note can
+# attach via `schema_table: <db_table>` -- see render_schema_tables() in
+# help_utils.R. Separate from HELP_REGISTRY: a db table name isn't a help_id.
+assign("SCHEMA_REGISTRY", load_schema_registry("help/schema"), envir = globalenv())
 

@@ -97,7 +97,36 @@
 #' Build the Data-tab UI: Refresh + RData Bundle, a status line, then a grouped
 #' tabset (Raw inputs / Registry / Results) driven by CALIB_TABLE_ORDER, each
 #' table captioned from the data dictionary.
+#' table name -> help_id. Every table in CALIB_TABLE_ORDER has a help entry as
+#' of the round-2 content pass; kept as an explicit lookup rather than a naming
+#' convention so a future table added here without a note just gets no icon
+#' (help_icon() itself returns NULL for an id with no entry) instead of a
+#' broken link.
+.DATA_TAB_HELP_ID <- c(
+  xmap_header       = "data.raw.plates",
+  xmap_standard     = "glossary.standard_wells",
+  xmap_control      = "glossary.control_wells",
+  xmap_buffer       = "glossary.blank_wells",
+  xmap_sample       = "glossary.sample_wells",
+  curve_lookup      = "data.registry.curve_lookup",
+  calib_run         = "data.results.run",
+  calib_fit         = "data.results.fit_model_selection",
+  calib_param       = "data.results.parameters",
+  calib_gate        = "data.results.eligibility_gates",
+  calib_grid        = "data.results.fitted_grid",
+  calib_samples     = "data.results.samples",
+  calib_diagnostics = "data.results.diagnostics_loq",
+  calib_loo         = "data.results.loo_comparison",
+  calib_weights     = "data.results.precision_weights",
+  calib_weights_fit = "data.results.precision_weights_fit"
+)
+
 dataTabUI <- function() {
+  # Flat module (see file header) -- no NS, so help_icon()'s click event is
+  # unnamespaced; ui_handler.R's single shared observeEvent(input$help_show, ...)
+  # handles it (and every other flat module's help_icon(), e.g.
+  # delete_study_components_ui.R's -- one observer for the whole flat scope).
+  ns <- function(x) x
   groups <- lapply(names(CALIB_TABLE_ORDER), function(grp) {
     inner <- lapply(CALIB_TABLE_ORDER[[grp]], function(tb) {
       doc <- table_doc(tb)
@@ -108,10 +137,13 @@ dataTabUI <- function() {
         shiny::uiOutput("split_plate_nominal_UI"),
         shiny::uiOutput("wavelength_subtraction_UI")
       ) else NULL
+      help_id <- .DATA_TAB_HELP_ID[[tb]]
       shiny::tabPanel(
         title = doc$label,
         shiny::div(class = "help-block", style = "margin:8px 0;",
-          shiny::strong(doc$what), shiny::br(),
+          shiny::strong(doc$what),
+          if (!is.null(help_id)) help_icon(help_id, ns),
+          shiny::br(),
           shiny::tags$small(sprintf("Grain: %s", doc$grain))),
         shinycssloaders::withSpinner(
           DT::dataTableOutput(.dt_output_id(tb)), type = 4, color = "#337ab7"),
@@ -124,10 +156,22 @@ dataTabUI <- function() {
   })
 
   shiny::tagList(
-    shiny::div(style = "margin:6px 0 10px;",
-      shiny::actionButton("data_refresh", "Refresh Data", icon = shiny::icon("sync")),
-      shiny::downloadButton("download_rdata_bundle", "RData Bundle"),
-      shiny::downloadButton("download_json_bundle", "Export (JSON + settings)")),
+    shiny::fluidRow(style = "margin:6px 0 10px;",
+      shiny::column(4,
+        shiny::actionButton("data_refresh", "Refresh Data", icon = shiny::icon("sync")),
+        help_icon("data.actions.refresh", function(x) x),
+        shiny::div(shiny::tags$small(class = "param-desc",
+          "Reload this tab from the database — after a new import or a recomputed fit."))),
+      shiny::column(4,
+        shiny::downloadButton("download_rdata_bundle", "RData Bundle"),
+        help_icon("data.actions.rdata_bundle", function(x) x),
+        shiny::div(shiny::tags$small(class = "param-desc",
+          "Every table here, plus settings and annotations, as one .RData file for R."))),
+      shiny::column(4,
+        shiny::downloadButton("download_json_bundle", "Export (JSON + settings)"),
+        help_icon("data.actions.json_bundle", function(x) x),
+        shiny::div(shiny::tags$small(class = "param-desc",
+          "The same bundle as plain JSON, readable outside R.")))),
     shiny::uiOutput("data_snapshot_status"),
     do.call(shiny::tabsetPanel, groups)
   )

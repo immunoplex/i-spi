@@ -87,6 +87,15 @@ studyOverviewServer <- function(id, pool, project, study, user) {
     ns <- session$ns
     .val <- function(x) if (is.function(x)) x() else x   # accept reactive or plain
 
+    shiny::observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      shiny::showModal(shiny::modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
+    })
+
     # Resolved study-level scope; every loader depends on this. A blank/"Click
     # here" study short-circuits every pane to a friendly prompt (no queries).
     scope <- shiny::reactive({
@@ -180,6 +189,7 @@ studyOverviewServer <- function(id, pool, project, study, user) {
 
     .bcs_pane <- function() {
       shiny::tagList(
+        help_icon("study_overview.blanks_controls_standards", ns),
         shiny::fluidRow(
           shiny::column(6, shiny::downloadButton(ns("bcs_dl_plot"), "Download plot")),
           shiny::column(6, shiny::downloadButton(ns("bcs_dl_data"), "Download data (CSV)"))),
@@ -251,6 +261,7 @@ studyOverviewServer <- function(id, pool, project, study, user) {
         return(shiny::div(class = "alert alert-warning",
           "No timepoint variable is defined for this study, so there is nothing to plot."))
       shiny::tagList(
+        help_icon("study_overview.samples_by_timepoint", ns),
         shiny::fluidRow(
           shiny::column(6, shiny::downloadButton(ns("tp_dl_plot"), "Download plot")),
           shiny::column(6, shiny::downloadButton(ns("tp_dl_data"), "Download data (CSV)"))),
@@ -340,6 +351,7 @@ studyOverviewServer <- function(id, pool, project, study, user) {
 
     .bead_pane <- function() {
       shiny::tagList(
+        help_icon("study_overview.high_aggregate_low_bead", ns),
         shiny::fluidRow(
           shiny::column(4, shiny::uiOutput(ns("bead_analyte_ui"))),
           shiny::column(4, shiny::uiOutput(ns("bead_specimen_ui"))),
@@ -422,6 +434,7 @@ studyOverviewServer <- function(id, pool, project, study, user) {
         return(shiny::div(class = "alert alert-warning",
           "No arm variable is defined for this study, so there is nothing to plot."))
       shiny::tagList(
+        help_icon("study_overview.samples_by_arm", ns),
         shiny::fluidRow(
           shiny::column(6, shiny::downloadButton(ns("arm_dl_plot"), "Download plot")),
           shiny::column(6, shiny::downloadButton(ns("arm_dl_data"), "Download data (CSV)"))),
@@ -512,6 +525,7 @@ studyOverviewServer <- function(id, pool, project, study, user) {
         return(shiny::div(class = "alert alert-info",
           "Once standard curves are saved, Sample Estimate Quality will be available for inspection."))
       shiny::tagList(
+        help_icon("study_overview.sample_estimate_quality", ns),
         shiny::fluidRow(
           shiny::column(4, shiny::uiOutput(ns("fit_method_ui"))),
           shiny::column(4, shiny::uiOutput(ns("fit_source_ui"))),

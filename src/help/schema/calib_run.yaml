@@ -1,0 +1,15 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: job_id, type: "varchar(64)", description: "Primary key", fk: ""}
+  - {name: method, type: text, description: "NOT NULL; 'frequentist' or 'bayesian'", fk: ""}
+  - {name: package, type: text, description: "", fk: ""}
+  - {name: version, type: text, description: "", fk: ""}
+  - {name: best_model, type: text, description: "", fk: ""}
+  - {name: params, type: jsonb, description: "Multiplate $meta (chains, warmup, pcov_threshold, seed, ...)", fk: ""}
+  - {name: status, type: text, description: "'running' | 'completed' | 'failed'", fk: ""}
+  - {name: started_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+  - {name: finished_at, type: timestamptz, description: "", fk: ""}
+indexes:
+  - {name: calib_run_pkey, column: job_id, type: btree}
+referenced_by: []

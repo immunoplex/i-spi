@@ -1,8 +1,12 @@
 ---
-id: apply_prozone
+id: settings.apply_prozone
 title: Prozone (high-dose hook) correction
 audience: user
+category: compute-decision
 params: [apply_prozone]
+references:
+  - text: "curveRcore getting-started vignette, §\"Preprocessing with preprocess_standards()\" -- correct_prozone()"
+    url: "https://immunoplex.github.io/curveRcore/articles/getting-started.html"
 ---
 
 At very high analyte concentrations some assays produce a *lower* signal rather

@@ -1,0 +1,50 @@
+# Source: live DB introspection, dev/data_tab_schema_report.sql ->
+# dev/data_tab_schema_report_output.txt (2026-10-09). No DDL file exists for
+# this table in either repo checkout -- this is the authoritative source.
+columns:
+  - {name: xmap_sample_id, type: bigint, description: "Primary key", fk: ""}
+  - {name: study_accession, type: "varchar(15)", description: "Join-key column (no declared FK)", fk: ""}
+  - {name: experiment_accession, type: "varchar(15)", description: "Join-key column (no declared FK)", fk: ""}
+  - {name: plate_id, type: "varchar(640)", description: "Join-key column (no declared FK)", fk: ""}
+  - {name: timeperiod, type: "varchar(40)", description: "", fk: ""}
+  - {name: patientid, type: "varchar(15)", description: "", fk: ""}
+  - {name: well, type: "varchar(6)", description: "", fk: ""}
+  - {name: stype, type: "varchar(6)", description: "Sample type code", fk: ""}
+  - {name: sampleid, type: "varchar(15)", description: "", fk: ""}
+  - {name: id_imi, type: "varchar(15)", description: "", fk: ""}
+  - {name: agroup, type: "varchar(40)", description: "Treatment-arm/cohort design column", fk: ""}
+  - {name: dilution, type: "numeric(9,0)", description: "", fk: ""}
+  - {name: pctaggbeads, type: "numeric(8,0)", description: "Percent aggregated beads (bead assays)", fk: ""}
+  - {name: samplingerrors, type: "varchar(64)", description: "", fk: ""}
+  - {name: antigen, type: "varchar(64)", description: "", fk: ""}
+  - {name: antibody_mfi, type: "numeric(12,4)", description: "Median fluorescence intensity (raw reading)", fk: ""}
+  - {name: antibody_n, type: integer, description: "Bead count for this well/antigen", fk: ""}
+  - {name: antibody_name, type: "varchar(15)", description: "", fk: ""}
+  - {name: feature, type: "varchar(15)", description: "", fk: ""}
+  - {name: gate_class, type: "varchar(25)", description: "", fk: ""}
+  - {name: antibody_au, type: "double precision", description: "Arbitrary-unit back-calculated concentration", fk: ""}
+  - {name: antibody_au_se, type: "double precision", description: "", fk: ""}
+  - {name: reference_dilution, type: numeric, description: "", fk: ""}
+  - {name: gate_class_dil, type: "varchar(25)", description: "", fk: ""}
+  - {name: norm_mfi, type: numeric, description: "", fk: ""}
+  - {name: in_linear_region, type: boolean, description: "", fk: ""}
+  - {name: gate_class_loq, type: "varchar(25)", description: "", fk: ""}
+  - {name: in_quantifiable_range, type: boolean, description: "", fk: ""}
+  - {name: gate_class_linear_region, type: "varchar(50)", description: "", fk: ""}
+  - {name: quality_score, type: numeric, description: "", fk: ""}
+  - {name: sample_dilution_factor, type: numeric, description: "", fk: ""}
+  - {name: predicted_concentration, type: numeric, description: "", fk: ""}
+  - {name: nominal_sample_dilution, type: "varchar(128)", description: "", fk: ""}
+  - {name: project_id, type: integer, description: "", fk: ""}
+  - {name: plateid, type: "varchar(128)", description: "", fk: ""}
+  - {name: plate, type: "varchar(15)", description: "", fk: ""}
+  - {name: wavelength, type: "varchar(15)", description: "", fk: ""}
+  - {name: source, type: "varchar(25)", description: "", fk: ""}
+  - {name: masked, type: boolean, description: "Plate masked out of downstream fitting", fk: ""}
+  - {name: mask_reason, type: text, description: "", fk: ""}
+indexes:
+  - {name: xmap_sample_pkey, column: xmap_sample_id, type: btree}
+  - {name: idx_xmap_sample_join_cols, column: study_accession, type: btree}
+  - {name: idx_xmap_sample_join_cols, column: experiment_accession, type: btree}
+  - {name: idx_xmap_sample_join_cols, column: plate_id, type: btree}
+referenced_by: []

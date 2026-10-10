@@ -1,0 +1,50 @@
+# Source: live DB introspection, dev/data_tab_schema_report.sql ->
+# dev/data_tab_schema_report_output.txt (2026-10-09). No DDL file exists for
+# this table in either repo checkout -- this is the authoritative source.
+#
+# referenced_by is scoped to the 16 Data-tab tables this help system
+# documents. The live report also shows curve_lookup.curve_id referenced by
+# several legacy/internal tables outside that scope (bayes_curves,
+# freq_candidate_parameters, freq_candidate_residuals, freq_curve_grid,
+# freq_curves, freq_parameters, freq_samples, freq_second_derivative,
+# freq_standard) -- omitted here for consistency with the other 15 tables'
+# docs, which only list referencing tables that are themselves documented.
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key", fk: ""}
+  - {name: project_id, type: integer, description: "Natural-key column", fk: ""}
+  - {name: study_accession, type: "varchar(15)", description: "Natural-key column", fk: ""}
+  - {name: experiment_accession, type: "varchar(15)", description: "Natural-key column", fk: ""}
+  - {name: plateid, type: "varchar(100)", description: "Natural-key column", fk: ""}
+  - {name: plate, type: "varchar(40)", description: "Natural-key column", fk: ""}
+  - {name: nominal_sample_dilution, type: "varchar(128)", description: "Natural-key column", fk: ""}
+  - {name: feature, type: "varchar(15)", description: "Natural-key column", fk: ""}
+  - {name: antigen, type: "varchar(64)", description: "Natural-key column", fk: ""}
+  - {name: source, type: "varchar(25)", description: "Natural-key column", fk: ""}
+  - {name: wavelength, type: "varchar(15)", description: "Natural-key column", fk: ""}
+  - {name: created_at, type: timestamptz, description: "", fk: ""}
+  - {name: masked, type: boolean, description: "", fk: ""}
+  - {name: mask_reason, type: text, description: "", fk: ""}
+  - {name: multiplate_group_id, type: uuid, description: "Groups curves fit together across plates (precision weighting)", fk: ""}
+indexes:
+  - {name: curve_lookup_pkey, column: curve_id, type: btree}
+  - {name: curve_lookup_nk, column: project_id, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: study_accession, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: experiment_accession, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: plateid, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: plate, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: nominal_sample_dilution, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: source, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: wavelength, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: antigen, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_nk, column: feature, type: "btree, unique (10-col natural key)"}
+  - {name: curve_lookup_multiplate_group_idx, column: multiplate_group_id, type: btree}
+  - {name: ix_curve_lookup_group, column: multiplate_group_id, type: btree}
+  - {name: ix_curve_lookup_scope, column: project_id, type: btree}
+  - {name: ix_curve_lookup_scope, column: study_accession, type: btree}
+  - {name: ix_curve_lookup_scope, column: experiment_accession, type: btree}
+referenced_by:
+  - {name: calib_fit, column: curve_id, table_reference: curve_lookup, column_reference: curve_id}
+  - {name: calib_diagnostics, column: curve_id, table_reference: curve_lookup, column_reference: curve_id}
+  - {name: calib_grid, column: curve_id, table_reference: curve_lookup, column_reference: curve_id}
+  - {name: calib_samples, column: curve_id, table_reference: curve_lookup, column_reference: curve_id}
+  - {name: calib_weights, column: curve_id, table_reference: curve_lookup, column_reference: curve_id}

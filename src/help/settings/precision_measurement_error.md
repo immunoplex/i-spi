@@ -1,8 +1,10 @@
 ---
-id: precision_measurement_error
+id: settings.precision_measurement_error
 title: Precision profile & measurement error
 audience: both
+category: compute-decision
 params: [include_measurement_error, pcov_threshold]
+see_also: [glossary.measurement_error, glossary.se_concentration, glossary.pcov, glossary.precision_profile]
 references:
   - text: "O'Connell MA, Belanger BA, Haaland PD (1993). Calibration and assay development using the four-parameter logistic model. Chemometrics and Intelligent Laboratory Systems 20(2):97-114."
     doi: "10.1016/0169-7439(93)80008-6"
@@ -29,3 +31,14 @@ and the limits derived from it. The grid and the per-sample precision always use
 the **same** definition, so the sample cloud lies on the profile either way. The
 switch chooses an honest presentation for the data you have; it does not
 manufacture precision — more standards and replicated controls do.
+
+::: more
+The measurement-error term (and especially its concentration dependence) needs
+several standards and replicated controls spanning the response range to estimate
+well. On a sparse plate that term is a crude estimate that can dominate a profile
+resting on a weak noise model; the curve-only profile reports the precision the
+data can actually support. The **gap between the two settings is itself
+diagnostic**: a large gap means the reported precision is being driven by a
+weakly-identified noise model — a signal to add standards/controls rather than to
+trust either number blindly.
+:::

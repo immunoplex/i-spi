@@ -44,7 +44,7 @@ local({
   # ---- UI (filled into ui_handler's uiOutput("source_alias_ui")) ------------
   output$source_alias_ui <- renderUI({
     tagList(
-      h3("Standard-curve source names"),
+      h3("Standard-curve source names", help_icon("settings.source_names", function(x) x)),
       div(class = "alert alert-info",
           tags$strong("Global."),
           " These mappings normalise raw standard-source labels to a canonical name",

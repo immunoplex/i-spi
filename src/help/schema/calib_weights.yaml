@@ -1,0 +1,28 @@
+# Source: i-spi-compute/worker/migrations/004_calib_weights.sql (authoritative
+# DDL, not a live DB query -- regenerate via dev/data_tab_schema_report.sql if
+# this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL; ON DELETE CASCADE", fk: "curve_lookup.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL", fk: ""}
+  - {name: sampleid, type: "varchar(128)", description: "Primary key; NOT NULL", fk: ""}
+  - {name: patientid, type: "varchar(128)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
+  - {name: timeperiod, type: "varchar(64)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
+  - {name: dilution, type: "varchar(64)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
+  - {name: agroup, type: "varchar(40)", description: "Mirrors calib_samples.agroup; carried regardless of whether it was a design column", fk: ""}
+  - {name: se, type: "double precision", description: "se_concentration, the scale predictor used", fk: ""}
+  - {name: pcov, type: "double precision", description: "Reference only", fk: ""}
+  - {name: sigma, type: "double precision", description: "phi * se^beta1", fk: ""}
+  - {name: w, type: "double precision", description: "1 / sigma^2", fk: ""}
+  - {name: w_norm, type: "double precision", description: "w / mean(w)", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+indexes:
+  - {name: calib_weights_pkey, column: curve_id, type: btree}
+  - {name: calib_weights_pkey, column: method, type: btree}
+  - {name: calib_weights_pkey, column: sampleid, type: btree}
+  - {name: calib_weights_pkey, column: patientid, type: btree}
+  - {name: calib_weights_pkey, column: timeperiod, type: btree}
+  - {name: calib_weights_pkey, column: dilution, type: btree}
+  - {name: idx_calib_weights_patient, column: curve_id, type: btree}
+  - {name: idx_calib_weights_patient, column: patientid, type: btree}
+referenced_by: []

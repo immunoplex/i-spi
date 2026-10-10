@@ -4,9 +4,9 @@
 source("global.R", local = TRUE)
 
 # Set to 1 for local and do not push in prod
-#  Sys.setenv(LOCAL_DEV = "1")
-# # local_email_user <- "seamus.owen.stein@dartmouth.edu"
-# local_email_user <- "mscotzens@gmail.com"
+ Sys.setenv(LOCAL_DEV = "1")
+# local_email_user <- "seamus.owen.stein@dartmouth.edu"
+local_email_user <- "mscotzens@gmail.com"
 
 # Source authentication configuration (Step 1)
 # Defines DEX_*, APP_REDIRECT_URI, OIDC_SCOPES, endpoints, get_jwks(), `%||%`, dex_client
@@ -55,7 +55,8 @@ sidebar <- dashboardSidebar(
   sidebarMenu(
     id = "main_tabs",
     menuItem("Home", tabName = "home_page", icon = icon("home")),
-    menuItem("Create, Add, and Load Projects", tabName = "manage_project_tab", icon = icon("chart-line"))
+    menuItem("Create, Add, and Load Projects", tabName = "manage_project_tab", icon = icon("chart-line")),
+    menuItem("Glossary", tabName = "glossary_page", icon = icon("book"))
   ),
 
   # Study selector and dynamic study menu
@@ -73,6 +74,12 @@ body <- dashboardBody(
   # 3a. ALL CSS STYLES (Consolidated)
   # ----------------------------------------------------------
   tags$head(
+    # Help-engine styles (.help-icon/.help-pop/.help-more/.help-seealso/...),
+    # defined once in help_utils.R so every module's help_icon()/
+    # help_modal_body() is styled consistently without re-injecting its own
+    # copy. Was previously only injected inside settingsCascadeUI; moved here
+    # 2026-10-09 when help_icon() became usable from any module.
+    if (exists("help_styles", mode = "function")) help_styles(),
     tags$style(HTML("
       /* ==============================================
          LAYOUT: Fixed sidebar and header

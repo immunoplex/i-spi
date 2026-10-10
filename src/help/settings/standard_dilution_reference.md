@@ -1,8 +1,10 @@
 ---
-id: standard_dilution_reference
+id: settings.standard_dilution_reference
 title: Standards dilution reference
 audience: user
+category: procedural
 params: [standard_dilution_reference]
+see_also: [compute.import.dilution_source_precedence]
 ---
 
 Some Standards wells can't have their dilution read from the instrument file

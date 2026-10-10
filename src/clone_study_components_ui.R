@@ -8,6 +8,10 @@
 #
 # Source study = the sidebar selection (input$readxMap_study_accession); the user
 # enters the TARGET project id and study name. Two-step confirm: Preview -> Clone.
+#
+# help_icon()'s click handled by ui_handler.R's single shared flat-module
+# observeEvent(input$help_show, ...) -- this file is flat too (no NS), so it
+# deliberately does NOT register its own observer.
 # =============================================================================
 
 output$clone_study_components_ui <- renderUI({
@@ -21,7 +25,8 @@ output$clone_study_components_ui <- renderUI({
   }
 
   tagList(
-    h3(sprintf("Clone Study \u2014 source: %s", study)),
+    h3(sprintf("Clone Study \u2014 source: %s", study),
+       help_icon("settings.clone_study", function(x) x)),
     div(class = "alert alert-info",
       strong("Shallow clone."), br(),
       "Copies the raw plate data, the curve registry, this study\u2019s settings",

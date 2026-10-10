@@ -51,6 +51,7 @@ stdCurveCalcUI <- function(id) {
       shiny::wellPanel(
         shiny::h4("Compute fits"),
         shiny::tags$p(shiny::tags$strong("Calculate (submit a fit job)"),
+                      help_icon("compute.standard_curve.model_engine", ns),
                       style = "margin-bottom:4px;color:#555;"),
         shiny::selectizeInput(ns("model_form"), "Models to fit (feature settings)",
                               choices = NULL, multiple = TRUE),
@@ -67,15 +68,13 @@ stdCurveCalcUI <- function(id) {
                           "High (3000)"                  = "3000",
                           "Very high (6000)"             = "6000"),
               selected = "1500"),
-            shiny::actionLink(ns("bayes_help"), "?",
-              style = "font-weight:bold;color:#337ab7;"),
+            help_icon("compute.standard_curve.bayes_draws", ns),
             shiny::tags$span(style = "font-size:11px;color:#787878;",
               " more draws \u2192 smoother precision profile; costs runtime."),
             shiny::tags$div(style = "margin-top:8px;",
               shiny::checkboxInput(ns("include_meas_err"),
                 "Include assay measurement error", value = TRUE),
-              shiny::actionLink(ns("meas_err_help"), "?",
-                style = "font-weight:bold;color:#337ab7;"),
+              help_icon("settings.precision_measurement_error", ns),
               shiny::tags$div(style = "font-size:11px;color:#787878;",
                 "On (recommended): the precision profile reflects assay noise, so ",
                 "LLOQ/ULOQ describe real single-reading precision. Off: ",
@@ -112,6 +111,7 @@ stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), 
                                calib_dirty = shiny::reactiveVal(0),
                                selected_curve = shiny::reactiveVal(NULL)) {
   shiny::moduleServer(id, function(input, output, session) {
+    ns <- session$ns
     `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
 
     # --- queue-panel helpers -------------------------------------------------
@@ -740,55 +740,16 @@ stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), 
       do.call(shiny::div, c(list(class = "well", style = style), rows))
     })
 
-    shiny::observeEvent(input$bayes_help, {
+    # Shared handler for every help_icon() in this module's UI (bayes_draws,
+    # precision_measurement_error, and whatever else gets a help_icon() here
+    # later) -- one observer reading help_id out of the click event, instead
+    # of a hardcoded showModal() per control. See help_utils.R.
+    shiny::observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
       shiny::showModal(shiny::modalDialog(
-        title = "Bayesian sampling & the precision profile",
-        shiny::p(paste(
-          "The Bayesian precision profile is estimated from the model's posterior draws,",
-          "and its smoothness is governed by how many draws we keep: the total is",
-          "chains \u00d7 sampling, where sampling is the number of post-warmup draws per",
-          "chain. Because the %CV plotted is a ratio of posterior quantities, too few",
-          "draws make it wobble from point to point \u2014 much of the jaggedness is",
-          "Monte-Carlo noise, not real assay behavior. Raising sampling reduces the",
-          "noise roughly with the square root of the draw count, so quadrupling draws",
-          "roughly halves the wobble. Increase draws through sampling rather than chains,",
-          "since chains beyond the worker's core count run sequentially and cost wall",
-          "time without adding parallelism. The one thing more draws will NOT fix is the",
-          "blow-up at the very low and very high ends of the curve: there the response",
-          "is nearly flat, so back-calculated concentration is genuinely ill-conditioned",
-          "and the high, unstable %CV at the extremes is real \u2014 it reflects the",
-          "assay's detection limits, not a sampling artifact.")),
-        easyClose = TRUE, footer = shiny::modalButton("Close")))
-    })
-
-    shiny::observeEvent(input$meas_err_help, {
-      shiny::showModal(shiny::modalDialog(
-        title = "Assay measurement error in the precision profile",
-        shiny::p(paste(
-          "Back-calculation precision has two sources that add (delta method):",
-          "uncertainty in the fitted calibration curve itself (the posterior over",
-          "the model parameters), and the assay's measurement noise -- the",
-          "variability of a single response reading at a given concentration, which",
-          "in immunoassay grows with signal level. Dividing by the curve's local",
-          "slope turns response variability into concentration variability, which is",
-          "why the profile is U-shaped and blows up toward the flat asymptotes.")),
-        shiny::p(paste(
-          "ON (default): both terms are included -- the classical assay precision",
-          "profile. LLOQ/ULOQ are meaningful only against a profile that reflects",
-          "how precisely a real, noisy reading pins down a concentration, so this is",
-          "the recommended setting.")),
-        shiny::p(paste(
-          "OFF: curve/parameter uncertainty only -- an honest lower bound. The",
-          "measurement-error term (and especially its concentration dependence) is",
-          "hard to estimate and needs several standards and replicated controls",
-          "spanning the response range. On a sparse plate that term is a crude",
-          "estimate that can dominate a profile resting on a weak noise model; the",
-          "curve-only profile reports the precision the data can actually support.",
-          "The gap between the two settings is itself diagnostic: a large gap means",
-          "the reported precision is being driven by a weakly-identified noise model",
-          "-- a signal to add standards/controls rather than to trust either number",
-          "blindly. The switch chooses the honest presentation for the data you",
-          "have; it does not manufacture precision.")),
+        title = help_modal_title(hid), body,
         easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
     })
 

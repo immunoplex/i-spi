@@ -1,0 +1,36 @@
+# Source: i-spi-compute/db/calib_schema_v1.sql (authoritative DDL, not a live
+# DB query -- regenerate via dev/data_tab_schema_report.sql if this drifts).
+columns:
+  - {name: curve_id, type: bigint, description: "Primary key; NOT NULL; ON DELETE CASCADE", fk: "curve_lookup.curve_id"}
+  - {name: method, type: text, description: "Primary key; NOT NULL; 'frequentist' or 'bayesian'", fk: ""}
+  - {name: model_name, type: text, description: "Primary key; NOT NULL; logistic4/5, loglogistic5, gompertz4", fk: ""}
+  - {name: package, type: text, description: "", fk: ""}
+  - {name: version, type: text, description: "", fk: ""}
+  - {name: converged, type: boolean, description: "", fk: ""}
+  - {name: eligible, type: boolean, description: "", fk: ""}
+  - {name: is_best, type: boolean, description: "NOT NULL DEFAULT false", fk: ""}
+  - {name: is_fallback, type: boolean, description: "Selection fell back (no eligible model)", fk: ""}
+  - {name: criterion, type: text, description: "'AIC+eligibility' | 'LOO+eligibility'", fk: ""}
+  - {name: score_type, type: text, description: "'aic' or 'loo_elpd'", fk: ""}
+  - {name: selection_score, type: numeric, description: "AIC value (freq) or LOO elpd (bayes)", fk: ""}
+  - {name: selection_weight, type: numeric, description: "AIC weight (freq) or stacking weight (bayes)", fk: ""}
+  - {name: dynamic_range_log10, type: numeric, description: "", fk: ""}
+  - {name: n_params, type: integer, description: "", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "", fk: ""}
+  - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+indexes:
+  - {name: calib_fit_pkey, column: curve_id, type: btree}
+  - {name: calib_fit_pkey, column: method, type: btree}
+  - {name: calib_fit_pkey, column: model_name, type: btree}
+  - {name: idx_calib_fit_best, column: curve_id, type: "btree, partial: WHERE is_best"}
+  - {name: idx_calib_fit_best, column: method, type: "btree, partial: WHERE is_best"}
+referenced_by:
+  - {name: calib_param, column: curve_id, table_reference: calib_fit, column_reference: curve_id}
+  - {name: calib_param, column: method, table_reference: calib_fit, column_reference: method}
+  - {name: calib_param, column: model_name, table_reference: calib_fit, column_reference: model_name}
+  - {name: calib_gate, column: curve_id, table_reference: calib_fit, column_reference: curve_id}
+  - {name: calib_gate, column: method, table_reference: calib_fit, column_reference: method}
+  - {name: calib_gate, column: model_name, table_reference: calib_fit, column_reference: model_name}
+  - {name: calib_loo, column: curve_id, table_reference: calib_fit, column_reference: curve_id}
+  - {name: calib_loo, column: method, table_reference: calib_fit, column_reference: method}
+  - {name: calib_loo, column: model_name, table_reference: calib_fit, column_reference: model_name}

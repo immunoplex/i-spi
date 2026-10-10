@@ -40,6 +40,10 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 ai_std_reference_ui <- function(id) {
   ns <- NS(id)
   tagList(
+    # help_icon("compute.import.dilution_source_precedence", ...) lives on the
+    # parent's "3. Standards dilution reference" h4 (assay_import_module.R),
+    # not here -- avoids a duplicate icon on its own line below this module's
+    # own content.
     uiOutput(ns("status")),
     conditionalPanel(
       condition = sprintf("output['%s']", ns("has_candidates")),
@@ -181,6 +185,15 @@ ai_std_reference_server <- function(id, inventory_rv, pool, scope,
         msg <- paste0(msg, sprintf(" %d pasted row(s) didn't match a description here: %s.",
                                    length(unmatched_pasted), paste(unmatched_pasted, collapse = ", ")))
       showNotification(msg, type = if (sum(hit) > 0) "message" else "warning", duration = 8)
+    })
+
+    observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      showModal(modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = modalButton("Close")))
     })
 
     observeEvent(input$save, {

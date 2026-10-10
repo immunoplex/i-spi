@@ -69,6 +69,7 @@ plateDilutionSeriesUI <- function(id) {
   shiny::tagList(
     shiny::tags$div(
       style = "margin:6px 0 10px;color:#555;",
+      help_icon("qc.plate_dilution_series", ns),
       shiny::tags$p(
         "Standard-curve points from each plate, joined across the dilution ",
         "series on log-log axes. One facet per plate. Masked points are kept ",
@@ -144,6 +145,15 @@ plateDilutionSeriesServer <- function(id, pool, scope,
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+
+    shiny::observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      shiny::showModal(shiny::modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
+    })
 
     NONE_SRC  <- "(no source)"     # pretty label for the __none__ / blank source
     NONE_FEAT <- "(no feature)"    # pretty label for a missing feature

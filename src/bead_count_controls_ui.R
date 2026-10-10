@@ -8,21 +8,8 @@ output$bead_count_controls_UI <- renderUI({
   tagList(
     fluidRow(
       div(
-        style = "width: 100%; padding: 0 15px;",  # Added container styling
-        span(
-          div(style = "display:inline-block; margin-bottom: 10px;",
-              title = "Info",
-              icon("info-circle", class = "fa-lg", `data-toggle` = "tooltip",
-                   `data-placement` = "right",
-                   title = paste("To set the lower and upper thresholds for bead count analysis, use the up and down arrows to adjust the values,
-                                 or type a number directly into the fields. If no number is provided, the default values of 35 for the lower threshold
-                                 and 50 for the upper threshold will be used. To indicate a failed well, select either 'Below Upper Threshold' or 'Below Lower Threshold'
-                                 from the radio buttons titled 'Failed Well Criteria'."),
-
-
-                   `data-html` = "true")
-          )
-        )
+        style = "width: 100%; padding: 0 15px;",
+        help_icon("qc.bead_count.thresholds", function(x) x)
       )
     ),
 

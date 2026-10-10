@@ -16,6 +16,7 @@ settingsExportImportUI <- function(id) {
     shiny::div(
       class = "help-block", style = "margin:8px 0;",
       shiny::strong("Export / import this study's settings overrides."),
+      help_icon("settings.export_import", ns),
       shiny::br(),
       shiny::tags$small(paste(
         "Export writes only the values this study overrides (the sparse cascade),",
