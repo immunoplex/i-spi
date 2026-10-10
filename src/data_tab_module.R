@@ -157,21 +157,26 @@ dataTabUI <- function() {
 
   shiny::tagList(
     shiny::fluidRow(style = "margin:6px 0 10px;",
-      shiny::column(4,
+      shiny::column(3,
         shiny::actionButton("data_refresh", "Refresh Data", icon = shiny::icon("sync")),
         help_icon("data.actions.refresh", function(x) x),
         shiny::div(shiny::tags$small(class = "param-desc",
           "Reload this tab from the database — after a new import or a recomputed fit."))),
-      shiny::column(4,
+      shiny::column(3,
         shiny::downloadButton("download_rdata_bundle", "RData Bundle"),
         help_icon("data.actions.rdata_bundle", function(x) x),
         shiny::div(shiny::tags$small(class = "param-desc",
           "Every table here, plus settings and annotations, as one .RData file for R."))),
-      shiny::column(4,
+      shiny::column(3,
         shiny::downloadButton("download_json_bundle", "Export (JSON + settings)"),
         help_icon("data.actions.json_bundle", function(x) x),
         shiny::div(shiny::tags$small(class = "param-desc",
-          "The same bundle as plain JSON, readable outside R.")))),
+          "The same bundle as plain JSON, readable outside R."))),
+      shiny::column(3,
+        shiny::downloadButton("download_excel_bundle", "Excel Bundle"),
+        help_icon("data.actions.excel_bundle", function(x) x),
+        shiny::div(shiny::tags$small(class = "param-desc",
+          "The same bundle as an .xlsx workbook, one sheet per table.")))),
     shiny::uiOutput("data_snapshot_status"),
     do.call(shiny::tabsetPanel, groups)
   )
@@ -419,6 +424,55 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
           jsonlite::toJSON(list(error = paste("JSON serialization failed:", conditionMessage(e))),
                            auto_unbox = TRUE))
       writeLines(json, file)
+    }
+  )
+
+  # ---- Excel bundle: same content as the RData/JSON bundles, one sheet per
+  # table (+ manifest/settings/annotations), via openxlsx -- already a
+  # project dependency, already used for an Excel round-trip elsewhere (see
+  # std_curve_weights_module.R's agroup upload/download). Column coercion
+  # reuses .json_safe_df(): int64/POSIXct/Date/factor/list columns need the
+  # same "make it a plain character/numeric" treatment to write cleanly to a
+  # cell as they do to serialize to JSON. The largest table in practice
+  # (calib_grid) runs ~132k rows x 28 cols -- far under Excel's 1,048,576-row
+  # / 16,384-column per-sheet limit, so no truncation is needed; a table that
+  # somehow exceeded it would surface as a caught error below (a one-sheet
+  # workbook explaining the failure) rather than a corrupt download.
+  output$download_excel_bundle <- shiny::downloadHandler(
+    filename = function() { s <- scope(); paste0(s$study, "_", s$experiment, "_bundle.xlsx") },
+    content  = function(file) {
+      s <- scope()
+      sheets <- tryCatch({
+        snap   <- full_snapshot()
+        snap   <- snap[names(snap) != "xmap_antigen_family"]   # retired from bundle
+        tables <- lapply(snap, function(df) {
+          df <- .json_safe_df(df)
+          if (is.null(df) || !nrow(df)) data.frame(Message = "Not computed yet.") else df
+        })
+        manifest <- data.frame(
+          table       = names(tables),
+          label       = vapply(names(tables), function(t) table_doc(t)$label, character(1)),
+          n_rows      = vapply(tables, function(d) if (is.null(d)) 0L else nrow(d), integer(1)),
+          description = vapply(names(tables), function(t) table_doc(t)$what, character(1)),
+          stringsAsFactors = FALSE)
+        settings <- .json_safe_df(.settings_for_export(db_pool, s))
+        if (is.null(settings) || !nrow(settings))
+          settings <- data.frame(Message = "No settings resolved yet.")
+        ann <- .annotations_for_export(db_pool, s)
+        ann_sheets <- stats::setNames(
+          lapply(ann, function(df) {
+            df <- if (is.data.frame(df)) .json_safe_df(df) else NULL
+            if (is.null(df) || !nrow(df)) data.frame(Message = "No annotations of this kind.") else df
+          }),
+          paste0("annotations_", names(ann)))
+        c(list(manifest = manifest, settings = settings), ann_sheets, tables)
+      }, error = function(e)
+        list(error = data.frame(message = paste("bundle build failed:", conditionMessage(e)))))
+
+      ok <- tryCatch({ openxlsx::write.xlsx(sheets, file); TRUE }, error = function(e) FALSE)
+      if (!ok)
+        openxlsx::write.xlsx(
+          list(error = data.frame(message = "Excel bundle could not be written.")), file)
     }
   )
 
