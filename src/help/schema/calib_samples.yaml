@@ -1,6 +1,6 @@
-# Source: i-spi-compute/db/calib_schema_v1.sql + migration 003 (agroup column,
-# authoritative DDL, not a live DB query -- regenerate via
-# dev/data_tab_schema_report.sql if this drifts).
+# Source: i-spi-compute/db/calib_schema_v1.sql + migrations 003 (agroup) and
+# 008 (out-of-range columns) -- authoritative DDL, not a live DB query;
+# regenerate via dev/data_tab_schema_report.sql if this drifts.
 columns:
   - {name: curve_id, type: bigint, description: "Primary key; NOT NULL; ON DELETE CASCADE", fk: "curve_lookup.curve_id"}
   - {name: method, type: text, description: "Primary key; NOT NULL", fk: ""}
@@ -10,13 +10,27 @@ columns:
   - {name: dilution, type: "varchar(64)", description: "Primary key; NOT NULL DEFAULT '__none__'", fk: ""}
   - {name: predicted_concentration, type: numeric, description: "Log10 scale (when is_log_independent)", fk: ""}
   - {name: final_concentration, type: numeric, description: "Natural scale, dilution-corrected", fk: ""}
-  - {name: se_concentration, type: numeric, description: "", fk: ""}
-  - {name: pcov, type: numeric, description: "", fk: ""}
-  - {name: pcov_rmse, type: numeric, description: "", fk: ""}
-  - {name: pcov_pass, type: boolean, description: "", fk: ""}
+  - {name: se_concentration, type: numeric, description: "SD of log10 concentration (delta method or posterior SD); excludes draws beyond an asymptote", fk: ""}
+  - {name: pcov, type: numeric, description: "100 * ln(10) * se_concentration, capped at 150; symmetric and direction-blind", fk: ""}
+  - {name: pcov_rmse, type: numeric, description: "Equals pcov for samples", fk: ""}
+  - {name: pcov_pass, type: boolean, description: "Inside [LLOQ, ULOQ] (pcov threshold when LOQs are undefined)", fk: ""}
   - {name: job_id, type: "varchar(64)", description: "", fk: ""}
   - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
   - {name: agroup, type: "varchar(40)", description: "Added by migration 003; treatment-arm/cohort design column for curveRweights", fk: ""}
+  - {name: predicted_log10_concentration, type: numeric, description: "Pre-dilution log10 concentration (migration 008 formalised it)", fk: ""}
+  - {name: pcov_gate_class, type: text, description: "belowLLOQ / inDynamicRange / aboveULOQ (migration 008 formalised it)", fk: ""}
+  - {name: censor_class, type: text, description: "quantified / lod_to_lloq / below_lod / below_lloq / above_uloq / saturated / no_response (migration 008)", fk: ""}
+  - {name: censor_type, type: text, description: "none / left / interval / right (migration 008)", fk: ""}
+  - {name: censor_lower, type: "double precision", description: "Lower censoring bound, natural scale, dilution-corrected; NULL = unbounded (0)", fk: ""}
+  - {name: censor_upper, type: "double precision", description: "Upper censoring bound, natural scale, dilution-corrected; NULL = unbounded", fk: ""}
+  - {name: conc_q_lo, type: "double precision", description: "2.5% predictive quantile, natural scale, dilution-corrected", fk: ""}
+  - {name: conc_q_med, type: "double precision", description: "50% predictive quantile, natural scale, dilution-corrected", fk: ""}
+  - {name: conc_q_hi, type: "double precision", description: "97.5% predictive quantile; NULL = unbounded above", fk: ""}
+  - {name: p_below_lloq, type: "double precision", description: "P(concentration < LLOQ)", fk: ""}
+  - {name: p_above_uloq, type: "double precision", description: "P(concentration > ULOQ)", fk: ""}
+  - {name: p_below_cutoff, type: "double precision", description: "P(final concentration < decision_cutoff); NULL if no cutoff", fk: ""}
+  - {name: frac_draws_below_a, type: "double precision", description: "Share of draws beyond the low-concentration asymptote", fk: ""}
+  - {name: frac_draws_above_d, type: "double precision", description: "Share of draws beyond the high-concentration asymptote", fk: ""}
 indexes:
   - {name: calib_samples_pkey, column: curve_id, type: btree}
   - {name: calib_samples_pkey, column: method, type: btree}

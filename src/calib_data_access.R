@@ -99,6 +99,38 @@ family_short <- function(model_name) {
 
 .tbl <- function(name) sprintf("%s.%s", CALIB_SCHEMA, name)
 
+# Out-of-range sample columns (censoring, predictive quantiles, threshold
+# probabilities) arrive with i-spi-compute migration 008. Explicit-column
+# SELECTs ask only for the ones the table actually has: a missing column would
+# make .calib_q() fail and silently return an empty frame (no samples at all on
+# the Standard Curve tab), so the app keeps working against an unmigrated
+# database. Looked up once per session; restart the app after migrating.
+CALIB_SAMPLES_OOR_COLS <- c("pcov_gate_class", "censor_class", "censor_type",
+                            "censor_lower", "censor_upper", "conc_q_lo", "conc_q_med",
+                            "conc_q_hi", "p_below_lloq", "p_above_uloq",
+                            "p_below_cutoff", "frac_draws_below_a", "frac_draws_above_d")
+.calib_samples_oor_cols <- local({
+  cache <- NULL
+  function(pool) {
+    if (is.null(cache)) {
+      cols <- .calib_q(pool,
+        "SELECT column_name FROM information_schema.columns
+          WHERE table_schema = $1 AND table_name = 'calib_samples'",
+        params = list(CALIB_SCHEMA))$column_name
+      if (!length(cols)) return(character(0))      # lookup failed: don't cache
+      cache <<- intersect(CALIB_SAMPLES_OOR_COLS, cols)
+    }
+    cache
+  }
+})
+# ", s.censor_class, s.conc_q_lo, ..." (or "") for appending to a SELECT list.
+.oor_select <- function(pool, alias = NULL) {
+  cols <- .calib_samples_oor_cols(pool)
+  if (!length(cols)) return("")
+  pre <- if (is.null(alias)) "" else paste0(alias, ".")
+  paste0(", ", paste0(pre, cols, collapse = ", "))
+}
+
 # Replace the '__none__' sentinel with NA on the way out, so the UI sees real
 # missingness instead of a magic string.
 .decode_none <- function(df, cols) {
@@ -457,8 +489,9 @@ fetch_calib_samples <- function(pool, curve_id, method) {
   df <- .calib_q(pool, sprintf(
     "SELECT sampleid, patientid, timeperiod, dilution,
             predicted_concentration, final_concentration, se_concentration,
-            pcov, pcov_rmse, pcov_pass
-       FROM %s WHERE curve_id = $1 AND method = $2", .tbl("calib_samples")),
+            pcov, pcov_rmse, pcov_pass%s
+       FROM %s WHERE curve_id = $1 AND method = $2",
+    .oor_select(pool), .tbl("calib_samples")),
     params = list(curve_id, method))
   .decode_none(df, c("sampleid", "patientid", "timeperiod", "dilution"))
 }

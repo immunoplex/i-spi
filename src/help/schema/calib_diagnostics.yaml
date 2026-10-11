@@ -32,6 +32,8 @@ columns:
   - {name: rdl_upper_conc, type: numeric, description: "Reliable detection limit", fk: ""}
   - {name: pcov_threshold, type: numeric, description: "", fk: ""}
   - {name: cv_x_max, type: numeric, description: "", fk: ""}
+  - {name: decision_cutoff, type: "double precision", description: "Cutoff used for calib_samples.p_below_cutoff (dilution-corrected units); NULL = none (migration 008)", fk: ""}
+  - {name: n_interval_draws, type: integer, description: "Draws per sample behind the predictive intervals (migration 008)", fk: ""}
   - {name: alpha, type: numeric, description: "", fk: ""}
   - {name: job_id, type: "varchar(64)", description: "", fk: ""}
   - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}

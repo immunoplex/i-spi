@@ -417,8 +417,12 @@ stdCurveCompareServer <- function(id, pool, scope = NULL,
       cc <- unlist(lapply(seq_len(nrow(key)), function(i) {
         sp <- tryCatch(fetch_calib_standards(pool, key$curve_id[i], key$method[i]), error = function(e) NULL)
         sm <- tryCatch(fetch_calib_samples(pool, key$curve_id[i], key$method[i]), error = function(e) NULL)
+        # One scale: the curve's pre-dilution natural concentration (the grid
+        # below is 10^seq over this range). predicted_concentration is log10
+        # (as the Explore Curve plot treats it); final_concentration is
+        # dilution-corrected, so it does not belong on this axis.
         c(if (!is.null(sp) && nrow(sp)) num(sp$concentration),
-          if (!is.null(sm) && nrow(sm)) c(num(sm$predicted_concentration), num(sm$final_concentration)))
+          if (!is.null(sm) && nrow(sm)) 10^num(sm$predicted_concentration))
       }))
       cc <- cc[is.finite(cc) & cc > 0]
       if (length(cc)) range(cc) else NULL

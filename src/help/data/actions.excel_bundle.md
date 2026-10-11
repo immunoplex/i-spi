@@ -3,7 +3,7 @@ id: data.actions.excel_bundle
 title: Excel Bundle
 audience: user
 category: procedural
-see_also: [data.actions.rdata_bundle, data.actions.json_bundle]
+see_also: [data.actions.rdata_bundle, data.actions.json_bundle, data.analysis.downstream_censoring]
 ---
 The same content as [[data.actions.rdata_bundle|the RData Bundle]] and
 [[data.actions.json_bundle|the JSON export]] — every table, the manifest,

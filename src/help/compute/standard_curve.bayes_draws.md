@@ -3,7 +3,7 @@ id: compute.standard_curve.bayes_draws
 title: Bayesian sampling resolution & the precision profile
 audience: user
 category: compute-decision
-see_also: [compute.standard_curve.model_engine, glossary.posterior_predictive, glossary.hierarchical_priors, glossary.robust_nonlinear_estimation, glossary.convergence, glossary.bayesian_approach]
+see_also: [compute.standard_curve.model_engine, glossary.posterior_predictive, glossary.hierarchical_priors, glossary.robust_nonlinear_estimation, glossary.convergence, glossary.bayesian_approach, compute.standard_curve.out_of_range]
 ---
 
 The Bayesian precision profile is estimated from the model's posterior draws, and

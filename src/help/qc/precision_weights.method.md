@@ -3,7 +3,7 @@ id: qc.precision_weights.method
 title: Precision weighting method & scope
 audience: user
 category: compute-decision
-see_also: [glossary.precision_weight, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, glossary.pcov]
+see_also: [glossary.precision_weight, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, glossary.pcov, data.analysis.downstream_censoring]
 references:
   - text: "curveRweights precision-weighting.Rmd, §\"The problem: unequal precision across the calibration curve\", §\"The model\""
   - text: "i-spi-refactor dev/HANDOFF_precision_weighting.md (architecture: separate job family from calibration, writes calib_weights/calib_weights_fit)"
@@ -103,4 +103,16 @@ design column that genuinely varies, and distinct cells collapse together:
 real between-cell differences leak back into what the scale model treats
 as noise, and the fitted weights stop purely reflecting measurement
 reliability.
+
+**Out-of-range samples and informative weighting.** A sample below the LLOQ or
+above the ULOQ has a large `se_concentration` *because* it is out of range, so
+its weight is small because its value is extreme; weighted means then lean away
+from the censored side, and those samples' residuals distort `phi`/`beta1`.
+More generally, because precision depends on the true concentration, weights
+are mildly informative even inside the range. For group means and effects,
+treat out-of-range samples as [[glossary.censoring|censored]] and prefer
+unweighted censored models, reporting a weighted-versus-unweighted comparison —
+see [[data.analysis.downstream_censoring|the downstream analysis guide]]. A
+censoring-aware weighting option (weights for in-range samples, censoring
+indicators for out-of-range ones) is planned.
 :::

@@ -76,10 +76,12 @@ CALIB_TABLE_DOCS <- list(
               "ci_lower", "ci_upper", "predicted_concentration", "pcov_pass")),
   calib_samples = list(
     group = "Results", label = "Back-calculated samples",
-    what  = "Each test sample's concentration read off the fitted curve (predicted, and final = x dilution) with precision. This replaces the old Sample QC tab.",
+    what  = "Each test sample's concentration read off the fitted curve (predicted, and final = x dilution) with precision, its censoring class/bounds when outside the quantifiable range, a 95% predictive interval, and threshold probabilities. This replaces the old Sample QC tab.",
     grain = "one row per curve / method / sample identity",
     keys  = c("sampleid", "patientid", "timeperiod", "dilution",
-              "predicted_concentration", "final_concentration", "pcov_pass")),
+              "predicted_concentration", "final_concentration", "pcov_pass",
+              "censor_class", "censor_lower", "censor_upper",
+              "conc_q_lo", "conc_q_hi", "p_below_cutoff")),
   calib_diagnostics = list(
     group = "Results", label = "Diagnostics / LOQ",
     what  = "Per-curve quality metrics: LLOQ/ULOQ (concentration and log10), limits of detection, RDL, inflection point, and thresholds.",

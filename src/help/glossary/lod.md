@@ -3,7 +3,7 @@ id: glossary.lod
 title: LOD (limit of detection)
 audience: both
 category: glossary
-see_also: [glossary.rdl, data.results.diagnostics_loq, schema.calib_diagnostics]
+see_also: [glossary.rdl, data.results.diagnostics_loq, schema.calib_diagnostics, glossary.censoring]
 references:
   - text: "curveRcore::compute_detection_limits() — LODs derived from the confidence interval on the curve's lower/upper asymptotes."
 ---

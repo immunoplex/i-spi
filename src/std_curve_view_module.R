@@ -16,6 +16,48 @@
 # Returns list(curve_id, method, bundle) for other consumers.
 # =============================================================================
 
+# Test-sample styling by censoring class (calib_samples.censor_class, curveR >=
+# 0.5.0). Hues match the Plates-gating palette (plate_gating_module.R); darker
+# shades mark the beyond-LOD classes. Rows with no class (older fits) keep the
+# original neutral grey.
+.SC_CENSOR_STYLE <- data.frame(
+  class = c("quantified", "lod_to_lloq", "below_lloq", "below_lod",
+            "above_uloq", "saturated", "no_response"),
+  label = c("Quantified", "Below LLOQ, above LOD", "Below LLOQ", "Below LOD",
+            "Above ULOQ", "Saturated (at/above upper LOD)", "No response"),
+  color = c("#21be21", "#375ace", "#375ace", "#1f3a8a",
+            "#ffa500", "#b36b00", "#999999"),
+  stringsAsFactors = FALSE)
+.SC_LOW_CLASSES  <- c("lod_to_lloq", "below_lloq", "below_lod")
+.SC_HIGH_CLASSES <- c("above_uloq", "saturated")
+
+.sc_fmt <- function(x) ifelse(is.finite(x), trimws(formatC(x, format = "g", digits = 3)), "–")
+
+# Hover text for back-calculated samples: class, point estimate, the asymmetric
+# 95% predictive interval, and the threshold probabilities. Every piece is
+# optional so older rows (no out-of-range columns) still get a sensible tooltip.
+.sc_sample_hover <- function(smp) {
+  n   <- nrow(smp)
+  col <- function(nm) if (nm %in% names(smp)) suppressWarnings(as.numeric(smp[[nm]]))
+                      else rep(NA_real_, n)
+  cls <- if ("censor_class" %in% names(smp)) as.character(smp$censor_class) else rep(NA_character_, n)
+  lab <- .SC_CENSOR_STYLE$label[match(cls, .SC_CENSOR_STYLE$class)]
+  lab[is.na(lab)] <- "Test sample"
+  lo <- col("conc_q_lo"); hi <- col("conc_q_hi")
+  up_unb <- (!is.finite(hi) & col("frac_draws_above_d") > 0.025) %in% TRUE
+  ivl <- ifelse(is.finite(lo) | is.finite(hi) | up_unb,
+                paste0("<br>95% interval [",
+                       ifelse(is.finite(lo), .sc_fmt(lo), "above the curve"), ", ",
+                       ifelse(up_unb, "unbounded", .sc_fmt(hi)), "]"), "")
+  pr <- function(nm, txt) { v <- col(nm); ifelse(is.finite(v), sprintf("<br>%s %.2f", txt, v), "") }
+  sid <- if ("sampleid" %in% names(smp)) as.character(smp$sampleid) else rep("", n)
+  paste0("<b>", ifelse(is.na(sid), "", sid), "</b> — ", lab,
+         "<br>Concentration ", .sc_fmt(col("final_concentration")), ivl,
+         pr("p_below_lloq", "P(< LLOQ)"), pr("p_above_uloq", "P(> ULOQ)"),
+         pr("p_below_cutoff", "P(< cutoff)"),
+         "<br>%CV ", .sc_fmt(col("pcov")))
+}
+
 stdCurveViewUI <- function(id) {
   ns <- shiny::NS(id)
   shiny::fluidRow(
@@ -35,8 +77,7 @@ stdCurveViewUI <- function(id) {
         shiny::tags$div(
           shiny::checkboxInput(ns("precision_smooth"),
             "Smooth precision profile (LOESS)", value = FALSE),
-          shiny::actionLink(ns("precision_help"), "?",
-            style = "margin-left:4px;font-weight:bold;color:#337ab7;"),
+          help_icon("compute.standard_curve.bayes_draws", ns),
           shiny::tags$div(style = "font-size:11px;color:#787878;",
             "A cosmetic smoother over the precision profile for presentation. It does ",
             "not change the fit or the estimates \u2014 raise Bayesian sampling on the ",
@@ -306,6 +347,10 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           shiny::tabPanel("Curve",
             shinycssloaders::withSpinner(
               plotly::plotlyOutput(ns("curve_plot"), height = "460px"), type = 4, color = "#337ab7"),
+            shiny::tags$div(style = "font-size:11px;color:#787878;margin:2px 0 4px;",
+              "Test samples are coloured by censoring class; hover one for its 95% interval ",
+              "and threshold probabilities. Samples beyond the curve's asymptotes sit at the plot edges.",
+              help_icon("compute.standard_curve.out_of_range", ns)),
             shiny::uiOutput(ns("fda_ribbon_area")),
             shiny::uiOutput(ns("mask_selection")),
             shiny::uiOutput(ns("unmask_selection")),
@@ -354,14 +399,13 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       #   log10(ifelse(is.na(cc), cc2, cc))
       # } else numeric(0)
       # smp_x <- smp_x[is.finite(smp_x)]
-      smp_x <- if (!is.null(smp) && nrow(smp)) {
-        x <- num(smp$predicted_concentration)   # already log10(conc) = x-hat
-        x[!is.finite(x)] <- NA
-        x
-      } else numeric(0)
-      smp_x <- smp_x[is.finite(smp_x)]
-
-      smp_x_win <- smp_x   # kept for the on-curve sample markers below
+      smp_df <- if (!is.null(smp) && nrow(smp)) {
+        data.frame(x = num(smp$predicted_concentration),   # already log10(conc) = x-hat
+                   cls = if ("censor_class" %in% names(smp)) as.character(smp$censor_class)
+                         else NA_character_,
+                   hover = .sc_sample_hover(smp), stringsAsFactors = FALSE)
+      } else data.frame(x = numeric(0), cls = character(0), hover = character(0))
+      smp_x <- smp_df$x[is.finite(smp_df$x)]
       # X-range = padded union of ACTUAL data (standards + samples); grid excluded.
       std_x <- if (!is.null(sp) && nrow(sp)) sp$log10_concentration else numeric(0)
       xs <- c(std_x, smp_x); xs <- xs[is.finite(xs)]
@@ -397,17 +441,29 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       p <- plotly::add_lines(p, data = g, x = ~log10_concentration,
                              y = ~predicted_response, name = "Fitted")
 
-      # Samples on the curve: y interpolated from the grid at each sample's x.
-      # Semi-transparent (overlap is expected; we'll refine dense display later).
-      if (length(smp_x_win)) {
+      # Samples on the curve: y interpolated from the grid at each sample's x,
+      # one trace per censoring class (legend doubles as the key). A sample whose
+      # response was beyond an asymptote has no finite estimate but a known side
+      # (censor_class), so it is parked at that plot edge instead of dropped.
+      # No customdata: samples are not maskable, so clicks on them are ignored.
+      if (nrow(smp_df)) {
+        px <- smp_df$x
+        px[!is.finite(px) & smp_df$cls %in% .SC_LOW_CLASSES]  <- xlo + 0.035 * (xhi - xlo)
+        px[!is.finite(px) & smp_df$cls %in% .SC_HIGH_CLASSES] <- xhi - 0.01  * (xhi - xlo)
         sy <- tryCatch(stats::approx(g$log10_concentration, g$predicted_response,
-                                     xout = smp_x_win, rule = 2)$y,
-                       error = function(e) rep(NA_real_, length(smp_x_win)))
-        keep <- is.finite(smp_x_win) & is.finite(sy)
-        if (any(keep))
-          p <- plotly::add_markers(p, x = smp_x_win[keep], y = sy[keep], name = "Test sample",
-                 marker = list(color = "rgba(80,80,80,0.45)", symbol = "circle", size = 5),
-                 hoverinfo = "skip")
+                                     xout = px, rule = 2)$y,
+                       error = function(e) rep(NA_real_, length(px)))
+        keep <- is.finite(px) & is.finite(sy)
+        grp  <- ifelse(is.na(smp_df$cls), "", smp_df$cls)
+        for (k in unique(grp[keep])) {
+          sel <- keep & grp == k
+          st  <- .SC_CENSOR_STYLE[.SC_CENSOR_STYLE$class == k, , drop = FALSE]
+          p <- plotly::add_markers(p, x = px[sel], y = sy[sel],
+                 name = if (nrow(st)) paste("Sample:", st$label) else "Test sample",
+                 marker = list(color = if (nrow(st)) st$color else "rgba(80,80,80,0.45)",
+                               opacity = if (nrow(st)) 0.7 else 1, symbol = "circle", size = 5),
+                 text = smp_df$hover[sel], hoverinfo = "text")
+        }
       }
 
       # Standards: COLOUR = FDA 2018 verdict (frequentist-pinned, identical on both
@@ -1208,6 +1264,9 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         smp_p_all <- num(smp$pcov)
         plc <- is.finite(smp_x_all) & is.finite(smp_p_all)
         smp_x <- smp_x_all[plc]; smp_p <- smp_p_all[plc]
+        smp_cls <- if ("censor_class" %in% names(smp)) as.character(smp$censor_class)[plc]
+                   else rep(NA_character_, sum(plc))
+        smp_hov <- .sc_sample_hover(smp)[plc]
       } else { smp_x_all <- numeric(0); smp_p_all <- numeric(0) }
       xs <- c(std_x, smp_x); xs <- xs[is.finite(xs)]
       if (!length(xs)) xs <- c(0, 1)
@@ -1256,11 +1315,22 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
         p <- plotly::add_lines(p, x = gx, y = gp_draw, name = "Precision profile (%CV)",
                line = list(color = "#1F78B4"), hoverinfo = "skip")
       }
-      # Sample points (their pcov), clamped into view at the cap.
-      if (length(smp_x))
-        p <- plotly::add_markers(p, x = smp_x, y = pmin(smp_p, YCAP), name = "Test sample %CV",
-               marker = list(color = "rgba(80,80,80,0.5)", size = 5),
-               hovertext = sprintf("%%CV=%.1f", smp_p), hoverinfo = "text")
+      # Sample points (their pcov), clamped into view at the cap, coloured by
+      # censoring class like the Curve tab. pcov alone is direction-blind: two
+      # samples at the same %CV can be a tightly bounded low sample and an
+      # unbounded high one -- the hover shows each one's interval.
+      if (length(smp_x)) {
+        grp <- ifelse(is.na(smp_cls), "", smp_cls)
+        for (k in unique(grp)) {
+          sel <- grp == k
+          st  <- .SC_CENSOR_STYLE[.SC_CENSOR_STYLE$class == k, , drop = FALSE]
+          p <- plotly::add_markers(p, x = smp_x[sel], y = pmin(smp_p[sel], YCAP),
+                 name = if (nrow(st)) paste("Sample:", st$label) else "Test sample %CV",
+                 marker = list(color = if (nrow(st)) st$color else "rgba(80,80,80,0.5)",
+                               opacity = if (nrow(st)) 0.7 else 1, size = 5),
+                 hovertext = smp_hov[sel], hoverinfo = "text")
+        }
+      }
       # pcov threshold (horizontal) -- the sample gate.
       if (!is.na(thr))
         p <- plotly::add_lines(p, x = c(xlo, xhi), y = c(thr, thr), name = "pcov threshold",
@@ -1324,38 +1394,45 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       dr_dec <- if (!is.na(gv("lloq_log10")) && !is.na(gv("uloq_log10")))
                   gv("uloq_log10") - gv("lloq_log10") else NA_real_
       dr_fold <- if (!is.na(dr_dec)) 10^dr_dec else NA_real_
+      # Censoring breakdown (curveR >= 0.5.0 rows only).
+      cls <- if (!is.null(smp) && nrow(smp) && "censor_class" %in% names(smp))
+               as.character(smp$censor_class) else character(0)
+      cls <- cls[!is.na(cls)]
+      cens_line <- if (length(cls)) {
+        tab <- table(factor(cls, levels = .SC_CENSOR_STYLE$class))
+        tab <- tab[tab > 0]
+        shiny::tags$div(
+          "Out-of-range samples: ",
+          paste(sprintf("%s %d", .SC_CENSOR_STYLE$label[match(names(tab), .SC_CENSOR_STYLE$class)],
+                        as.integer(tab)), collapse = " \u00b7 "),
+          help_icon("compute.standard_curve.out_of_range", ns))
+      } else NULL
+      cut <- gv("decision_cutoff")
       shiny::tags$div(
         style = "margin-top:6px;padding:6px 8px;background:#fafafa;border:1px solid #eee;font-size:12px;line-height:1.7;",
         shiny::tags$div(sprintf("LLOQ = %s | ULOQ = %s  (conc)", g3(lloqc), g3(uloqc))),
         shiny::tags$div(sprintf("Dynamic range = %s decades (%s-fold)", g3(dr_dec), g3(dr_fold))),
         shiny::tags$div(sprintf("pcov threshold = %s%%", g3(thr))),
+        if (!is.na(cut)) shiny::tags$div(
+          sprintf("Decision cutoff = %s (dilution-corrected) \u2014 hover a sample for P(< cutoff)", g3(cut)),
+          help_icon("settings.decision_cutoff", ns)),
         shiny::tags$div(sprintf("Best precision = %s%% at conc %s (log10 %s)",
                                 g3(minp), g3(if (is.na(minx)) NA else 10^minx), g3(minx))),
         shiny::tags$div(sprintf("Samples: %d total \u00b7 %s above threshold \u00b7 %d above 100%%",
-                                n_samp, if (is.na(n_over_t)) "\u2014" else as.character(n_over_t), n_over_c)))
+                                n_samp, if (is.na(n_over_t)) "\u2014" else as.character(n_over_t), n_over_c)),
+        cens_line)
     })
 
-    # Shared explainer (from the sampling handoff) for the ? links here and on
-    # the Compute-fits tab.
-    precision_help_text <- paste(
-      "The Bayesian precision profile is estimated from the model's posterior draws,",
-      "and its smoothness is governed by how many draws we keep: the total is",
-      "chains \u00d7 sampling, where sampling is the number of post-warmup draws per",
-      "chain. Because the %CV plotted is a ratio of posterior quantities, too few",
-      "draws make it wobble from point to point \u2014 much of the jaggedness is",
-      "Monte-Carlo noise, not real assay behavior. Raising sampling reduces the",
-      "noise roughly with the square root of the draw count, so quadrupling draws",
-      "roughly halves the wobble. Increase draws through sampling rather than",
-      "chains. The one thing more draws will NOT fix is the blow-up at the very low",
-      "and very high ends of the curve: there the response is nearly flat, so the",
-      "back-calculated concentration is genuinely ill-conditioned and the high,",
-      "unstable %CV at the extremes is real \u2014 it reflects the assay's detection",
-      "limits, not a sampling artifact.")
-    shiny::observeEvent(input$precision_help, {
+    # Learn-more icons on this tab (the precision-sampling explainer that used to
+    # be a hardcoded modal here now lives in the help registry as
+    # compute.standard_curve.bayes_draws, shared with the Compute-fits tab).
+    shiny::observeEvent(input$help_show, {
+      hid  <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
       shiny::showModal(shiny::modalDialog(
-        title = "Precision profile & Bayesian sampling",
-        shiny::p(precision_help_text),
-        easyClose = TRUE, footer = shiny::modalButton("Close")))
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
     })
 
     # -- diagnostics / LOQ summary ----------------------------------------

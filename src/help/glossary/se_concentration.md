@@ -3,14 +3,17 @@ id: glossary.se_concentration
 title: se_concentration
 audience: both
 category: glossary
-see_also: [glossary.pcov, glossary.frequentist_approach, glossary.bayesian_approach, glossary.posterior_predictive, settings.precision_measurement_error, glossary.precision_weight, qc.precision_weights.method, schema.calib_samples, schema.calib_weights]
+see_also: [glossary.pcov, glossary.frequentist_approach, glossary.bayesian_approach, glossary.posterior_predictive, settings.precision_measurement_error, glossary.precision_weight, qc.precision_weights.method, schema.calib_samples, schema.calib_weights, glossary.concentration_interval]
 references:
   - text: "curveRfreq::predict_samples_freq() — propagates fit uncertainty to a back-calculated concentration via the delta method."
   - text: "curveRbayes::predict_samples_bayes() — summarizes the posterior-predictive concentration distribution."
 ---
 **se_concentration** is the standard error of a sample's back-calculated
-concentration — how uncertain the reading is, on the concentration scale,
-once the response has been read off the fitted curve and inverted. It is
+concentration — how uncertain the reading is, as a standard deviation of the
+**log₁₀** concentration, once the response has been read off the fitted curve
+and inverted. Being one symmetric number, it does not show the direction of the
+uncertainty; for that, see the [[glossary.concentration_interval|predictive
+interval]]. It is
 the basis for [[glossary.pcov|pcov]] (the same uncertainty expressed as a
 %CV) and for [[glossary.loq_gating|LOQ gating]].
 

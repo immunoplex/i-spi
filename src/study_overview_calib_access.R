@@ -105,11 +105,12 @@ so_fit_samples <- function(pool, project, study, methods = NULL, include_masked 
             cl.antigen, cl.plateid, cl.plate, cl.source,
             s.sampleid, s.patientid, s.timeperiod, s.dilution,
             s.predicted_concentration, s.final_concentration, s.se_concentration,
-            s.pcov, s.pcov_rmse, s.pcov_pass
+            s.pcov, s.pcov_rmse, s.pcov_pass%s
        FROM %s cl
        JOIN %s s ON s.curve_id = cl.curve_id %s
       WHERE %s
       ORDER BY cl.antigen, cl.plate, s.method, s.sampleid",
+    .oor_select(pool, "s"),
     .so_tbl("curve_lookup"), .so_tbl("calib_samples"), mth, .so_scope_sql(include_masked))
   .so_q(pool, sql, params)
 }
@@ -184,24 +185,39 @@ so_fit_sample_summary <- function(pool_, project, study, method, raw = NULL) {
     "SELECT cl.curve_id, s.method,
             (cl.experiment_accession || '_' || cl.nominal_sample_dilution) AS analyte,
             cl.antigen, cl.plateid, cl.plate,
-            s.sampleid, s.final_concentration, s.predicted_concentration, s.pcov_pass,
+            s.sampleid, s.dilution, s.final_concentration, s.predicted_concentration,
+            s.pcov_pass%s,
             d.lloq_conc, d.uloq_conc, d.lower_lod_conc, d.upper_lod_conc
        FROM %s cl
        JOIN %s s ON s.curve_id = cl.curve_id AND s.method = $3
        LEFT JOIN %s d ON d.curve_id = cl.curve_id AND d.method = s.method
       WHERE cl.project_id = $1 AND cl.study_accession = $2 AND NOT cl.masked",
+    .oor_select(pool_, "s"),
     .so_tbl("curve_lookup"), .so_tbl("calib_samples"), .so_tbl("calib_diagnostics"))
   s <- .so_q(pool_, sql, list(proj, as.character(study)[1], as.character(method)[1]))
   if (!nrow(s)) return(data.frame())
 
-  conc  <- ifelse(!is.na(s$final_concentration), s$final_concentration, s$predicted_concentration)
+  # Preferred: the censoring class computed at fit time (curveR >= 0.5.0), which
+  # also places samples whose response was beyond an asymptote. Fallback for
+  # older rows: compare on ONE scale -- pre-dilution natural concentration
+  # (final / dilution) against the pre-dilution limits. (This used to mix
+  # log10 predicted_concentration and dilution-corrected values with natural,
+  # undiluted limits, and counted samples with no concentration as in range.)
+  cc  <- if ("censor_class" %in% names(s)) s$censor_class else rep(NA_character_, nrow(s))
+  dil <- suppressWarnings(as.numeric(s$dilution))
+  conc_pre <- ifelse(is.finite(s$final_concentration) & is.finite(dil) & dil > 0,
+                     s$final_concentration / dil, NA_real_)
   below <- function(x, lim) !is.na(x) & !is.na(lim) & x < lim
   above <- function(x, lim) !is.na(x) & !is.na(lim) & x > lim
-  s$is_belowloq <- below(conc, s$lloq_conc)
-  s$is_aboveloq <- above(conc, s$uloq_conc)
-  s$is_inloq    <- !(s$is_belowloq | s$is_aboveloq)
-  s$is_belowlod <- below(conc, s$lower_lod_conc)
-  s$is_abovelod <- above(conc, s$upper_lod_conc)
+  has_cc <- !is.na(cc)
+  s$is_belowloq <- ifelse(has_cc, cc %in% c("below_lod", "below_lloq", "lod_to_lloq"),
+                          below(conc_pre, s$lloq_conc))
+  s$is_aboveloq <- ifelse(has_cc, cc %in% c("above_uloq", "saturated"),
+                          above(conc_pre, s$uloq_conc))
+  s$is_inloq    <- ifelse(has_cc, cc == "quantified",
+                          !is.na(conc_pre) & !(s$is_belowloq | s$is_aboveloq))
+  s$is_belowlod <- ifelse(has_cc, cc == "below_lod", below(conc_pre, s$lower_lod_conc))
+  s$is_abovelod <- ifelse(has_cc, cc == "saturated", above(conc_pre, s$upper_lod_conc))
 
   agg <- dplyr::summarise(
     dplyr::group_by(s, analyte, antigen, plateid, plate),

@@ -3,7 +3,7 @@ id: glossary.loq_gating
 title: Gating by LOQ
 audience: both
 category: glossary
-see_also: [glossary.pcov, glossary.loq_shape_vs_pcov, glossary.assay_dynamic_range, schema.calib_grid, glossary.precision_profile]
+see_also: [glossary.pcov, glossary.loq_shape_vs_pcov, glossary.assay_dynamic_range, schema.calib_grid, glossary.precision_profile, glossary.censoring]
 references:
   - text: "curveRcore::classify_pcov_gate() — classifies each grid point / sample as belowLLOQ, inDynamicRange, or aboveULOQ."
 ---
