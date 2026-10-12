@@ -3,6 +3,7 @@ id: glossary.precision_weight
 title: Precision weight
 audience: user
 category: glossary
+topic: Precision and uncertainty
 see_also: [qc.precision_weights.method, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, schema.calib_weights, schema.calib_weights_fit, glossary.censoring, data.analysis.downstream_censoring]
 references:
   - text: "curveRweights precision-weighting.Rmd §\"The problem: unequal precision across the calibration curve\""

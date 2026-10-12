@@ -3,6 +3,7 @@ id: glossary.control_wells
 title: Control wells
 audience: user
 category: glossary
+topic: Plate layout and wells
 see_also: [glossary.standard_wells, glossary.blank_wells, glossary.sample_wells, schema.xmap_control]
 ---
 **Control** wells are positive/negative controls run alongside the test samples

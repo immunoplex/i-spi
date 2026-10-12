@@ -3,6 +3,7 @@ id: glossary.pcov
 title: pcov
 audience: both
 category: glossary
+topic: Precision and uncertainty
 see_also: [glossary.se_concentration, glossary.precision_profile, glossary.loq_gating, settings.precision_measurement_error, glossary.loq_shape_vs_pcov, glossary.posterior_predictive, qc.precision_weights.method, schema.calib_grid, schema.calib_samples, glossary.censoring, glossary.concentration_interval, compute.standard_curve.out_of_range]
 references:
   - text: "curveRcore::pcov_from_se() -- pcov = se_concentration x ln(10) x 100, capped at cv_x_max (default 150)."

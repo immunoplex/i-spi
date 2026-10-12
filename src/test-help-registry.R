@@ -124,6 +124,18 @@ test_that("every module with a help_show observer uses the generalized help_moda
                              paste(bad, collapse = ", ")))
 })
 
+test_that("every glossary note has a topic: from GLOSSARY_TOPICS (else it lands under 'Other' on the Glossary page)", {
+  reg <- load_help_merged(HELP_DIRS)
+  bad <- character(0)
+  for (id in names(reg)) {
+    if (!identical(reg[[id]]$category, "glossary")) next
+    tp <- reg[[id]]$topic
+    if (is.null(tp) || is.na(tp) || !(tp %in% GLOSSARY_TOPICS))
+      bad <- c(bad, sprintf("%s: topic '%s'", id, if (is.null(tp)) "NULL" else tp))
+  }
+  expect_equal(bad, character(0), info = paste(bad, collapse = "; "))
+})
+
 test_that("every authored note's category matches 05-help-content-mapping.csv where a mapping row exists", {
   reg <- load_help_merged(HELP_DIRS)
   csv_path <- "../docs/help-system/assessment/05-help-content-mapping.csv"

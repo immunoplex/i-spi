@@ -300,74 +300,125 @@ output$body_tabs <- renderUI({
 })
 
 # Glossary page (sidebar "Glossary" menu item, tabName = "glossary_page").
-# Lists every help/glossary/*.md note (category: glossary) alphabetically by
-# title, each rendered with the same help_modal_body() used for the modal
-# popups elsewhere -- so "More detail" disclosures, see_also cross-links,
-# and references all work identically here, just shown inline instead of
-# behind a click. A see_also/[[link]] click on this page still opens that
-# OTHER note in a modal via the shared flat help_show observer below
-# (ns = function(x) x), which is fine -- it's just a deeper dive.
-#
-# Below the glossary terms, a second section lists every database table's
-# schema (help/schema/schema.<table>.md, category: schema) grouped the same
-# way as the Data tab (CALIB_TABLE_ORDER, data_dictionary.R -- sourced into
-# this same local server scope, see app.R). No table schema renders inline
-# inside a glossary term's own definition any more -- a term that needs one
-# links to it via see_also (e.g. glossary.blank_wells -> schema.xmap_buffer)
-# instead, and the reader lands here.
+# A table of contents, not the definitions themselves: every help/glossary/*.md
+# note (category: glossary) is listed by title under its `topic:` group
+# (GLOSSARY_TOPICS, help_utils.R; missing/unknown topic -> "Other"), and every
+# database table's schema note (help/schema/schema.<table>.md) under the Data
+# tab's grouping (CALIB_TABLE_ORDER, data_dictionary.R -- sourced into this
+# same local server scope, see app.R). Clicking an entry fires the flat
+# input$help_show event, so the shared observer below opens that note in the
+# same modal used everywhere else (More detail, see_also, references and all).
+# The search box filters entries client-side by title and one-line summary; no
+# server round trip, so it stays instant as the glossary grows.
+
+# One-line plain-text summary (first sentence of the body) for an entry's
+# hover text and the search index. [[id|text]] -> text, [[id]] -> its title.
+.glossary_summary <- function(e, reg, max_chars = 200) {
+  txt <- .hv(e$body, "")
+  txt <- gsub("\\[\\[[^]|]+\\|([^]]+)\\]\\]", "\\1", txt)
+  ids <- regmatches(txt, gregexpr("\\[\\[[^]]+\\]\\]", txt))[[1]]
+  for (m in unique(ids)) {
+    id  <- substring(m, 3, nchar(m) - 2)
+    txt <- gsub(m, .hv(reg[[id]]$title, id), txt, fixed = TRUE)
+  }
+  txt <- gsub("[*`]", "", txt)
+  txt <- gsub("\\s+", " ", trimws(txt))
+  first <- sub("^(.*?[.!?])\\s.*$", "\\1", txt, perl = TRUE)
+  if (nchar(first) > max_chars) first <- paste0(substr(first, 1, max_chars - 1), "…")
+  first
+}
+
+.glossary_toc_link <- function(e, reg) {
+  label   <- .hv(e$title, e$id)
+  summary <- .glossary_summary(e, reg)
+  tags$li(class = "gloss-toc-item",
+          `data-search` = tolower(paste(label, summary)),
+          tags$a(href = "#", class = "help-xlink", title = summary,
+                 onclick = sprintf("Shiny.setInputValue('help_show', '%s', {priority:'event'}); return false;",
+                                   e$id),
+                 label))
+}
+
+.glossary_toc_group <- function(heading, items, reg) {
+  if (!length(items)) return(NULL)
+  tags$div(class = "panel panel-default gloss-toc-group",
+    tags$div(class = "panel-heading",
+             tags$h4(class = "panel-title", heading,
+                     tags$span(class = "badge pull-right", length(items)))),
+    tags$div(class = "panel-body",
+             tags$ul(class = "list-unstyled", lapply(items, .glossary_toc_link, reg = reg))))
+}
+
 output$glossary_page_ui <- renderUI({
   reg <- .help_registry(NULL)
-  entries <- Filter(function(e) identical(e$category, "glossary"), reg)
+  entries <- Filter(function(e) identical(e$category, "glossary") && .audience_ok(e, "user"), reg)
   if (!length(entries)) {
     return(fluidRow(column(8, offset = 2,
       tags$h3("Glossary"),
       tags$p("No glossary terms are defined yet.")
     )))
   }
-  titles <- vapply(entries, function(e) tolower(.hv(e$title, "")), character(1))
+  titles  <- vapply(entries, function(e) tolower(.hv(e$title, "")), character(1))
   entries <- entries[order(titles)]
+  topic   <- vapply(entries, function(e) {
+    t <- .hv(e$topic, NA_character_)
+    if (is.na(t) || !(t %in% GLOSSARY_TOPICS)) "Other" else t
+  }, character(1))
+  topic_order <- c(GLOSSARY_TOPICS, "Other")
 
   schema_entries  <- Filter(function(e) identical(e$category, "schema"), reg)
   schema_by_table <- setNames(schema_entries,
                               vapply(schema_entries, function(e) .hv(e$schema_table, ""), character(1)))
 
-  schema_section <- if (length(schema_entries)) {
-    tagList(
-      tags$h3("Database Table Reference"),
+  tagList(
+    tags$style(HTML("
+      .gloss-toc-columns { column-count: 2; column-gap: 20px; }
+      @media (max-width: 991px) { .gloss-toc-columns { column-count: 1; } }
+      .gloss-toc-group { break-inside: avoid; -webkit-column-break-inside: avoid; display: inline-block; width: 100%; }
+      .gloss-toc-group .panel-title .badge { font-weight: normal; }
+      .gloss-toc-item { padding: 3px 0; }
+      .gloss-toc-search { max-width: 420px; margin-bottom: 16px; }
+    ")),
+    fluidRow(column(10, offset = 1,
+      tags$h3("Glossary"),
       tags$p(class = "text-muted",
-            "Column-level schema for every table behind the Data tab, grouped the same way as there."),
-      tags$hr(),
-      lapply(names(CALIB_TABLE_ORDER), function(grp) {
-        tagList(
-          tags$h4(grp),
-          lapply(CALIB_TABLE_ORDER[[grp]], function(tbl) {
-            e <- schema_by_table[[tbl]]
-            if (is.null(e)) return(NULL)
-            tagList(
-              tags$h5(.hv(e$title, e$id)),
-              help_modal_body(e$id, function(x) x, help = reg),
-              tags$hr()
-            )
-          })
+             sprintf("%d terms used throughout I-SPI, grouped by topic. Click a term to open its definition; hover for a one-line summary.",
+                     length(entries))),
+      tags$input(id = "gloss_toc_search", type = "search", class = "form-control gloss-toc-search",
+                 placeholder = "Filter terms and tables…", autocomplete = "off",
+                 oninput = "
+                   var q = this.value.toLowerCase().trim(), total = 0;
+                   document.querySelectorAll('#glossary_toc_root .gloss-toc-group').forEach(function(g) {
+                     var n = 0;
+                     g.querySelectorAll('.gloss-toc-item').forEach(function(li) {
+                       var hit = !q || li.getAttribute('data-search').indexOf(q) >= 0;
+                       li.style.display = hit ? '' : 'none';
+                       if (hit) n++;
+                     });
+                     g.style.display = n ? '' : 'none';
+                     total += n;
+                   });
+                   document.getElementById('gloss_toc_none').style.display = total ? 'none' : '';
+                 "),
+      tags$div(id = "glossary_toc_root",
+        tags$p(id = "gloss_toc_none", class = "text-muted", style = "display:none;",
+               "No terms or tables match."),
+        tags$div(class = "gloss-toc-columns",
+          lapply(topic_order, function(tp) .glossary_toc_group(tp, entries[topic == tp], reg))),
+        if (length(schema_entries)) tagList(
+          tags$h3("Database Table Reference"),
+          tags$p(class = "text-muted",
+                 "Column-level schema for every table behind the Data tab, grouped the same way as there."),
+          tags$div(class = "gloss-toc-columns",
+            lapply(names(CALIB_TABLE_ORDER), function(grp) {
+              items <- Filter(Negate(is.null),
+                              lapply(CALIB_TABLE_ORDER[[grp]], function(tbl) schema_by_table[[tbl]]))
+              .glossary_toc_group(grp, items, reg)
+            }))
         )
-      })
-    )
-  } else NULL
-
-  fluidRow(column(8, offset = 2,
-    tags$h3("Glossary"),
-    tags$p(class = "text-muted",
-          "Definitions of terms used throughout I-SPI. Click an underlined link below to open that term's own entry."),
-    tags$hr(),
-    lapply(entries, function(e) {
-      tagList(
-        tags$h4(.hv(e$title, e$id)),
-        help_modal_body(e$id, function(x) x, help = reg),
-        tags$hr()
       )
-    }),
-    schema_section
-  ))
+    ))
+  )
 })
 
 output$load_ui <- renderUI({

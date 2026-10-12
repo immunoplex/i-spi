@@ -3,6 +3,7 @@ id: glossary.measurement_error
 title: Measurement (assay) error
 audience: user
 category: glossary
+topic: Precision and uncertainty
 see_also: [settings.precision_measurement_error]
 ---
 

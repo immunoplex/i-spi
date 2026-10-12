@@ -3,6 +3,7 @@ id: glossary.dilution_factor
 title: Dilution factor
 audience: user
 category: glossary
+topic: Plate layout and wells
 see_also: [compute.import.dilution_source_precedence]
 ---
 

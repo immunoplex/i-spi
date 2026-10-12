@@ -3,6 +3,7 @@ id: glossary.posterior_predictive
 title: Posterior (predictive) distribution for a sample
 audience: both
 category: glossary
+topic: Precision and uncertainty
 see_also: [glossary.bayesian_approach, glossary.se_concentration, glossary.pcov, glossary.hierarchical_priors, compute.standard_curve.bayes_draws, schema.calib_samples, glossary.concentration_interval]
 references:
   - text: "curveRbayes::predict_samples_bayes(), extract_curve_draws(), tidy_samples() — back-calculate each sample's concentration from every retained posterior draw of the curve."

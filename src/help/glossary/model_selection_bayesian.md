@@ -3,6 +3,7 @@ id: glossary.model_selection_bayesian
 title: Model selection (Bayesian)
 audience: both
 category: glossary
+topic: Model selection
 see_also: [glossary.loo, glossary.stacking_weights, glossary.bayesian_approach, glossary.model_selection_frequentist, data.results.loo_comparison, schema.calib_loo, compute.standard_curve.model_engine, data.results.fit_model_selection, schema.calib_fit]
 references:
   - text: "curveRbayes::compare_models_loo(), compute_loo() — PSIS-LOO per candidate model plus Bayesian stacking weights; curveRcore::select_best_eligible() — the shared eligibility-gate step both engines run before ranking."

@@ -3,6 +3,7 @@ id: glossary.validation_errors_warnings
 title: Validation errors vs. warnings
 audience: user
 category: glossary
+topic: Projects and data import
 ---
 A validation **error** means something is missing or wrong that would make the
 data unusable (e.g. a required sheet or column is absent) — it **blocks commit**

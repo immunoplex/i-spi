@@ -3,6 +3,7 @@ id: glossary.stacking_weights
 title: Stacking weights
 audience: both
 category: glossary
+topic: Model selection
 see_also: [glossary.loo, glossary.model_selection_bayesian, schema.calib_loo, data.results.loo_comparison]
 references:
   - text: "Yao Y, Vehtari A, Simpson D, Gelman A (2018). Using Stacking to Average Bayesian Predictive Distributions. Bayesian Analysis 13(3):917-1007. (general model-averaging interpretation below is standard Bayesian-stacking theory, not drawn from this app's own documentation)."

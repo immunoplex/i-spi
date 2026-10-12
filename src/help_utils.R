@@ -42,6 +42,7 @@
 #   title: Standard-curve model selection
 #   audience: both                     # user | dev | both  (default user)
 #   category: compute-decision         # procedural | conceptual | glossary | compute-decision
+#   topic: Model selection             # GLOSSARY NOTES ONLY -- one of GLOSSARY_TOPICS
 #   params: [include_measurement_error]  # SETTINGS-CASCADE NOTES ONLY -- see above
 #   see_also: [glossary.model_forms, qc.precision_weights.method]
 #   references:
@@ -88,6 +89,20 @@ HELP_CONTENT_DIRS <- c(
 # render_schema_tables() below. load_help() globs *.md only, load_schema_registry()
 # globs *.yaml only, so both live in help/schema/ without colliding.
 HELP_VALID_CATEGORIES <- c("procedural", "conceptual", "glossary", "compute-decision", "schema")
+
+# Topic groups for the Glossary page's table of contents, in display order.
+# Every glossary note carries `topic:` naming one of these (enforced by
+# test-help-registry.R); a note with a missing or unknown topic still shows,
+# under "Other", rather than disappearing. Add a topic here before using it.
+GLOSSARY_TOPICS <- c(
+  "Plate layout and wells",
+  "Curve models and fitting",
+  "Model selection",
+  "Detection and quantification limits",
+  "Precision and uncertainty",
+  "Out-of-range samples",
+  "Projects and data import"
+)
 
 # Pull an optional "::: more" ... ":::" fenced span out of a note's body
 # lines, returning the remaining body lines and the more-block's lines
@@ -140,6 +155,8 @@ HELP_VALID_CATEGORIES <- c("procedural", "conceptual", "glossary", "compute-deci
   # shown on the Data tab.
   meta$schema_table <- if (is.null(meta$schema_table)) NA_character_
                         else as.character(meta$schema_table)[1]
+  # optional: Glossary-page topic group (GLOSSARY_TOPICS) for glossary notes
+  meta$topic <- if (is.null(meta$topic)) NA_character_ else trimws(as.character(meta$topic)[1])
   meta
 }
 

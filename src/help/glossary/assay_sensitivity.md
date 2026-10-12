@@ -3,6 +3,7 @@ id: glossary.assay_sensitivity
 title: Assay sensitivity (slope at inflection)
 audience: both
 category: glossary
+topic: Curve models and fitting
 see_also: [glossary.inflection_point, glossary.assay_dynamic_range, schema.calib_diagnostics, data.results.diagnostics_loq]
 references:
   - text: "curveRcore::dydx_logistic4() — closed-form derivative of the fitted logistic curve; plotted in I-SPI as \"Sensitivity (slope at inflection)\" (src/plot_functions.R)."

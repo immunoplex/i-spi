@@ -3,6 +3,7 @@ id: glossary.inflection_point
 title: Inflection point
 audience: both
 category: glossary
+topic: Curve models and fitting
 see_also: [glossary.assay_sensitivity, data.results.diagnostics_loq, schema.calib_diagnostics, glossary.model_forms]
 references:
   - text: "curveRcore::compute_inflection() — closed-form inflection point (log10 concentration and response) for the fitted model."

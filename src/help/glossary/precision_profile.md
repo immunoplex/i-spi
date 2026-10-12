@@ -3,6 +3,7 @@ id: glossary.precision_profile
 title: Precision profile
 audience: both
 category: glossary
+topic: Precision and uncertainty
 see_also: [glossary.pcov, settings.precision_measurement_error, glossary.loq_gating, glossary.assay_dynamic_range]
 references:
   - text: "curveRcore::assess_model_eligibility() — formalizes the precision profile as pcov evaluated over a concentration grid."

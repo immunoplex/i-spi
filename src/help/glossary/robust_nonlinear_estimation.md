@@ -3,6 +3,7 @@ id: glossary.robust_nonlinear_estimation
 title: Robust nonlinear model estimation
 audience: both
 category: glossary
+topic: Curve models and fitting
 see_also: [glossary.bayesian_approach, glossary.frequentist_approach, glossary.hierarchical_priors, glossary.convergence, compute.standard_curve.bayes_draws]
 references:
   - text: "curveRbayes Stan source, hierarchical_logistic4.stan — observation likelihood y ~ student_t(nu, mu, sigma) with nu ~ gamma(2, 0.1)."

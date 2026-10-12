@@ -3,6 +3,7 @@ id: glossary.loq_shape_vs_pcov
 title: Shape-LOQ vs. pcov-LOQ
 audience: user
 category: glossary
+topic: Detection and quantification limits
 see_also: [data.results.diagnostics_loq, settings.precision_measurement_error, glossary.loq_gating, glossary.pcov]
 references:
   - text: "curveRcore getting-started vignette, \"Comparing shape-LOQ with pcov-LOQ\""

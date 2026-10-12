@@ -3,6 +3,7 @@ id: glossary.sample_wells
 title: Sample (patient) wells
 audience: user
 category: glossary
+topic: Plate layout and wells
 see_also: [glossary.standard_wells, glossary.control_wells, glossary.blank_wells, schema.xmap_sample]
 ---
 **Sample wells** hold the actual test (patient) specimens — the measurements being

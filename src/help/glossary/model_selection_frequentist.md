@@ -3,6 +3,7 @@ id: glossary.model_selection_frequentist
 title: Model selection (frequentist)
 audience: both
 category: glossary
+topic: Model selection
 see_also: [glossary.aic, glossary.frequentist_approach, glossary.model_selection_bayesian, data.results.fit_model_selection, schema.calib_fit, compute.standard_curve.model_engine]
 references:
   - text: "curveRfreq::select_best_aic() — picks the lowest-AIC model among converged, eligible candidates; curveRcore::select_best_eligible() — the shared eligibility-gate step both engines run before ranking."

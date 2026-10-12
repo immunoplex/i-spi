@@ -3,6 +3,7 @@ id: glossary.bayesian_approach
 title: Bayesian fitting approach
 audience: both
 category: glossary
+topic: Curve models and fitting
 see_also: [glossary.frequentist_approach, glossary.hierarchical_priors, glossary.robust_nonlinear_estimation, glossary.model_selection_bayesian, glossary.posterior_predictive, glossary.convergence, compute.standard_curve.model_engine, compute.standard_curve.bayes_draws, glossary.model_forms, glossary.se_concentration]
 references:
   - text: "curveRbayes package (fit_calibration_bayes()) — Bayesian hierarchical standard-curve fitting in Stan with data-adaptive priors, a robust Student-t likelihood, LOO-CV model selection, and posterior predictive concentration estimation."

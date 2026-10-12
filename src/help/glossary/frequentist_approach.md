@@ -3,6 +3,7 @@ id: glossary.frequentist_approach
 title: Frequentist fitting approach
 audience: both
 category: glossary
+topic: Curve models and fitting
 see_also: [glossary.bayesian_approach, glossary.model_selection_frequentist, glossary.se_concentration, glossary.convergence, compute.standard_curve.model_engine, glossary.model_forms, glossary.robust_nonlinear_estimation]
 references:
   - text: "curveRfreq package (fit_calibration_freq()) — nonlinear least-squares calibration ensemble with multi-start Levenberg-Marquardt optimization and AIC-based model selection."

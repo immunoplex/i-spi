@@ -3,6 +3,7 @@ id: glossary.aic
 title: AIC (Akaike Information Criterion)
 audience: both
 category: glossary
+topic: Model selection
 see_also: [glossary.model_selection_frequentist, glossary.loo, schema.calib_fit, data.results.fit_model_selection]
 references:
   - text: "Akaike H (1974). A new look at the statistical model identification. IEEE Transactions on Automatic Control 19(6):716-723."

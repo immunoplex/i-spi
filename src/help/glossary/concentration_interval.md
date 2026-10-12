@@ -3,6 +3,7 @@ id: glossary.concentration_interval
 title: Predictive concentration interval
 audience: both
 category: glossary
+topic: Out-of-range samples
 see_also: [glossary.censoring, glossary.exceedance_probability, glossary.posterior_predictive, glossary.se_concentration, glossary.pcov, schema.calib_samples, compute.standard_curve.out_of_range, settings.decision_cutoff, data.analysis.downstream_censoring, data.results.samples]
 references:
   - text: "curveRcore::summarize_conc_draws() -- per-sample quantiles and probabilities, shared by both engines."

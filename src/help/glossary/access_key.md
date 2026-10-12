@@ -3,6 +3,7 @@ id: glossary.access_key
 title: Project access keys (sharing a project)
 audience: user
 category: glossary
+topic: Projects and data import
 see_also: [project.create_new]
 ---
 

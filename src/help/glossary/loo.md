@@ -3,6 +3,7 @@ id: glossary.loo
 title: LOO-CV (leave-one-out cross-validation)
 audience: both
 category: glossary
+topic: Model selection
 see_also: [glossary.model_selection_bayesian, glossary.stacking_weights, glossary.aic, data.results.loo_comparison, schema.calib_loo, schema.calib_fit]
 references:
   - text: "Vehtari A, Gelman A, Gabry J (2017). Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. Statistics and Computing 27:1413-1432."

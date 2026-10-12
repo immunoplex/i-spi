@@ -3,6 +3,7 @@ id: glossary.exceedance_probability
 title: Threshold probabilities
 audience: both
 category: glossary
+topic: Out-of-range samples
 see_also: [glossary.censoring, glossary.concentration_interval, settings.decision_cutoff, data.analysis.downstream_censoring, schema.calib_samples, compute.standard_curve.out_of_range, data.results.samples]
 ---
 Each sample carries the probability that its concentration lies on one side

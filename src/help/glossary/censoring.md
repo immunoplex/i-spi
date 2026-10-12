@@ -3,6 +3,7 @@ id: glossary.censoring
 title: Censoring (out-of-range samples)
 audience: both
 category: glossary
+topic: Out-of-range samples
 see_also: [glossary.concentration_interval, glossary.exceedance_probability, glossary.pcov, glossary.loq_gating, glossary.lod, compute.standard_curve.out_of_range, data.analysis.downstream_censoring, schema.calib_samples, settings.decision_cutoff, glossary.precision_weight, data.results.samples, study_overview.sample_estimate_quality]
 references:
   - text: "curveRcore::classify_censoring() / classify_censoring_multiplate() -- censoring class and bounds for back-calculated samples."

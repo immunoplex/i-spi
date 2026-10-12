@@ -3,6 +3,7 @@ id: glossary.rdl
 title: RDL (reliable detection limit)
 audience: both
 category: glossary
+topic: Detection and quantification limits
 see_also: [glossary.lod, data.results.diagnostics_loq, schema.calib_diagnostics]
 references:
   - text: "curveRcore::compute_detection_limits() — computes LODs, MDC, and RDL for the best eligible model."

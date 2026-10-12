@@ -3,6 +3,7 @@ id: glossary.blank_wells
 title: Blank wells
 audience: user
 category: glossary
+topic: Plate layout and wells
 see_also: [glossary.standard_wells, glossary.control_wells, glossary.sample_wells, schema.xmap_buffer]
 ---
 **Blank** (buffer) wells carry no analyte and are used to estimate background

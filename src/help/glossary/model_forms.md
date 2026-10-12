@@ -3,6 +3,7 @@ id: glossary.model_forms
 title: Model forms (4PL, 5PL, log-logistic, Gompertz)
 audience: user
 category: glossary
+topic: Curve models and fitting
 see_also: [compute.standard_curve.model_engine, glossary.frequentist_approach, glossary.bayesian_approach, glossary.inflection_point]
 references:
   - text: "curveRcore model-forms.Rmd"

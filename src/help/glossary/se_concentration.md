@@ -3,6 +3,7 @@ id: glossary.se_concentration
 title: se_concentration
 audience: both
 category: glossary
+topic: Precision and uncertainty
 see_also: [glossary.pcov, glossary.frequentist_approach, glossary.bayesian_approach, glossary.posterior_predictive, settings.precision_measurement_error, glossary.precision_weight, qc.precision_weights.method, schema.calib_samples, schema.calib_weights, glossary.concentration_interval]
 references:
   - text: "curveRfreq::predict_samples_freq() — propagates fit uncertainty to a back-calculated concentration via the delta method."

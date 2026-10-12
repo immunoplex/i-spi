@@ -3,6 +3,7 @@ id: glossary.hierarchical_priors
 title: Hierarchical priors
 audience: both
 category: glossary
+topic: Curve models and fitting
 see_also: [glossary.bayesian_approach, glossary.robust_nonlinear_estimation, glossary.convergence, compute.standard_curve.bayes_draws, glossary.posterior_predictive]
 references:
   - text: "curveRbayes Stan source, hierarchical_logistic4.stan — non-centered parameterization of curve-level parameters around population-level mu/sigma; curveRbayes::compute_dynamic_priors() sets the population-level priors from the observed response range rather than fixed defaults."

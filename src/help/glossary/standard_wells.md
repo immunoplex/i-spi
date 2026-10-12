@@ -3,6 +3,7 @@ id: glossary.standard_wells
 title: Standard wells
 audience: user
 category: glossary
+topic: Plate layout and wells
 see_also: [glossary.control_wells, glossary.blank_wells, glossary.sample_wells, schema.xmap_standard]
 ---
 **Standard** wells hold the reference dilution series used to fit each plate's

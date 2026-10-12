@@ -3,6 +3,7 @@ id: glossary.assay_dynamic_range
 title: Assay dynamic range
 audience: both
 category: glossary
+topic: Detection and quantification limits
 see_also: [glossary.loq_gating, glossary.precision_profile, data.results.diagnostics_loq, schema.calib_diagnostics, glossary.assay_sensitivity, schema.calib_gate]
 references:
   - text: "min_dynamic_range_log10 argument, curveRfreq::fit_calibration_freq() / curveRbayes::fit_calibration_bayes() / curveRcore::assess_model_eligibility() — an eligibility gate, default 0.5 log10 decades (~3-fold)."
