@@ -73,9 +73,10 @@ ai_std_reference_ui <- function(id) {
 
 ai_std_reference_server <- function(id, inventory_rv, pool, scope,
                                     enabled = reactive(TRUE), specimen_type = "S",
-                                    refresh = reactive(NULL)) {
+                                    refresh = reactive(NULL),
+                                    design = reactive(NULL)) {
   force(inventory_rv); force(pool); force(scope); force(enabled); force(specimen_type)
-  force(refresh)
+  force(refresh); force(design)
 
   PARAM <- "standard_dilution_reference"
 
@@ -115,6 +116,11 @@ ai_std_reference_server <- function(id, inventory_rv, pool, scope,
     candidates <- reactive({
       if (!isTRUE(enabled())) return(AI_STD_REFERENCE_EMPTY[0L, c("description"), drop = FALSE])
       inv <- inventory_rv()
+      # wells whose dilution an applied study-design map already supplies need
+      # no reference entry
+      dn <- design()
+      if (!is.null(inv) && nrow(inv) && !is.null(dn) && nrow(dn))
+        inv <- inv[!ai_design_coverage(inv, dn), , drop = FALSE]
       tryCatch(ai_std_reference_candidates(inv, specimen_type, saved_rv()),
                error = function(e) {
                  warning(paste("std reference candidate scan failed:", conditionMessage(e)))

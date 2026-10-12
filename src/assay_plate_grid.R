@@ -131,6 +131,36 @@ ai_plate_grid_ui <- function(id) {
       tags$div(class = "ai-legend", style = "margin-top:10px;", uiOutput(ns("legend")))
     ),
 
+    # Bulk route: change sample types, the study design and the source/dilution
+    # annotation from a spreadsheet instead of well by well (assay_design_map.R).
+    wellPanel(
+      tags$h4("Assign the study design from a spreadsheet",
+              tags$small(style = "font-weight:normal;color:#5f6368;", " (optional)"),
+              help_icon("import.design_map", ns)),
+      tags$p(tags$small(
+        "To change sample types, map the study design onto the plate wells, or ",
+        "annotate sample sources and dilutions for many wells at once: ",
+        tags$b("1."), " download the study design template, ",
+        tags$b("2."), " fill in its ", tags$code("current_plates_map"),
+        " tab (follow the ", tags$code("example_template"), " tab) with ",
+        "sample_type, subject_id, group1, group2, timepoint, source and dilution ",
+        "for each well, then ",
+        tags$b("3."), " upload it here and ",
+        tags$b("4."), " apply it to the loaded data.")),
+      fluidRow(
+        column(4, downloadButton(ns("design_dl"), "Download study design template")),
+        column(8, fileInput(ns("design_file"), NULL, accept = c(".xlsx", ".xls"),
+                            buttonLabel = "Browse…",
+                            placeholder = "Upload the edited design template (.xlsx)"))
+      ),
+      uiOutput(ns("design_status")),
+      DT::dataTableOutput(ns("design_issues")),
+      tags$div(style = "margin-top:8px;",
+        actionButton(ns("design_apply"), "Apply the study design to the loaded data",
+                     class = "btn-primary"),
+        actionButton(ns("design_remove"), "Remove the applied design", class = "btn-sm"))
+    ),
+
     wellPanel(
       tags$h4("Edit the selected wells"),
       textOutput(ns("selection_label")),
@@ -184,10 +214,21 @@ ai_plate_grid_ui <- function(id) {
 
 # ---- Server -----------------------------------------------------------------
 
-ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96)) {
-  force(inventory_rv)
+ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
+                                 refresh = reactive(NULL),
+                                 file_stub = reactive("xponent")) {
+  force(inventory_rv); force(refresh); force(file_stub)
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    observeEvent(input$help_show, {
+      hid <- input$help_show
+      body <- help_modal_body(hid, ns)
+      if (is.null(body)) return()
+      showModal(modalDialog(
+        title = help_modal_title(hid), body,
+        easyClose = TRUE, size = "l", footer = modalButton("Close")))
+    })
 
     sel_rv   <- reactiveVal(character())   # selected wells on the CURRENT plate
     undo_rv  <- reactiveVal(NULL)          # one-deep inventory snapshot
@@ -452,6 +493,120 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96)) {
       showNotification("Last edit undone.", type = "message")
     })
 
+    # ── study design map (assay_design_map.R) ────────────────────────────────
+    # staged_rv: the uploaded workbook after reading + checking (not yet applied).
+    # design_rv: the rows currently APPLIED. snapshot_rv: the inventory as it was
+    # just before applying, so "Remove the applied design" can put it back.
+    staged_rv   <- reactiveVal(NULL)
+    design_rv   <- reactiveVal(NULL)
+    snapshot_rv <- reactiveVal(NULL)
+
+    # a new parse replaces the plates the design was written for
+    observeEvent(refresh(), {
+      staged_rv(NULL); design_rv(NULL); snapshot_rv(NULL)
+      tryCatch(shinyjs::reset("design_file"), error = function(e) NULL)
+    }, ignoreInit = TRUE, ignoreNULL = FALSE)
+
+    output$design_dl <- downloadHandler(
+      filename = function() sprintf("%s_study_design_template.xlsx", file_stub() %||% "xponent"),
+      content = function(file) {
+        inv <- inv_or_null()
+        if (is.null(inv) || !nrow(inv)) {
+          showNotification("Parse the instrument file(s) first - the template is built for the loaded plates.",
+                           type = "warning", duration = 8)
+          openxlsx::write.xlsx(data.frame(Note = "Parse the instrument file(s) first."), file)
+          return(invisible())
+        }
+        ai_design_write_template(inv, file)
+      })
+
+    observeEvent(input$design_file, {
+      f <- input$design_file; req(f)
+      chk <- tryCatch({
+        d <- ai_design_read(f$datapath[1])
+        c(ai_design_check(d, inv_or_null()), list(name = f$name[1]))
+      }, error = function(e) list(
+        name = f$name[1], design = NULL, n_rows = 0L,
+        issues = data.frame(sheet = AI_DESIGN_SHEET, severity = "error", column = NA_character_,
+                            message = conditionMessage(e), row = NA_integer_,
+                            stringsAsFactors = FALSE)))
+      staged_rv(chk)
+      n_err <- sum(chk$issues$severity == "error")
+      showNotification(
+        if (n_err) sprintf("%s: %d error(s) - fix the table and upload it again.", chk$name, n_err)
+        else sprintf("%s read and checked - click “Apply the study design”.", chk$name),
+        type = if (n_err) "warning" else "message", duration = 8)
+    })
+
+    design_ok <- reactive({
+      s <- staged_rv()
+      !is.null(s) && !is.null(s$design) && nrow(s$design) > 0L && !ai_design_has_errors(s)
+    })
+
+    observe({
+      shinyjs::toggleState("design_apply", condition = isTRUE(design_ok()))
+      shinyjs::toggleState("design_remove", condition = !is.null(design_rv()))
+    })
+
+    observeEvent(input$design_apply, {
+      s <- staged_rv(); inv <- inv_or_null()
+      if (!isTRUE(design_ok()) || is.null(inv)) {
+        showNotification("Upload a design table with no errors first.", type = "warning")
+        return()
+      }
+      snapshot_rv(inv)
+      inventory_rv(ai_design_apply_inventory(inv, s$design))
+      design_rv(s$design)
+      sel_rv(character())
+      showNotification(sprintf("Study design applied: %s.", ai_design_summary(s$design)),
+                       type = "message", duration = 8)
+    })
+
+    observeEvent(input$design_remove, {
+      snap <- snapshot_rv()
+      if (!is.null(snap)) inventory_rv(snap)
+      design_rv(NULL); snapshot_rv(NULL)
+      showNotification("Applied study design removed; the layout is back as it was.",
+                       type = "message")
+    })
+
+    output$design_status <- renderUI({
+      if (is.null(inv_or_null()))
+        return(tags$em("Upload and parse instrument file(s) to build the template."))
+      s <- staged_rv(); applied <- design_rv()
+      note <- function(txt, color = "#5f6368", bold = FALSE)
+        tags$p(style = sprintf("color:%s;font-size:12px;margin:4px 0;%s", color,
+                               if (bold) "font-weight:600;" else ""), txt)
+      if (!is.null(applied)) {
+        cov <- sum(ai_design_coverage(inv_or_null(), applied))
+        occ <- sum(!is.na(inv_or_null()$specimen_type))
+        return(tagList(
+          note(sprintf("Applied: %s (%d of %d occupied wells are governed by it).",
+                       ai_design_summary(applied), cov, occ), "#2e7d32", TRUE),
+          if (!is.null(s) && !identical(s$design, applied))
+            note(sprintf("A different file (%s) is staged - apply it to replace the applied design.", s$name))))
+      }
+      if (is.null(s)) return(NULL)
+      ne <- sum(s$issues$severity == "error"); nw <- sum(s$issues$severity == "warning")
+      if (ne) note(sprintf("%s: %d error(s), %d warning(s). Fix the table and upload it again.",
+                           s$name, ne, nw), "#b02a37", TRUE)
+      else note(sprintf("%s: %s - %d warning(s). Ready to apply.", s$name,
+                        ai_design_summary(s$design), nw), "#2e7d32", TRUE)
+    })
+
+    output$design_issues <- DT::renderDataTable({
+      s <- staged_rv(); req(s)
+      iss <- s$issues
+      if (!nrow(iss)) return(NULL)
+      iss <- iss[order(iss$severity != "error", iss$row), c("severity", "row", "column", "message")]
+      DT::formatStyle(
+        DT::datatable(iss, rownames = FALSE, selection = "none",
+                      colnames = c("Severity", "Spreadsheet row", "Column", "Message"),
+                      options = list(dom = "tp", pageLength = 8, scrollX = TRUE)),
+        "severity",
+        backgroundColor = DT::styleEqual(c("error", "warning"), c("#f8d7da", "#fff3cd")))
+    })
+
     # ── proposals ────────────────────────────────────────────────────────────
     proposals <- reactive({
       inv <- inv_or_null()
@@ -552,6 +707,14 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96)) {
       showNotification("Suggested types confirmed.", type = "message")
     })
 
-    list(ready = ready, issues = issues, selection = reactive(sel_rv()))
+    list(ready = ready, issues = issues, selection = reactive(sel_rv()),
+         # the applied study-design rows (NULL when none), and its warnings for
+         # the validation table
+         design = reactive(design_rv()),
+         design_issues = reactive({
+           s <- staged_rv(); if (is.null(design_rv()) || is.null(s)) return(NULL)
+           iss <- s$issues[s$issues$severity == "warning", , drop = FALSE]
+           if (nrow(iss)) iss[, c("sheet", "severity", "column", "message")] else NULL
+         }))
   })
 }

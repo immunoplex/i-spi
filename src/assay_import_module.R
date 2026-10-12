@@ -192,7 +192,8 @@ assay_import_server <- function(id, pool, descriptor, scope) {
     })
 
     rv <- reactiveValues(raw = NULL, sheets = NULL, issues = NULL,
-                         status = "", committed = FALSE, parse_status = "")
+                         status = "", committed = FALSE, parse_status = "",
+                         parse_gen = 0L)   # bumps on every parse, even of identical files
 
     use_pre      <- isTRUE(descriptor$preprocess)
     inventory_rv <- reactiveVal(NULL)
@@ -218,15 +219,28 @@ assay_import_server <- function(id, pool, descriptor, scope) {
     # ── pre-processor: stage 1 (grid), 1.5 (standards reference), 2-3 (shapes) ──
     # Mounted unconditionally so the server shape is static; the UI renders only
     # when the descriptor opts in, and with no inventory all three modules idle.
-    grid   <- ai_plate_grid_server("grid", inventory_rv, detected_n_wells)
+    # Name stem for the downloadable study design template (the grid module
+    # builds it): <study>_<experiment>_<format>_study_design_template.xlsx
+    design_stub <- reactive({
+      s <- scope()
+      sprintf("%s_%s_%s", s$study %||% "study", s$experiment %||% "exp",
+              current_reader()$format_id %||% descriptor$assay)
+    })
+    grid   <- ai_plate_grid_server("grid", inventory_rv, detected_n_wells,
+                                   refresh = reactive(rv$parse_gen), file_stub = design_stub)
+    # `design` = the study-design map applied in step 2 (NULL if none). It
+    # supplies identity for the wells it covers, so those wells need neither a
+    # standards dilution reference nor description rules.
     stdref <- ai_std_reference_server("stdref", inventory_rv, pool, scope,
                                       enabled = reactive(isTRUE(grid$ready())),
                                       specimen_type = "S",
-                                      refresh = reactive(rv$raw))
+                                      refresh = reactive(rv$raw),
+                                      design = grid$design)
     shape  <- ai_shape_server("shape", inventory_rv,
                              enabled   = reactive(isTRUE(grid$ready()) && isTRUE(stdref$ready())),
                              assay     = reactive(descriptor$assay),
-                             reference = stdref$reference)
+                             reference = stdref$reference,
+                             design    = grid$design)
 
     pre_ready <- reactive({
       if (!use_pre) return(TRUE)
@@ -257,6 +271,70 @@ assay_import_server <- function(id, pool, descriptor, scope) {
                        " Wells were found beyond the size first assumed." else ""))
     })
 
+    # ── xPONENT: which response block becomes assay_response ─────────────────
+    # An xPONENT export can hold Median, Net MFI and Average Net MFI blocks, in
+    # an order that depends on the lab's export setup. Scan the selected files
+    # (by block label, cheap) so the control offers only what EVERY file
+    # contains, and tell the user where each block sits and when a parse is
+    # out of date with the current choice. input$mfi_source exists only in the
+    # bead descriptor's UI; for any other assay these are inert.
+    mfi_scan <- reactive({
+      f <- input$raw_files
+      if (is.null(f) || !identical(current_reader()$format_id, "xponent")) return(NULL)
+      tryCatch(xponent_scan_upload(f), error = function(e) NULL)
+    })
+
+    observeEvent(mfi_scan(), {
+      sc <- mfi_scan(); if (is.null(sc)) return()
+      if (!length(sc$common)) {
+        updateSelectInput(session, "mfi_source", choices = character(0))
+        return()
+      }
+      cur <- isolate(input$mfi_source)
+      sel <- if (!is.null(cur) && cur %in% sc$common) cur
+             else if (XPONENT_DEFAULT_MFI_SOURCE %in% sc$common) XPONENT_DEFAULT_MFI_SOURCE
+             else sc$common[1]
+      updateSelectInput(session, "mfi_source",
+                        choices = xponent_mfi_choices(sc$common), selected = sel)
+    })
+
+    output$mfi_source_info <- renderUI({
+      sc <- mfi_scan(); if (is.null(sc)) return(NULL)
+      lab  <- function(k) XPONENT_MFI_SOURCES[[k]]$label
+      note <- function(txt, color = "#5f6368")
+        tags$p(style = sprintf("color:%s;font-size:12px;margin:2px 0 8px;", color), txt)
+
+      # where the blocks sit, in file order (one line if every file agrees)
+      ord <- vapply(sc$sections, function(s) {
+        k <- xponent_mfi_sources_in(s, file_order = TRUE)
+        if (length(k)) paste(vapply(k, lab, ""), collapse = " → ") else "no MFI blocks found"
+      }, "")
+      where <- if (length(unique(ord)) == 1L)
+        note(sprintf("In the file%s, in order: %s.", if (length(ord) > 1L) "s" else "", ord[[1]]))
+      else lapply(seq_along(ord), function(i) note(sprintf("%s: %s", names(ord)[i], ord[[i]])))
+
+      missing_src <- Filter(length, sc$lacking)
+      lacks <- lapply(names(missing_src), function(k)
+        note(sprintf("%s is not in: %s — not available for this batch.",
+                     lab(k), paste(missing_src[[k]], collapse = ", ")), "#b26a00"))
+      none <- if (!length(sc$common))
+        note("No MFI source is common to every selected file; parsing will fail.", "#b02a37")
+
+      stale <- if (mfi_stale())
+        note(sprintf("Parsed with %s — click “Parse uploaded file(s)” again to use %s.",
+                     lab(rv$raw$mfi_source), lab(input$mfi_source)), "#b26a00")
+
+      tagList(where, lacks, none, stale)
+    })
+
+    # TRUE when the parsed data was read with a different MFI source than the
+    # one now selected. The template is built from the parsed data, so it must
+    # not be offered until the user re-parses (see the template gating below).
+    mfi_stale <- reactive({
+      parsed <- rv$raw$mfi_source; chosen <- input$mfi_source
+      !is.null(parsed) && nzchar(chosen %||% "") && !identical(parsed, chosen)
+    })
+
     build_opts <- reactive({
       s <- scope()
       list(
@@ -266,6 +344,7 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         user           = s$user,
         n_wells        = detected_n_wells(),
         feature_value  = input$feature_value,
+        mfi_source     = input$mfi_source,
         combine_experiment = isTRUE(input$combine_experiment),
         # The description is no longer described by a delimiter plus one element
         # order per type. The pre-processor hands over already-resolved identity
@@ -312,6 +391,7 @@ assay_import_server <- function(id, pool, descriptor, scope) {
       tryCatch({
         rv$raw    <- rdr$parse_raw(input$raw_files, build_opts())
         rv$sheets <- NULL; rv$issues <- NULL; rv$committed <- FALSE
+        rv$parse_gen <- isolate(rv$parse_gen) + 1L
 
         # Auto-seed the persisted Standards Dilution Reference from a reader's
         # own authoritative source, when it supplies one (currently: flow's
@@ -344,6 +424,10 @@ assay_import_server <- function(id, pool, descriptor, scope) {
             cat("[assay_import] std-reference auto-seed skipped:", conditionMessage(e), "\n"))
         }
 
+        # xPONENT only: name the MFI block the responses were read from
+        mfi_note <- if (!is.null(rv$raw$mfi_source))
+          sprintf(" MFI source: %s.", XPONENT_MFI_SOURCES[[rv$raw$mfi_source]]$label) else ""
+
         setProgress(value = 0.70, detail = "Building the well inventory\u2026")
 
         # Normalise the reader's preview into the editable well inventory. A
@@ -360,10 +444,10 @@ assay_import_server <- function(id, pool, descriptor, scope) {
 
           setProgress(value = 0.90, detail = "Grouping the description field\u2026")
           rv$parse_status <- sprintf(
-            "Parsed %d plate(s), %d occupied well(s), %d-well plate \u2014 confirm the layout below.",
-            np, nocc, attr(inv, "n_wells") %||% 96L)
+            "Parsed %d plate(s), %d occupied well(s), %d-well plate \u2014 confirm the layout below.%s",
+            np, nocc, attr(inv, "n_wells") %||% 96L, mfi_note)
         } else {
-          rv$parse_status <- sprintf("Parsed %d file(s) \u2014 template ready.", n_file)
+          rv$parse_status <- sprintf("Parsed %d file(s) \u2014 template ready.%s", n_file, mfi_note)
         }
         setProgress(value = 1, detail = "Done")
         showNotification(rv$parse_status, type = "message")
@@ -386,6 +470,10 @@ assay_import_server <- function(id, pool, descriptor, scope) {
     output$template_state <- renderUI({
       if (is.null(rv$raw))
         return(tags$em("Parse instrument file(s) first."))
+      if (isTRUE(mfi_stale()))
+        return(tags$div(style = "color:#b02a37;margin-bottom:8px;",
+          "The MFI source was changed after parsing. Click “Parse uploaded file(s)” ",
+          "again so the template is built from the source you selected."))
       if (!use_pre) return(NULL)
       if (isTRUE(pre_ready()))
         return(tags$div(style = "color:#2e7d32;font-weight:600;margin-bottom:8px;",
@@ -398,7 +486,8 @@ assay_import_server <- function(id, pool, descriptor, scope) {
 
     observe({
       shinyjs::toggleState(id = "template",
-                           condition = !is.null(rv$raw) && isTRUE(pre_ready()))
+                           condition = !is.null(rv$raw) && isTRUE(pre_ready()) &&
+                                       !isTRUE(mfi_stale()))
     })
 
     output$template <- downloadHandler(
@@ -438,6 +527,9 @@ assay_import_server <- function(id, pool, descriptor, scope) {
           si <- tryCatch(shape$issues(), error = function(e) NULL)
           if (!is.null(gi) && nrow(gi)) extra[[length(extra) + 1L]] <- gi
           if (!is.null(si) && nrow(si)) extra[[length(extra) + 1L]] <- si
+          # warnings from the applied study-design table (errors can't be applied)
+          di <- tryCatch(grid$design_issues(), error = function(e) NULL)
+          if (!is.null(di) && nrow(di)) extra[[length(extra) + 1L]] <- di
           iss <- do.call(rbind, extra)
         }
         rv$issues    <- iss

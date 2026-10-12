@@ -27,6 +27,9 @@
 #   bcs_element_order, feature_value          — template controls
 #   raw_preview                               — combined_plates, for the
 #                                               assay_response_long fallback
+#   mfi_source                                — xPONENT only: which response
+#                                               block is assay_response
+#                                               (net_mfi | median | avg_net_mfi)
 # =============================================================================
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -55,7 +58,10 @@
 # format_id is baked into each registered reader's parse_raw closure below.
 .bead_parse_raw <- function(files, opts, format_id) {
   if (identical(format_id, "xponent")) {
-    p <- process_xponent_files(files)
+    # opts$mfi_source: which xPONENT response block becomes assay_response
+    # ("net_mfi" | "median" | "avg_net_mfi"); NULL/blank -> Net MFI, the
+    # reader's long-standing behaviour.
+    p <- process_xponent_files(files, mfi_source = opts$mfi_source)
     arl_override <- p$assay_response_long
   } else {
     p <- process_experiment_files(files)
@@ -70,6 +76,7 @@
   list(
     preview        = p$combined_plates,
     plate_metadata = p$header_list,
+    mfi_source     = p$mfi_source,    # xPONENT only (NULL otherwise); shown after parsing
     template_seed  = list(
       all_plates                   = p$combined_plates,
       header_list                  = p$header_list,

@@ -8,6 +8,119 @@
 # batch_layout_functions.R.
 # =============================================================================
 
+# ---- MFI source selection ---------------------------------------------------
+# An xPONENT export carries several response blocks, each introduced by a
+# "DataType:,<name>" line: Median, Net MFI, Count, Avg Net MFI, ... Which ones
+# are exported, and in what ORDER, depends on the lab's protocol/export setup, so
+# nothing here may assume a block's position. moach finds each block by its
+# label; these helpers find it by label too and let the user pick which one
+# becomes assay_response.
+#
+#   key          what it is                                   where moach puts it
+#   net_mfi      Median less the protocol's background        AssayData$Exprs$Net_MFI
+#   median       raw median fluorescence                      AssayData$Exprs$Median
+#   avg_net_mfi  mean Net MFI over wells sharing a sample     AssayData$Average$Avg_Net_MFI
+#                name (keyed by Sample only, NOT by well)
+#
+# Net MFI stays the default: it is what this reader always used.
+XPONENT_MFI_SOURCES <- list(
+  net_mfi     = list(label = "Net MFI",         section = "Net MFI",     table = "Exprs",   column = "Net_MFI"),
+  median      = list(label = "Median",          section = "Median",      table = "Exprs",   column = "Median"),
+  avg_net_mfi = list(label = "Average Net MFI", section = "Avg Net MFI", table = "Average", column = "Avg_Net_MFI")
+)
+XPONENT_DEFAULT_MFI_SOURCE <- "net_mfi"
+
+# Named choices for a selectInput: label -> key.
+xponent_mfi_choices <- function(keys = names(XPONENT_MFI_SOURCES)) {
+  stats::setNames(keys, vapply(XPONENT_MFI_SOURCES[keys], `[[`, "", "label"))
+}
+
+# Normalise a possibly NULL/blank/unknown UI value to a valid source key.
+.xponent_mfi_key <- function(x) {
+  x <- if (is.null(x) || !length(x)) "" else trimws(as.character(x)[1])
+  if (!nzchar(x) || is.na(x)) return(XPONENT_DEFAULT_MFI_SOURCE)
+  if (!x %in% names(XPONENT_MFI_SOURCES))
+    stop(sprintf("Unknown MFI source '%s' (expected one of: %s)",
+                 x, paste(names(XPONENT_MFI_SOURCES), collapse = ", ")), call. = FALSE)
+  x
+}
+
+#' DataType sections present in one xPONENT file, in FILE order
+#'
+#' A cheap line scan (no moach parse), so the UI can report what a file offers
+#' as soon as it is selected. Tolerates quoted fields and ';' delimiters, like
+#' moach does.
+xponent_file_sections <- function(path) {
+  lines <- readLines(path, warn = FALSE)
+  hit <- grep("^\"?DataType:\"?[,;]", lines, value = TRUE)
+  vapply(strsplit(hit, "[,;]"), function(p) gsub("^\"|\"$", "", trimws(p[2])), "")
+}
+
+#' Which selectable MFI sources a set of sections offers
+#'
+#' @param file_order FALSE (default): canonical order, for stable menus. TRUE:
+#'   the order the blocks appear in the file, to tell the user where they are.
+xponent_mfi_sources_in <- function(sections, file_order = FALSE) {
+  sec <- vapply(XPONENT_MFI_SOURCES, `[[`, "", "section")
+  if (file_order) return(names(sec)[match(unique(sections[sections %in% sec]), sec)])
+  names(sec)[sec %in% sections]
+}
+
+#' Scan uploaded xPONENT files for the MFI sources they offer
+#'
+#' @param upload_df Shiny fileInput data frame (name, datapath)
+#' @return list(sections = per-file section names in file order,
+#'         sources = per-file source keys, common = keys offered by EVERY file,
+#'         lacking = for each key, the file names that do not offer it)
+xponent_scan_upload <- function(upload_df) {
+  paths <- upload_df$datapath; nms <- upload_df$name
+  sections <- stats::setNames(lapply(paths, xponent_file_sections), nms)
+  sources  <- lapply(sections, xponent_mfi_sources_in)
+  common   <- Reduce(intersect, sources, names(XPONENT_MFI_SOURCES))
+  lacking  <- stats::setNames(lapply(names(XPONENT_MFI_SOURCES), function(k)
+    nms[!vapply(sources, function(s) k %in% s, logical(1))]), names(XPONENT_MFI_SOURCES))
+  list(sections = sections, sources = sources, common = common, lacking = lacking)
+}
+
+#' Long (well x analyte) response table for the chosen MFI source
+#'
+#' @return data frame: Location, Sample, Analyte, Count, mfi. Values are NOT
+#'   coerced here (callers coerce where they always did) so the default source
+#'   reproduces the previous Net_MFI output exactly.
+xponent_mfi_long <- function(lumcsv, mfi_source = XPONENT_DEFAULT_MFI_SOURCE) {
+  key <- .xponent_mfi_key(mfi_source)
+  src <- XPONENT_MFI_SOURCES[[key]]
+  exprs <- lumcsv$AssayData$Exprs
+
+  offered <- c(
+    names(Filter(function(s) s$table == "Exprs" && s$column %in% names(exprs), XPONENT_MFI_SOURCES)),
+    if (is.data.frame(lumcsv$AssayData$Average))
+      names(Filter(function(s) s$table == "Average" && s$column %in% names(lumcsv$AssayData$Average),
+                   XPONENT_MFI_SOURCES)))
+  if (!key %in% offered)
+    stop(sprintf("This file has no '%s' section, so '%s' cannot be used. MFI sources it does offer: %s.",
+                 src$section, src$label,
+                 if (length(offered)) paste(vapply(XPONENT_MFI_SOURCES[offered], `[[`, "", "label"),
+                                            collapse = ", ") else "none"),
+         call. = FALSE)
+
+  base <- exprs[, intersect(c("Location", "Sample", "Analyte", "Count"), names(exprs)), drop = FALSE]
+  if (!"Count" %in% names(base)) base$Count <- NA_integer_
+
+  if (identical(src$table, "Exprs")) {
+    base$mfi <- exprs[[src$column]]
+  } else {
+    # Average blocks are keyed by Sample + Analyte only: every replicate well of
+    # a sample name receives that sample's one average. A keyed lookup (not a
+    # join) so well order and row count are untouched, and the keys are compared
+    # as text because moach type-converts each column on its own.
+    avg <- lumcsv$AssayData$Average
+    key <- function(d) paste(as.character(d$Sample), as.character(d$Analyte), sep = "\r")
+    base$mfi <- avg[[src$column]][match(key(base), key(avg))]
+  }
+  base
+}
+
 #' Convert a single xPONENT file to wide-format plate data
 #'
 #' Takes the output of moach::read_Xponent_csv() and pivots it from long format
@@ -16,31 +129,34 @@
 #'
 #' @param lumcsv Output of moach::read_Xponent_csv()
 #' @param file_name Original file name for the source_file column
+#' @param mfi_source Which response block fills the analyte columns: "net_mfi"
+#'   (default), "median" or "avg_net_mfi" (see XPONENT_MFI_SOURCES)
 #' @return Data frame in wide format with columns: source_file, Well, Type,
-#'         Description, and one column per analyte (Net MFI values)
+#'         Description, and one column per analyte (the chosen MFI source)
 #'
-xponent_to_wide_plate_data <- function(lumcsv, file_name) {
+xponent_to_wide_plate_data <- function(lumcsv, file_name,
+                                       mfi_source = XPONENT_DEFAULT_MFI_SOURCE) {
 
-  # Extract the expression data and well information
-  raw_exprs <- lumcsv$AssayData$Exprs
+  # Extract the response table for the chosen source and the well information
+  raw_exprs <- xponent_mfi_long(lumcsv, mfi_source)
   raw_wells <- lumcsv$AssayData$Wells
 
-  # Join expression data with well metadata
-  combined <- raw_exprs[, c("Location", "Sample", "Analyte", "Count", "Net_MFI")] %>%
+  # Join response data with well metadata
+  combined <- raw_exprs[, c("Location", "Sample", "Analyte", "Count", "mfi")] %>%
     dplyr::full_join(
       raw_wells[, c("Location", "Sample")],
       by = c("Location", "Sample")
     ) %>%
     janitor::clean_names()
 
-  # Pivot to wide format: one column per analyte with Net_MFI values
+  # Pivot to wide format: one column per analyte with the chosen MFI values
   wide_data <- combined %>%
-    dplyr::select(location, sample, analyte, net_mfi) %>%
+    dplyr::select(location, sample, analyte, mfi) %>%
     tidyr::pivot_wider(
       id_cols = c(location, sample),
       names_from = analyte,
-      values_from = net_mfi,
-      values_fn = list(net_mfi = dplyr::first)
+      values_from = mfi,
+      values_fn = list(mfi = dplyr::first)
     )
 
   # Map xPONENT columns to the standard raw file format
@@ -125,30 +241,34 @@ extract_xponent_header <- function(lumcsv, file_name) {
 
 #' Build assay_response_long from a single xPONENT CSV
 #'
-#' Extracts the long-format expression data (Net_MFI + bead count per well per
-#' analyte) directly from the parsed xPONENT object, BEFORE any wide pivot.
-#' This preserves bead counts that are lost in the wide plate data.
+#' Extracts the long-format response data (chosen MFI source + bead count per
+#' well per analyte) directly from the parsed xPONENT object, BEFORE any wide
+#' pivot. This preserves bead counts that are lost in the wide plate data.
 #'
 #' @param lumcsv Parsed xPONENT object from moach::read_Xponent_csv()
 #' @param file_name Original file name for the source_file column
+#' @param mfi_source Which response block becomes assay_response (see
+#'   XPONENT_MFI_SOURCES); default "net_mfi"
 #' @return Data frame with columns: source_file, well, antigen, feature,
 #'         assay_response, assay_bead_count
 #'
-extract_xponent_assay_response_long <- function(lumcsv, file_name) {
+extract_xponent_assay_response_long <- function(lumcsv, file_name,
+                                                mfi_source = XPONENT_DEFAULT_MFI_SOURCE) {
 
-  raw_exprs <- lumcsv$AssayData$Exprs
+  raw_exprs <- xponent_mfi_long(lumcsv, mfi_source)
+  src_column <- XPONENT_MFI_SOURCES[[.xponent_mfi_key(mfi_source)]]$column
 
-  # Build long format directly from expression data
-  assay_long <- raw_exprs[, c("Location", "Analyte", "Net_MFI", "Count")] %>%
+  # Build long format directly from the response table
+  assay_long <- raw_exprs[, c("Location", "Analyte", "mfi", "Count")] %>%
     dplyr::rename(
       well             = Location,
       antigen          = Analyte,
-      assay_response   = Net_MFI,
+      assay_response   = mfi,
       assay_bead_count = Count
     ) %>%
     dplyr::mutate(
       source_file      = file_name,
-      feature          = "Net_MFI",
+      feature          = src_column,
       assay_response   = as.numeric(assay_response),
       assay_bead_count = as.integer(assay_bead_count)
     )
@@ -165,10 +285,22 @@ extract_xponent_assay_response_long <- function(lumcsv, file_name) {
 #' identically.
 #'
 #' @param upload_df Data frame from Shiny fileInput (columns: name, datapath, etc.)
-#' @return List with combined_plates, header_list, plate_list, assay_response_long
+#' @param mfi_source Which response block becomes assay_response for EVERY file
+#'   in the batch: "net_mfi" (default), "median" or "avg_net_mfi". A batch is
+#'   refused up front if any file lacks the chosen block -- mixing sources
+#'   inside one batch (or silently dropping a file) would corrupt the data.
+#' @return List with combined_plates, header_list, plate_list,
+#'         assay_response_long, mfi_source
 #'
-process_xponent_files <- function(upload_df) {
-  cat("Processing", nrow(upload_df), "xPONENT files...\n")
+process_xponent_files <- function(upload_df, mfi_source = XPONENT_DEFAULT_MFI_SOURCE) {
+  mfi_source <- .xponent_mfi_key(mfi_source)
+  src_label  <- XPONENT_MFI_SOURCES[[mfi_source]]$label
+  cat("Processing", nrow(upload_df), "xPONENT files (MFI source:", src_label, ")...\n")
+
+  lacking <- xponent_scan_upload(upload_df)$lacking[[mfi_source]]
+  if (length(lacking))
+    stop(sprintf("'%s' is not in: %s. Choose an MFI source that every selected file contains.",
+                 src_label, paste(lacking, collapse = ", ")), call. = FALSE)
 
   results <- lapply(seq_len(nrow(upload_df)), function(i) {
     file_path <- upload_df$datapath[i]
@@ -180,14 +312,14 @@ process_xponent_files <- function(upload_df) {
       lumcsv <- moach::read_Xponent_csv(file_path)
 
       # Convert to wide plate data
-      plate_data <- xponent_to_wide_plate_data(lumcsv, file_name)
+      plate_data <- xponent_to_wide_plate_data(lumcsv, file_name, mfi_source)
       cat("    -> Columns:", ncol(plate_data), ", Rows:", nrow(plate_data), "\n")
 
       # Extract header metadata
       header_data <- extract_xponent_header(lumcsv, file_name)
 
       # Extract long-format assay response (preserves bead counts)
-      assay_long <- extract_xponent_assay_response_long(lumcsv, file_name)
+      assay_long <- extract_xponent_assay_response_long(lumcsv, file_name, mfi_source)
 
       list(
         plate = plate_data,
@@ -247,6 +379,7 @@ process_xponent_files <- function(upload_df) {
     combined_plates = combined_plates,
     header_list = header_list,
     plate_list = plate_list,
-    assay_response_long = assay_response_long
+    assay_response_long = assay_response_long,
+    mfi_source = mfi_source
   )
 }

@@ -3,7 +3,7 @@ id: import.plate_grid.confirm
 title: Confirming the plate layout
 audience: user
 category: procedural
-see_also: [compute.import.description_shape_binding, compute.import.dilution_source_precedence]
+see_also: [compute.import.description_shape_binding, compute.import.dilution_source_precedence, import.design_map]
 ---
 Each well is typed (Standard, Control, Blank, or Sample) and described
 automatically from the uploaded file. This step is where you check that work:

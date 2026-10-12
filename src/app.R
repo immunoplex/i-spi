@@ -1138,6 +1138,7 @@ server <- function(input, output, session) {
       source("assay_well_inventory.R",    local = TRUE)
       source("assay_shape_rules.R",       local = TRUE)
       source("assay_std_reference_rules.R", local = TRUE) # Standards reference table (pure)
+      source("assay_design_map.R",        local = TRUE)   # study design template: read/validate/apply (pure)
       source("assay_plate_grid.R",        local = TRUE)
       source("assay_shape_ui.R",          local = TRUE)
       source("assay_std_reference_ui.R",  local = TRUE)   # "Stage 1.5": Standards reference UI

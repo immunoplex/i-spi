@@ -87,6 +87,8 @@ ai_shape_ui <- function(id) {
       # (assay_import_module.R), not here -- avoids a duplicate icon on its
       # own line below this module's own content.
       uiOutput(ns("gate_notice")),
+      uiOutput(ns("design_panel")),
+      conditionalPanel(sprintf("!output['%s']", ns("design_full")),
       uiOutput(ns("type_tabs")),
 
       wellPanel(
@@ -104,7 +106,7 @@ ai_shape_ui <- function(id) {
         ),
         textInput(ns("profile_notes"), "Notes (optional)", width = "100%"),
         uiOutput(ns("profile_report"))
-      ),
+      )),
 
       wellPanel(
         tags$h4("Description rules check"),
@@ -119,8 +121,9 @@ ai_shape_ui <- function(id) {
 
 ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
                             assay = reactive(NA_character_),
-                            reference = reactive(NULL)) {
-  force(inventory_rv); force(enabled); force(reference)
+                            reference = reactive(NULL),
+                            design = reactive(NULL)) {
+  force(inventory_rv); force(enabled); force(reference); force(design)
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
@@ -143,7 +146,15 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
     bump <- function() refresh_rv(isolate(refresh_rv()) + 1L)
 
     # ── helpers ──────────────────────────────────────────────────────────────
-    inv <- reactive(inventory_rv())
+    # The wells the DESCRIPTION RULES are responsible for: everything except the
+    # wells an applied study-design map already governs. With a full design this
+    # is empty, so there is nothing to bind or approve in this step.
+    full_inv <- reactive(inventory_rv())
+    inv <- reactive({
+      d <- inventory_rv(); dn <- design()
+      if (is.null(d) || !nrow(d) || is.null(dn) || !nrow(dn)) return(d)
+      d[!ai_design_coverage(d, dn), , drop = FALSE]
+    })
 
     types_present <- reactive({
       d <- inv()
@@ -915,8 +926,32 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       do.call(rbind, rows)
     })
 
+    # An applied study-design map (assay_design_map.R) supplies identity for the
+    # wells it covers. When it covers EVERY occupied well there is nothing left
+    # for description rules to do; when it covers some, the rest still need them.
+    design_full <- reactive({
+      d <- full_inv(); dn <- design()
+      if (is.null(d) || !nrow(d) || is.null(dn) || !nrow(dn)) return(FALSE)
+      occ <- !is.na(d$specimen_type)
+      any(occ) && all(ai_design_coverage(d, dn)[occ])
+    })
+
+    # What replaces description parsing for the wells the design governs: the
+    # integrity checks in ai_design_integrity(). Errors keep the gate shut.
+    integrity <- reactive({
+      dn <- design()
+      if (is.null(dn) || !nrow(dn)) return(NULL)
+      tryCatch(ai_design_integrity(full_inv(), dn), error = function(e) NULL)
+    })
+    integrity_errors <- reactive({
+      ig <- integrity()
+      !is.null(ig) && nrow(ig$issues) > 0 && any(ig$issues$severity == "error")
+    })
+
     ready <- reactive({
       if (!isTRUE(enabled())) return(FALSE)
+      if (isTRUE(integrity_errors())) return(FALSE)
+      if (isTRUE(design_full())) return(TRUE)
       p <- progress()
       if (is.null(p) || !nrow(p)) return(FALSE)
       all(p$groups > 0) && all(p$approved == p$groups) &&
@@ -927,11 +962,28 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
     # thousands of ai_resolve_one() calls per reactive tick, for a number the
     # summary can get from the cached verdicts instead.
     resolution <- reactive({
+      if (!isTRUE(ready())) return(NULL)
+      dres <- tryCatch(ai_design_resolved(full_inv(), design()), error = function(e) NULL)
+      ig   <- integrity()
+      if (isTRUE(design_full()))
+        return(list(resolved = dres,
+                    issues = if (is.null(ig)) data.frame(sheet = character(),
+                               severity = character(), column = character(),
+                               message = character(), stringsAsFactors = FALSE)
+                             else ig$issues))
       d <- inv()
       if (is.null(d) || !nrow(d) || !length(rules_rv())) return(NULL)
-      if (!isTRUE(ready())) return(NULL)
       refresh_rv()
-      tryCatch(ai_resolve_inventory(d, rules_rv(), reference = reference()), error = function(e) {
+      tryCatch({
+        res <- ai_resolve_inventory(d, rules_rv(), reference = reference())
+        # design rows win for the wells they cover
+        res$resolved <- ai_design_overlay_resolved(res$resolved, dres)
+        if (!is.null(ig) && nrow(ig$issues)) {
+          cn <- intersect(names(res$issues), names(ig$issues))
+          res$issues <- rbind(res$issues[, cn, drop = FALSE], ig$issues[, cn, drop = FALSE])
+        }
+        res
+      }, error = function(e) {
         warning(paste("resolution failed:", conditionMessage(e)))
         NULL
       })
@@ -952,10 +1004,56 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         covered, total)))
     }
 
+    # The design's own report, shown instead of the rule editor: per-plate
+    # counts under the design, and every integrity finding.
+    output$design_full <- reactive(isTRUE(design_full()))
+    outputOptions(output, "design_full", suspendWhenHidden = FALSE)
+
+    output$design_panel <- renderUI({
+      ig <- integrity()
+      if (is.null(ig) || !nrow(ig$summary)) return(NULL)
+      sm <- ig$summary
+      full <- isTRUE(design_full())
+      head <- if (full)
+        "Identity comes from the study design you applied in step 2, so the description field is not parsed."
+      else
+        sprintf("The study design governs %d well(s). The %d remaining well(s) still need description rules, below.",
+                ig$n_covered, ig$n_open)
+      tags$div(style = "margin-bottom:10px;",
+        tags$p(tags$strong(head)),
+        tags$table(class = "table table-condensed", style = "width:auto;",
+          tags$thead(tags$tr(lapply(c("Plate", AI_SPECIMEN_TYPES, "Left to rules"), tags$th))),
+          tags$tbody(lapply(seq_len(nrow(sm)), function(i)
+            tags$tr(tags$td(sm$plate_key[i]),
+                    lapply(AI_SPECIMEN_TYPES, function(t) tags$td(sm[[t]][i])),
+                    tags$td(sm$rules[i]))))),
+        if (nrow(ig$issues))
+          tags$ul(lapply(seq_len(nrow(ig$issues)), function(i)
+            tags$li(tags$small(style = paste0("color:", if (ig$issues$severity[i] == "error") "#b02a37" else "#8a6d00"),
+                               paste0(ig$issues$severity[i], ": ", ig$issues$message[i])))))
+        else tags$small(style = "color:#2e7d32;", "No integrity problems found."))
+    })
+
     output$overall <- renderUI({
-      d <- inv()
+      d <- full_inv()
       if (is.null(d) || !nrow(d)) return(tags$em("Nothing loaded yet."))
       banner <- instrument_banner(d)
+      if (isTRUE(design_full())) {
+        ig <- integrity()
+        nerr <- if (is.null(ig)) 0L else sum(ig$issues$severity == "error")
+        nwarn <- if (is.null(ig)) 0L else sum(ig$issues$severity == "warning")
+        return(tagList(
+          if (nerr > 0)
+            tags$div(style = "color:#b02a37;font-weight:600;",
+                     sprintf("The study design has %d integrity error(s) — fix them in the design table and apply it again.", nerr))
+          else
+            tags$div(style = "color:#2e7d32;font-weight:600;", sprintf(
+              "Study design integrity check passed for %d well(s)%s. No description rules are needed; the layout template can be built.",
+              ig$n_covered, if (nwarn) sprintf(", with %d warning(s)", nwarn) else "")),
+          tags$p(tags$small(style = "color:#5f6368;",
+            "Remove the applied design in step 2 to read identity from the description field instead."))))
+      }
+      d <- inv()    # from here on only the wells the rules are responsible for
       p <- progress()
       if (is.null(p)) return(tagList(banner, tags$em("No specimen types to configure.")))
 

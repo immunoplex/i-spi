@@ -20,6 +20,12 @@
 #
 # What remains is the one thing no file carries: the isotype label.
 #
+# The one other control is xPONENT-only: WHICH response block of the export
+# becomes assay_response (Net MFI | Median | Average Net MFI). An xPONENT file
+# can hold several, in an order that depends on the lab's export setup, so the
+# user chooses rather than the reader assuming a position. The module narrows
+# the choices to what the selected file(s) actually contain.
+#
 # Source AFTER assay_import_contract.R and reader_bead.R.
 # =============================================================================
 
@@ -29,7 +35,17 @@ descriptor_bead <- list(
   default_format = "raw",
   preprocess     = TRUE,   # mount the description pre-processor
   assay_controls = function(ns) {
-    textInput(ns("feature_value"), "Feature (isotype), e.g. IgG",
-              value = "", placeholder = "\u226415 chars")
+    tagList(
+      textInput(ns("feature_value"), "Feature (isotype), e.g. IgG",
+                value = "", placeholder = "\u226415 chars"),
+      conditionalPanel(
+        condition = sprintf("input['%s'] == 'xponent'", ns("format_id")),
+        selectInput(ns("mfi_source"),
+                    label = tagList("MFI source",
+                                    help_icon("import.bead.xponent.mfi_source", ns)),
+                    choices  = xponent_mfi_choices(),
+                    selected = XPONENT_DEFAULT_MFI_SOURCE),
+        uiOutput(ns("mfi_source_info")))
+    )
   }
 )
