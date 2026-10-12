@@ -13,7 +13,9 @@
 #   ISPI_COMPUTE_URL                 the "default" clone (today's only pair)
 #   ISPI_COMPUTE_API_KEY
 #   ISPI_COMPUTE_URL__<SUFFIX>       an additional clone, e.g. __CLONE_B
-#   ISPI_COMPUTE_API_KEY__<SUFFIX>   matching key for that SAME <SUFFIX>
+#   ISPI_COMPUTE_API_KEY__<SUFFIX>   matching key for that SAME <SUFFIX>;
+#                                    optional -- if unset/blank the clone uses
+#                                    ISPI_COMPUTE_API_KEY (shared secret)
 # <SUFFIX> is matched verbatim between the URL/key pair (case-sensitive, as
 # env var names are); the cascade LABEL used to select it is
 # lower-case(<SUFFIX>) with "-" normalized to "_", so a `compute_cluster`
@@ -50,7 +52,11 @@ compute_cluster_registry <- function() {
         label, vn), call. = FALSE)
       next
     }
-    reg[[label]] <- list(base_url = base_url, api_key = Sys.getenv(key_var), label = label)
+    # A clone with no key of its own shares the default key (clones that reuse
+    # the i-spi-compute SealedSecret, e.g. "sim", need only the URL var).
+    api_key <- Sys.getenv(key_var)
+    if (!nzchar(api_key)) api_key <- Sys.getenv("ISPI_COMPUTE_API_KEY")
+    reg[[label]] <- list(base_url = base_url, api_key = api_key, label = label)
   }
   reg
 }

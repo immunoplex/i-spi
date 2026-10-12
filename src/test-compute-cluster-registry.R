@@ -60,7 +60,18 @@ test_that("a suffixed pair registers under its normalized label alongside defaul
   })
 })
 
-test_that("a URL var with no matching key var yields an empty-string key, not an error", {
+test_that("a URL var with no matching key var shares the default key", {
+  .with_clean_env(character(0), {
+    Sys.setenv(ISPI_COMPUTE_URL = "https://host/i-spi-compute",
+               ISPI_COMPUTE_API_KEY = "k1",
+               ISPI_COMPUTE_URL__SIM = "https://host/i-spi-compute-sim")
+    reg <- compute_cluster_registry()
+    expect_equal(reg$sim$base_url, "https://host/i-spi-compute-sim")
+    expect_equal(reg$sim$api_key, "k1")
+  })
+})
+
+test_that("a URL var with no key at all yields an empty-string key, not an error", {
   .with_clean_env(character(0), {
     Sys.setenv(ISPI_COMPUTE_URL__ORPHAN = "https://host-orphan/i-spi-compute")
     reg <- compute_cluster_registry()
