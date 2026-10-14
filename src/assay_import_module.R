@@ -389,7 +389,17 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         message = sprintf("Parsing %d file(s)", n_file),
         detail  = "Reading instrument data\u2026", value = 0.05, {
       tryCatch({
-        rv$raw    <- rdr$parse_raw(input$raw_files, build_opts())
+        # DIAGNOSTIC 1: capture the call stack at the moment parse_raw fails, so
+        # the console shows WHICH function/line did the failing assignment.
+        rv$raw    <- withCallingHandlers(
+          rdr$parse_raw(input$raw_files, build_opts()),
+          error = function(e) {
+            cat("[assay_import] DIAG call stack at failure (outermost first):\n")
+            calls <- sys.calls()
+            for (i in seq_along(calls))
+              cat(sprintf("  %2d: %s\n", i,
+                          substr(paste(deparse(calls[[i]]), collapse = " "), 1, 200)))
+          })
         rv$sheets <- NULL; rv$issues <- NULL; rv$committed <- FALSE
         rv$parse_gen <- isolate(rv$parse_gen) + 1L
 
@@ -457,6 +467,9 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         rv$parse_status <- paste("Parse failed:", conditionMessage(e))
         showNotification(rv$parse_status, type = "error", duration = NULL)
         cat("[assay_import] parse ERROR:", conditionMessage(e), "\n")
+        # DIAGNOSTIC 2: the call that raised the error (the failing expression).
+        cat("[assay_import] DIAG failing call:",
+            paste(deparse(conditionCall(e)), collapse = " "), "\n")
       })
       })  # withProgress
     })
