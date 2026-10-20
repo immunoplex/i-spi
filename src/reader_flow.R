@@ -45,6 +45,29 @@
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 
+# ---- Well-label geometry ----------------------------------------------------
+
+# Split a well label ("A01", "a1", "P24") into row letter and column number.
+.flow_well_parts <- function(wells) {
+  w <- toupper(trimws(as.character(wells)))
+  list(row = sub("^([A-Z]+).*$", "\\1", w),
+       col = suppressWarnings(as.integer(sub("^[A-Z]+0*([0-9]+).*$", "\\1", w))))
+}
+
+# TRUE when the labels cannot be a 96-well plate (any row past H or column past
+# 12), i.e. they are positions on FlowJo's combined 384-well read.
+.flow_wells_are_384_grid <- function(wells) {
+  p <- .flow_well_parts(wells)
+  any(nchar(p$row) > 1L | p$row > "H", na.rm = TRUE) || any(p$col > 12L, na.rm = TRUE)
+}
+
+# "A01" -> "A1": the unpadded form the rest of the import uses for 96-well ids.
+.flow_unpad_well <- function(wells) {
+  p <- .flow_well_parts(wells)
+  ifelse(is.na(p$col), as.character(wells), sprintf("%s%d", p$row, p$col))
+}
+
+
 # ---- Stage 1: raw -> preview + template seed --------------------------------
 
 .flow_parse_raw <- function(files, opts) {
@@ -112,7 +135,13 @@
   # build_flowjo_plates_map()/build_flowjo_assay_response_long() (generate_
   # flowjo_layout_template.R) no longer need to convert `well` themselves --
   # it already arrives in 96-well form.
-  flowjo_df$well <- convert_384_to_96_well(flowjo_df$well)
+  #
+  # ONLY when the labels really are 384-grid positions. A native 96-well plate
+  # already carries A01..H12; pushing those through the 384->96 mapping folds
+  # rows A-H onto A-D and columns 1-12 onto 1-6, so four wells collide on every
+  # position and the inventory keeps just the first (a quarter of the plate).
+  flowjo_df$well <- if (.flow_wells_are_384_grid(flowjo_df$well))
+    convert_384_to_96_well(flowjo_df$well) else .flow_unpad_well(flowjo_df$well)
 
   flowjo_long <- pivot_flowjo_long(flowjo_df, dilutions)
 
