@@ -214,7 +214,33 @@ parse_metadata <- function(raw) {
       break
     }
   }
+  tm <- parse_acquisition_times(raw)
+  if (length(tm)) { meta$acquired_first <- min(tm); meta$acquired_last <- max(tm) }
   meta
+}
+
+# Run clock of the plate. Bio-Plex Manager stamps every well record with the time
+# that well was read: an 8-byte little-endian double holding an OLE Automation
+# date (days since 1899-12-30, fractional part = time of day) that sits eight zero
+# bytes after the record's length-prefixed software-version string ("2.1.15").
+# Checked on the PIH .rbx and GBSIGG .srbx samples: 96 stamps per plate, minutes
+# apart, matching the plate names (and, for "Reanalysed" files, the ORIGINAL run,
+# not the reanalysis). The value is the instrument PC's wall-clock time, so it is
+# returned as a POSIXct tagged UTC and meant to be formatted without conversion.
+# Returns POSIXct(0) when no stamp is found.
+parse_acquisition_times <- function(raw) {
+  empty <- as.POSIXct(numeric(0), origin = "1970-01-01", tz = "UTC")
+  pat <- as.raw(c(0x06, utf8ToInt("2.1.15")))
+  hits <- grepRaw(pat, raw, fixed = TRUE, all = TRUE)
+  if (!length(hits)) return(empty)
+  start <- hits + length(pat) + 8L                       # 1-based start of the double
+  start <- start[start + 7L <= length(raw)]
+  if (!length(start)) return(empty)
+  oa <- vapply(start, function(o)
+    readBin(raw[o:(o + 7L)], "double", n = 1L, size = 8L, endian = "little"), numeric(1))
+  oa <- oa[is.finite(oa) & oa > 36526 & oa < 80000]      # 2000-01-01 .. ~2118
+  if (!length(oa)) return(empty)
+  as.POSIXct((oa - 25569) * 86400, origin = "1970-01-01", tz = "UTC")
 }
 
 # ---- stage 4: per-well median FI (quantification section) ----------------- #

@@ -98,12 +98,17 @@ ai_std_reference_serialize <- function(df) {
 #'   instrument_dilution).
 #' @param saved existing reference data.frame(description, dilution) for this
 #'   experiment, or NULL/empty if none yet.
-#' @return data.frame(description, n_wells), one row per distinct description
-#'   still needing an entry. Zero rows means nothing is blocking.
+#' @return data.frame(description, n_wells, has_number), one row per distinct
+#'   description with no 1:N ratio and no saved entry. `has_number` is TRUE when
+#'   the text still carries a standalone whole number (see .ai_std_has_number):
+#'   step 4 will normally read that as the dilution, so the entry here is
+#'   optional. FALSE means the dilution is written nowhere in the text -- it
+#'   has to come from this table (or a constant set in step 4). Zero rows means
+#'   nothing is open.
 ai_std_reference_candidates <- function(inv, specimen_type, saved = NULL,
                                         delimiters = c("_", " ", ",", ";")) {
   empty <- data.frame(description = character(), n_wells = integer(),
-                      stringsAsFactors = FALSE)
+                      has_number = logical(), stringsAsFactors = FALSE)
   if (is.null(inv) || !nrow(inv)) return(empty)
   sel <- !is.na(inv$specimen_type) & inv$specimen_type == specimen_type
   d <- inv[sel, , drop = FALSE]
@@ -138,7 +143,19 @@ ai_std_reference_candidates <- function(inv, specimen_type, saved = NULL,
     counts <- c(counts, sum(in_group))
   }
   if (!length(needs)) return(empty)
-  data.frame(description = needs, n_wells = counts, stringsAsFactors = FALSE)
+  data.frame(description = needs, n_wells = counts,
+             has_number = .ai_std_has_number(needs), stringsAsFactors = FALSE)
+}
+
+# TRUE where the text contains a standalone whole number -- one that is not
+# glued to letters ("STD3") and not part of a decimal ("0.5"). That is exactly
+# what the shape step's auto-proposal picks up as a Standard's dilution
+# ("NIBSCO_100", "Std 3 400"), so these need no entry here. (Whether that number
+# is really the dilution rather than a point index stays visible and
+# correctable in step 4's preview.) Delimiter-agnostic on purpose: this scan
+# runs before the user has chosen delimiters.
+.ai_std_has_number <- function(x) {
+  grepl("(^|[^[:alnum:].])[0-9][0-9,]*($|[^[:alnum:].])", as.character(x))
 }
 
 

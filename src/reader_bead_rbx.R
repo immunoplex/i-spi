@@ -69,8 +69,15 @@
 
 
 # ---- Per-batch reader (mirrors process_xponent_files) -----------------------
-process_rbx_files <- function(upload_df) {
+#
+# `progress`, when given, is function(i, n, fn, stage) called as each plate starts
+# ("reading") and finishes ("done"), so the caller can show plate-level progress
+# through a long batch (a 20-plate batch takes minutes).
+process_rbx_files <- function(upload_df, progress = NULL) {
   cat("Processing", nrow(upload_df), ".rbx file(s)...\n")
+  n_up <- nrow(upload_df)
+  tick <- function(i, fn, stage)
+    if (is.function(progress)) try(progress(i, n_up, fn, stage), silent = TRUE)
 
   # Every downstream identity (source_file, header$plateid, dil$plateid, and
   # therefore ai_well_inventory()'s plate_key) is keyed off this `fn`. If two
@@ -87,6 +94,8 @@ process_rbx_files <- function(upload_df) {
     fn <- if (fn0 %in% seen_names) sprintf("%s (upload %d)", fn0, i) else fn0
     seen_names <<- c(seen_names, fn0)
     cat("  Processing .rbx:", fn, "\n")
+    tick(i, fn, "reading")
+    on.exit(tick(i, fn, "done"), add = TRUE)
     tryCatch({
       doc  <- parse_rbx(fp)
       long <- long_dataframe(doc)
@@ -135,11 +144,16 @@ process_rbx_files <- function(upload_df) {
       src_path <- if (!is.null(meta$source_path) &&
                       grepl("[\\\\/]", meta$source_path)) meta$source_path
                   else file.path("rbx", fn)
-      # acquisition_date: not decoded from the binary. Fall back to the file's
-      # timestamp in an accepted format so validation passes; the user can
-      # correct it in the plate_id sheet during template review.
-      acq <- tryCatch(format(file.info(fp)$mtime, "%d-%b-%Y %H:%M"),
-                      error = function(e) NA_character_)
+      # acquisition_date: when the plate went through the reader, taken from the
+      # per-well run stamps in the binary (the first well read = plate start; see
+      # parse_acquisition_times()). Instrument wall-clock, so no tz conversion.
+      # Only a binary with no stamp falls back to the file's timestamp (an upload's
+      # mtime is the copy/download time, NOT the run) so validation still passes;
+      # the user can correct it in the plate_id sheet during template review.
+      acq <- if (!is.null(meta$acquired_first))
+        format(meta$acquired_first, "%d-%b-%Y %H:%M", tz = "UTC")
+      else tryCatch(format(file.info(fp)$mtime, "%d-%b-%Y %H:%M"),
+                    error = function(e) NA_character_)
       header <- data.frame(
         source_file          = fn,
         file_name            = src_path,
@@ -231,7 +245,7 @@ process_rbx_files <- function(upload_df) {
 
 # ---- Stage 1: raw -> preview + template seed (xPONENT/override shape) --------
 .rbx_parse_raw <- function(files, opts) {
-  p <- process_rbx_files(files)
+  p <- process_rbx_files(files, progress = opts$progress)
   # description_status only feeds the LEGACY branch of build_plates_map (the one
   # taken when no resolved_wells is supplied); "_" is a placeholder there, not a
   # delimiter choice.

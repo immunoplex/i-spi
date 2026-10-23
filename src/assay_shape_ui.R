@@ -42,6 +42,12 @@
 #   * every cached computation is wrapped in tryCatch, so a bad rule shows as a
 #     failed verdict instead of killing the outputs and leaving a dead panel.
 #
+# FAULT C  Ticking "approve" while results were still recomputing started an
+#          endless refresh. Approval is now an event sent by a user click (not
+#          a checkbox input the server also writes to), and the box is only
+#          drawn once the group fully resolves. See the note above
+#          output$approve_ui_<type> and test-assay-shape-approve.R.
+#
 # Public surface (unchanged):
 #   ai_shape_ui(id)
 #   ai_shape_server(id, inventory_rv, enabled = reactive(TRUE), assay = reactive(NA))
@@ -77,6 +83,7 @@ ai_shape_ui <- function(id) {
                        font-size:12px; }
       #@ID@ .ai-chip b { color:#1a73e8; }
       #@ID@ .ai-chip i { color:#5f6368; font-style:normal; font-size:11px; }
+      #@ID@ .ai-approve .shiny-bound-output.recalculating { visibility:hidden; }
       #@ID@ .ai-req  { color:#b02a37; font-weight:600; }
       #@ID@ .ai-ok   { color:#2e7d32; font-weight:600; }
     ', fixed = TRUE))),
@@ -92,20 +99,25 @@ ai_shape_ui <- function(id) {
       uiOutput(ns("type_tabs")),
 
       wellPanel(
-        tags$h4("Parse profile"),
-        tags$p(tags$small(
+        tags$h4("Parse profile",
+                tags$small(style = "font-weight:normal;color:#5f6368;", " (optional)")),
+        tags$p(tags$small(style = "color:#5f6368;",
           "Save these rules to a file and load it for the next batch from the ",
           "same source. Useful when a format does not suit the suggested defaults.")),
-        fluidRow(
-          column(5, textInput(ns("profile_name"), "Profile name",
-                              placeholder = "e.g. Nijmegen bead panel")),
-          column(3, tags$div(style = "margin-top:25px;",
-                    downloadButton(ns("profile_dl"), "Save profile"))),
-          column(4, fileInput(ns("profile_up"), "Load profile",
-                              accept = c(".yaml", ".yml", ".json")))
-        ),
-        textInput(ns("profile_notes"), "Notes (optional)", width = "100%"),
-        uiOutput(ns("profile_report"))
+        uiOutput(ns("profile_report")),     # what a load did stays visible
+        bsCollapse(id = ns("profile_collapse"),
+          bsCollapsePanel(
+            title = "Save or load a parse profile",
+            value = "profile",
+            fluidRow(
+              column(5, textInput(ns("profile_name"), "Profile name",
+                                  placeholder = "e.g. Nijmegen bead panel")),
+              column(3, tags$div(style = "margin-top:25px;",
+                        downloadButton(ns("profile_dl"), "Save profile"))),
+              column(4, fileInput(ns("profile_up"), "Load profile",
+                                  accept = c(".yaml", ".yml", ".json")))
+            ),
+            textInput(ns("profile_notes"), "Notes (optional)", width = "100%")))
       )),
 
       wellPanel(
@@ -394,10 +406,11 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
             tags$h5("4. Result"),
             uiOutput(ns(paste0("verdict_", t))),
             DT::dataTableOutput(ns(paste0("preview_", t))),
-            tags$div(style = "margin-top:8px;",
-              checkboxInput(ns(paste0("approve_", t)),
-                            "These rules are correct for this group \u2014 approve",
-                            value = FALSE)),
+            # The approve box is RENDERED by the server (output approve_ui_<t>),
+            # not a fixed checkbox that the server pushes values into -- see the
+            # note above the approval observer for why that matters.
+            tags$div(class = "ai-approve", style = "margin-top:8px;",
+              uiOutput(ns(paste0("approve_ui_", t)))),
             uiOutput(ns(paste0("rollup_", t)))
           ))
       })
@@ -629,7 +642,14 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
                     if (length(v$missing_components))
                       sprintf(" \u2014 missing %s",
                               paste(v$missing_components, collapse = ", ")) else "",
-                    paste(v$failing_examples, collapse = " ; ")))
+                    paste(v$failing_examples, collapse = " ; ")),
+            # Step 3 is optional, so a Standard whose dilution is written
+            # nowhere can reach this step -- say where to fix it.
+            if (identical(tt, "S") && "DilutionFactor" %in% v$missing_components)
+              tags$div(style = "font-weight:normal;margin-top:4px;",
+                tags$small("The dilution isn't in these descriptions. Enter it in ",
+                           "step 3 (Standards dilution reference), or set a constant ",
+                           "for DilutionFactor above if every standard shares one.")))
       })
 
       output[[paste0("preview_", tt)]] <- DT::renderDataTable({
@@ -734,8 +754,7 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
           set_approved(tt, k, FALSE)
         }
         rules_rv(rs)
-        updateCheckboxInput(session, paste0("approve_", tt), value = FALSE)
-        bump()
+        bump()      # re-renders the approve box (unticked, and hidden until it resolves)
         showNotification(sprintf("Updated %d description group(s) for %s. Reviewing %s.",
                                  length(keys), AI_SPECIMEN_LABELS[[tt]],
                                  if (length(keys) == 1) "this group" else "the first of them"),
@@ -756,29 +775,62 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       # -- approval. Bumps refresh_rv so the whole section recomputes cleanly
       #    from the current rules, which is what the "fully reload" fix needs,
       #    while sel_shape and the selected tab are left untouched (fault B).
-      observeEvent(input[[paste0("approve_", tt)]], {
-        k <- current_shape(); if (is.null(k)) return()
-        want <- isTRUE(input[[paste0("approve_", tt)]])
+      # Approval arrives as an EVENT -- "the user ticked/unticked group K" --
+      # not as a checkbox value, so it is applied idempotently and always to the
+      # group the click was made on (even if the selection has since moved).
+      observeEvent(input[[paste0("approve_evt_", tt)]], {
+        e    <- input[[paste0("approve_evt_", tt)]]
+        k    <- as.character(e$key %||% "")
+        want <- isTRUE(e$want)
+        ss   <- state_of(tt)
+        if (is.null(ss) || !(k %in% ss$shapes$shape_key)) { bump(); return() }
         if (identical(want, is_approved(tt, k))) return()      # no-op guard
-        if (want) {
-          ss <- state_of(tt)
-          v  <- if (is.null(ss)) NULL else ss$verdicts[[k]]
-          if (!isTRUE(v$ok)) {
-            showNotification("This group does not resolve completely yet.",
-                             type = "warning")
-            updateCheckboxInput(session, paste0("approve_", tt), value = FALSE)
-            return()
-          }
+        if (want && !isTRUE(ss$verdicts[[k]]$ok)) {
+          showNotification("This group does not resolve completely yet.",
+                           type = "warning")
+          bump()      # redraw the box so it matches the (unapproved) state
+          return()
         }
         set_approved(tt, k, want)
         bump()
       }, ignoreInit = TRUE)
 
-      # keep the checkbox in step when the selected group changes
-      observeEvent(current_shape(), {
-        k <- current_shape(); if (is.null(k)) return()
-        updateCheckboxInput(session, paste0("approve_", tt),
-                            value = is_approved(tt, k))
+      # -- the approve box itself (FAULT C: endless refresh).
+      #    This used to be a checkbox INPUT that the server kept pushing values
+      #    into with updateCheckboxInput() -- after every apply and on every
+      #    recompute. A browser reports a pushed (or freshly drawn) checkbox
+      #    value back to the server as if the user had clicked it, so a click
+      #    that landed while the server was still recomputing left the two
+      #    sides out of phase: each report flipped the approval, which
+      #    recomputed and pushed/drew the opposite value, which was reported
+      #    back, and so on until the tab was closed. (Redrawing the box with its
+      #    state baked in does NOT fix it -- a newly drawn checkbox reports its
+      #    starting value too; that was tried first and still looped.)
+      #
+      #    So approval is not an input any more. The box is a plain DOM checkbox
+      #    with no Shiny id, and ONLY a user's click (its `onchange`) sends one
+      #    message naming the group and the wanted state. Drawing or redrawing
+      #    it sends nothing, so there is nothing to echo. It is drawn only when
+      #    the group's results are in and every row says yes, and the CSS above
+      #    hides it while a recompute is running.
+      #    Defined after the preview output so it is built after that table.
+      output[[paste0("approve_ui_", tt)]] <- renderUI({
+        ss <- state_of(tt); k <- current_shape()
+        if (is.null(ss) || is.null(k)) return(NULL)
+        v <- ss$verdicts[[k]]
+        if (!isTRUE(v$ok))
+          return(tags$small(style = "color:#5f6368;",
+            "Approval becomes available once every row in the Result table says yes."))
+        evt <- ns(paste0("approve_evt_", tt))
+        tags$div(class = "form-group",
+          tags$div(class = "checkbox",
+            tags$label(
+              tags$input(type = "checkbox", class = "ai-approve-chk", `data-key` = k,
+                         checked = if (isolate(is_approved(tt, k))) NA else NULL,
+                         onchange = sprintf(paste0(
+                           "Shiny.setInputValue('%s', {key: this.getAttribute('data-key'), ",
+                           "want: this.checked, n: Math.random()}, {priority: 'event'});"), evt)),
+              tags$span("These rules are correct for this group — approve"))))
       })
 
       output[[paste0("rollup_", tt)]] <- renderUI({

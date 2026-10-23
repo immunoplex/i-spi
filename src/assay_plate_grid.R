@@ -133,76 +133,106 @@ ai_plate_grid_ui <- function(id) {
 
     # Bulk route: change sample types, the study design and the source/dilution
     # annotation from a spreadsheet instead of well by well (assay_design_map.R).
+    # The optional tools below are rolled up: the heading and a one-line status
+    # stay visible, the controls open on demand. Layout check (the gate) and
+    # the plate grid itself stay open.
     wellPanel(
       tags$h4("Assign the study design from a spreadsheet",
               tags$small(style = "font-weight:normal;color:#5f6368;", " (optional)"),
               help_icon("import.design_map", ns)),
-      tags$p(tags$small(
-        "To change sample types, map the study design onto the plate wells, or ",
-        "annotate sample sources and dilutions for many wells at once: ",
-        tags$b("1."), " download the study design template, ",
-        tags$b("2."), " fill in its ", tags$code("current_plates_map"),
-        " tab (follow the ", tags$code("example_template"), " tab) with ",
-        "sample_type, subject_id, group1, group2, timepoint, source and dilution ",
-        "for each well, then ",
-        tags$b("3."), " upload it here and ",
-        tags$b("4."), " apply it to the loaded data.")),
-      fluidRow(
-        column(4, downloadButton(ns("design_dl"), "Download study design template")),
-        column(8, fileInput(ns("design_file"), NULL, accept = c(".xlsx", ".xls"),
-                            buttonLabel = "Browse…",
-                            placeholder = "Upload the edited design template (.xlsx)"))
-      ),
-      uiOutput(ns("design_status")),
-      DT::dataTableOutput(ns("design_issues")),
-      tags$div(style = "margin-top:8px;",
-        actionButton(ns("design_apply"), "Apply the study design to the loaded data",
-                     class = "btn-primary"),
-        actionButton(ns("design_remove"), "Remove the applied design", class = "btn-sm"))
+      tags$p(tags$small(style = "color:#5f6368;",
+        "Change sample types, map the study design, or annotate sources and ",
+        "dilutions for many wells at once. Skip this if the layout above is already right.")),
+      uiOutput(ns("design_status")),      # applied/staged status stays visible
+      bsCollapse(id = ns("design_collapse"),
+        bsCollapsePanel(
+          title = "Use a study design spreadsheet",
+          value = "design",
+          tags$p(tags$small(
+            tags$b("1."), " download the study design template, ",
+            tags$b("2."), " fill in its ", tags$code("current_plates_map"),
+            " tab (follow the ", tags$code("example_template"), " tab) with ",
+            "sample_type, subject_id, group1, group2, timepoint, source and dilution ",
+            "for each well, then ",
+            tags$b("3."), " upload it here and ",
+            tags$b("4."), " apply it to the loaded data.")),
+          fluidRow(
+            column(4, downloadButton(ns("design_dl"), "Download study design template")),
+            column(8, fileInput(ns("design_file"), NULL, accept = c(".xlsx", ".xls"),
+                                buttonLabel = "Browse…",
+                                placeholder = "Upload the edited design template (.xlsx)"))
+          ),
+          DT::dataTableOutput(ns("design_issues")),
+          tags$div(style = "margin-top:8px;",
+            actionButton(ns("design_apply"), "Apply the study design to the loaded data",
+                         class = "btn-primary"),
+            actionButton(ns("design_remove"), "Remove the applied design", class = "btn-sm"))))
     ),
 
     wellPanel(
-      tags$h4("Edit the selected wells"),
+      tags$h4("Edit the selected wells",
+              tags$small(style = "font-weight:normal;color:#5f6368;", " (optional)")),
+      # What is selected stays visible; the editing controls open on demand.
       textOutput(ns("selection_label")),
-      fluidRow(
-        column(4, selectInput(ns("edit_type"), "Specimen type",
-                              choices = c("(leave unchanged)" = "",
-                                          "X \u2014 test sample"        = "X",
-                                          "S \u2014 standard point"     = "S",
-                                          "B \u2014 blank"              = "B",
-                                          "C \u2014 control"            = "C",
-                                          "(clear \u2014 empty well)"   = "__empty__"))),
-        column(3, textInput(ns("edit_suffix"), "Type index (optional)",
-                            placeholder = "e.g. 3 for S3")),
-        column(5, textInput(ns("edit_desc"), "Description (optional)",
-                            placeholder = "leave blank to keep existing"))
-      ),
-      checkboxInput(ns("edit_all_plates"),
-                    "Apply to the same wells on every plate in the batch", FALSE),
-      checkboxInput(ns("edit_matching"),
-                    "Apply to every well in the batch whose description matches the selected well",
-                    FALSE),
-      actionButton(ns("apply_edit"), "Apply to selection", class = "btn-primary"),
-      actionButton(ns("clear_sel"), "Clear selection", class = "btn-sm"),
-      actionButton(ns("undo_edit"), "Undo last edit", class = "btn-sm")
+      bsCollapse(id = ns("edit_collapse"),
+        bsCollapsePanel(
+          title = "Change the specimen type or description of the selected wells",
+          value = "edit",
+          fluidRow(
+            column(4, selectInput(ns("edit_type"), "Specimen type",
+                                  choices = c("(leave unchanged)" = "",
+                                              "X \u2014 test sample"        = "X",
+                                              "S \u2014 standard point"     = "S",
+                                              "B \u2014 blank"              = "B",
+                                              "C \u2014 control"            = "C",
+                                              "(clear \u2014 empty well)"   = "__empty__"))),
+            column(3, textInput(ns("edit_suffix"), "Type index (optional)",
+                                placeholder = "e.g. 3 for S3")),
+            column(5, textInput(ns("edit_desc"), "Description (optional)",
+                                placeholder = "leave blank to keep existing"))
+          ),
+          checkboxInput(ns("edit_all_plates"),
+                        "Apply to the same wells on every plate in the batch", FALSE),
+          checkboxInput(ns("edit_matching"),
+                        "Apply to every well in the batch whose description matches the selected well",
+                        FALSE),
+          actionButton(ns("apply_edit"), "Apply to selection", class = "btn-primary"),
+          actionButton(ns("clear_sel"), "Clear selection", class = "btn-sm"),
+          actionButton(ns("undo_edit"), "Undo last edit", class = "btn-sm")))
     ),
 
     conditionalPanel(
       condition = sprintf("output['%s']", ns("has_proposals")),
       wellPanel(
-        tags$h4("Suggested specimen types"),
-        tags$p(tags$small(
-          "These wells are typed as samples but look like blanks, standards or ",
-          "controls. Select the rows you agree with and apply them. Nothing is ",
-          "changed until you do.")),
-        DT::dataTableOutput(ns("proposals")),
-        tags$div(style = "margin-top:8px;",
-          actionButton(ns("apply_proposals"), "Apply selected suggestions",
-                       class = "btn-primary"),
-          actionButton(ns("apply_all_proposals"), "Apply all high-confidence",
-                       class = "btn-sm"))
+        tags$h4("Suggested specimen types",
+                tags$small(style = "font-weight:normal;color:#5f6368;", " (optional)")),
+        uiOutput(ns("proposal_summary")),   # the count stays visible
+        bsCollapse(id = ns("proposals_collapse"),
+          bsCollapsePanel(
+            title = "Review the suggestions",
+            value = "proposals",
+            tags$p(tags$small(
+              "These wells are typed as samples but look like blanks, standards or ",
+              "controls. Select the rows you agree with and apply them. Nothing is ",
+              "changed until you do.")),
+            DT::dataTableOutput(ns("proposals")),
+            tags$div(style = "margin-top:8px;",
+              actionButton(ns("apply_proposals"), "Apply selected suggestions",
+                           class = "btn-primary"),
+              actionButton(ns("apply_all_proposals"), "Apply all high-confidence",
+                           class = "btn-sm"))))
       )
     ),
+
+    # A DataTable drawn while its panel was closed has no width to measure, so
+    # its header and body drift apart once the panel is opened. Re-measure every
+    # visible table whenever any collapse panel finishes opening.
+    tags$script(HTML(
+      "$(document).on('shown.bs.collapse', function() {
+         if ($.fn.dataTable) {
+           $($.fn.dataTable.tables({visible: true, api: false})).DataTable().columns.adjust();
+         }
+       });")),
 
     wellPanel(
       tags$h4("Layout check"),
@@ -433,7 +463,8 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
       d <- plate_rows()
       shown <- paste(utils::head(s, 12), collapse = ", ")
       if (length(s) > 12) shown <- paste0(shown, sprintf(" ... (+%d more)", length(s) - 12))
-      sprintf("%d well(s) selected on plate %s: %s", length(s), current_plate(), shown)
+      sprintf("%d well(s) selected on plate %s: %s. Open the panel below to change them.",
+              length(s), current_plate(), shown)
     })
 
     # ── apply an edit ────────────────────────────────────────────────────────
@@ -618,6 +649,15 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
 
     output$has_proposals <- reactive(!is.null(proposals()))
     outputOptions(output, "has_proposals", suspendWhenHidden = FALSE)
+
+    output$proposal_summary <- renderUI({
+      p <- proposals(); req(p)
+      hi <- sum(p$confidence == "high")
+      tags$p(style = "color:#8a6d3b;margin:4px 0;",
+        sprintf("%d well(s) typed as samples look like blanks, standards or controls (%d high-confidence). ",
+                nrow(p), hi),
+        tags$small("Optional: open the list to review them; nothing changes unless you apply them."))
+    })
 
     output$proposals <- DT::renderDataTable({
       p <- proposals(); req(p)

@@ -9,6 +9,12 @@
 # label -> dilution mapping, entered once per experiment, remembered for every
 # later batch in that same experiment via the settings cascade.
 #
+# OPTIONAL: this step never blocks the import. Its scan only recognises a 1:N
+# ratio, so a lab that writes the dilution into the description as a plain
+# number would otherwise be stopped here for no reason. The real gate is the
+# shape step (assay_shape_ui.R), which will not approve a Standard whose
+# dilution it cannot resolve from the text, the instrument, or this table.
+#
 # Deliberately small. This is a stopgap entry point for the wells parsing
 # genuinely could not resolve, not a general-purpose editor -- it shows only
 # the distinct descriptions still needing a value and gets out of the way
@@ -27,7 +33,12 @@
 #     refresh: optional reactive whose changing value (any change, any type)
 #       forces a reload of the saved reference from the DB -- for a caller
 #       that writes to it from outside this module (e.g. an auto-seed step).
-#     returns list(ready = reactive(lgl), reference = reactive(data.frame or NULL))
+#     returns list(ready = reactive(lgl), reference = reactive(data.frame or NULL),
+#                  n_required = reactive(int))
+#       n_required = how many Standards descriptions have NO number written in
+#       their text, so only this step can supply their dilution. 0 means the
+#       step is genuinely optional; > 0 turns the step heading to "needs your
+#       input". `ready` never depends on it -- step 4 is the gate.
 #
 # Depends on assay_std_reference_rules.R (pure logic), assay_well_inventory.R
 # (AI_SPECIMEN_LABELS), settings_cascade_access.R (resolve_settings_scoped,
@@ -45,27 +56,37 @@ ai_std_reference_ui <- function(id) {
     # not here -- avoids a duplicate icon on its own line below this module's
     # own content.
     uiOutput(ns("status")),
+    # Rolled up by default: the status line above is all most users need. The
+    # entry table only matters to a user whose descriptions don't carry the
+    # dilution, and that user opens it deliberately. (Shiny holds the outputs
+    # inside a closed panel until it is opened, so the table isn't rendered
+    # for people who never use it.)
     conditionalPanel(
       condition = sprintf("output['%s']", ns("has_candidates")),
-      DT::dataTableOutput(ns("table")),
-      tags$div(style = "margin-top:8px;",
-        actionButton(ns("save"), "Save dilution reference", class = "btn-primary")),
-      tags$p(tags$small(style = "color:#5f6368;",
-        "These wells' dilution could not be read from the instrument file or ",
-        "the Description text. Enter the true dilution for each — it is ",
-        "remembered for the rest of this experiment, so a later batch won't ",
-        "ask again for a description already covered.")),
-      bsCollapse(id = ns("paste_collapse"),
+      bsCollapse(id = ns("manual_collapse"),
         bsCollapsePanel(
-          title = "Or paste a two-column table from a spreadsheet",
+          title = "Enter standard dilutions manually (optional)",
+          value = "manual",
+          DT::dataTableOutput(ns("table")),
+          tags$div(style = "margin-top:8px;",
+            actionButton(ns("save"), "Save dilution reference", class = "btn-primary")),
           tags$p(tags$small(style = "color:#5f6368;",
-            "Copy a Standard point / Dilution factor table out of Excel (a header row ",
-            "is fine, it's detected and skipped) and paste it below. Rows are matched to ",
-            "the table above by description text first, then by the trailing number if the ",
-            "exact text differs (e.g. a pasted “STD_1” matches “S1”).")),
-          textAreaInput(ns("paste_box"), NULL, rows = 4,
-                       placeholder = "STD_1\t50\nSTD_2\t125\nSTD_3\t313\n..."),
-          actionButton(ns("paste_apply"), "Fill dilutions from pasted table", class = "btn-sm"))
+            "Enter the true dilution for each description. It is remembered for ",
+            "the rest of this experiment, so a later batch won't ask again for a ",
+            "description already covered.")),
+          bsCollapse(id = ns("paste_collapse"),
+            bsCollapsePanel(
+              title = "Or paste a two-column table from a spreadsheet",
+              tags$p(tags$small(style = "color:#5f6368;",
+                "Copy a Standard point / Dilution factor table out of Excel (a header row ",
+                "is fine, it's detected and skipped) and paste it below. Rows are matched to ",
+                "the table above by description text first, then by the trailing number if the ",
+                "exact text differs (e.g. a pasted “STD_1” matches “S1”).")),
+              textAreaInput(ns("paste_box"), NULL, rows = 4,
+                           placeholder = "STD_1\t50\nSTD_2\t125\nSTD_3\t313\n..."),
+              actionButton(ns("paste_apply"), "Fill dilutions from pasted table", class = "btn-sm"))
+          )
+        )
       )
     )
   )
@@ -125,16 +146,24 @@ ai_std_reference_server <- function(id, inventory_rv, pool, scope,
                error = function(e) {
                  warning(paste("std reference candidate scan failed:", conditionMessage(e)))
                  data.frame(description = character(), n_wells = integer(),
-                           stringsAsFactors = FALSE)
+                           has_number = logical(), stringsAsFactors = FALSE)
                })
     })
 
+    # Which candidates carry no number at all (their dilution is written
+    # nowhere in the text), vs. which have one that step 4 will read. Tolerates
+    # a candidate frame without the column (disabled / failed scan).
+    has_num <- function(cd)
+      if ("has_number" %in% names(cd)) cd$has_number else rep(FALSE, nrow(cd))
+
     # staged edits: candidates + an empty Dilution column the user fills in.
     # Reset whenever the candidate set itself changes (new batch, or just
-    # saved -- either way whatever was staged no longer applies).
+    # saved -- either way whatever was staged no longer applies). Rows that
+    # genuinely need a value (no number in the text) are listed first.
     staged_rv <- reactiveVal(NULL)
     observeEvent(candidates(), {
       cd <- candidates()
+      if (nrow(cd)) cd <- cd[order(has_num(cd)), , drop = FALSE]
       staged_rv(data.frame(
         description = cd$description, n_wells = cd$n_wells,
         dilution    = rep(NA_real_, nrow(cd)),
@@ -237,15 +266,44 @@ ai_std_reference_server <- function(id, inventory_rv, pool, scope,
         return(tags$div(style = "color:#2e7d32;font-weight:600;",
           sprintf("%s dilution: nothing needs manual entry.",
                   AI_SPECIMEN_LABELS[[specimen_type]] %||% specimen_type)))
-      tags$div(style = "color:#b02a37;font-weight:600;",
-        sprintf("%d %s description(s) need a dilution entered before continuing.",
-                nrow(cd), label))
+      # Two different situations share this list, and the user needs to be able
+      # to tell them apart at a glance:
+      #   no number anywhere in the text -> the dilution can only come from this
+      #     table (or a constant in step 4): say so, in red.
+      #   a plain number in the text     -> step 4 reads it as the dilution (the
+      #     scan only recognises a 1:N ratio, so these are listed here although
+      #     they resolve fine): optional, in amber.
+      n_req <- sum(!has_num(cd)); n_opt <- sum(has_num(cd))
+      tagList(
+        if (n_req > 0)
+          tags$div(style = "color:#b02a37;",
+            tags$b(sprintf("Needs your input: %d %s description(s) have no dilution written in the text.",
+                           n_req, label)),
+            tags$br(),
+            tags$small("There is no 1:N ratio and no number to read. Open the panel ",
+                       "below and enter them (listed first), or set a constant in step 4.")),
+        if (n_opt > 0)
+          tags$div(style = "color:#8a6d3b;", if (n_req > 0) tags$div(style = "margin-top:6px;"),
+            tags$b(sprintf("Optional: %d %s description(s) carry the dilution as a plain number.",
+                           n_opt, label)),
+            tags$br(),
+            tags$small("Step 4 reads that number as the dilution (for example ",
+                       "“STD3 100”), so you can skip this step unless the preview there looks wrong.")))
     })
 
-    ready <- reactive({
-      if (!isTRUE(enabled())) return(FALSE)
-      nrow(candidates()) == 0L
+    # How many descriptions have NO number in the text and so can only be
+    # resolved here -- drives the step heading's "optional" / "needs input" badge.
+    n_required <- reactive({
+      if (!isTRUE(enabled())) return(0L)
+      cd <- candidates()
+      if (!nrow(cd)) 0L else as.integer(sum(!has_num(cd)))
     })
+
+    # The step never holds the import back. Once step 2 is confirmed this is
+    # ready whether or not anything was entered; step 4's own gate is what
+    # rejects a Standard whose dilution is still unresolved (and says where to
+    # fix it).
+    ready <- reactive(isTRUE(enabled()))
 
     reference <- reactive({
       df <- saved_rv()
@@ -253,6 +311,6 @@ ai_std_reference_server <- function(id, inventory_rv, pool, scope,
       cbind(specimen_type = specimen_type, df, stringsAsFactors = FALSE)
     })
 
-    list(ready = ready, reference = reference)
+    list(ready = ready, reference = reference, n_required = n_required)
   })
 }

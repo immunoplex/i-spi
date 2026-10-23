@@ -4,8 +4,9 @@
 # ONE assay-agnostic Shiny module implementing the import standard:
 #   1 upload raw files
 #   2 CONFIRM THE LAYOUT        (plate grid: specimen type + description per well)
-#   3 STANDARDS DILUTION REFERENCE (label -> dilution, for wells neither the
-#                                   instrument file nor the text can resolve)
+#   3 STANDARDS DILUTION REFERENCE (OPTIONAL: label -> dilution, for wells
+#                                   neither the instrument file nor the text
+#                                   can resolve; never blocks the import)
 #   4 CONFIGURE THE DESCRIPTION (delimiters, shape groups, component bindings)
 #   5 download layout template
 #   6 upload completed template -> validate (issues shown + highlighted)
@@ -19,11 +20,11 @@
 # workbook, so each new submitter cost a round of trial and error. The
 # pre-processor shows resolved values as the choices are made.
 #
-# All three new steps GATE what follows: the template download stays disabled
-# until every plate has samples, standards and blanks, every Standards well
-# the instrument/text cannot resolve has a reference dilution entered, AND
-# every description shape of every present specimen type is bound and
-# approved. A descriptor that omits `preprocess` skips all three and behaves
+# Steps 2 and 4 GATE what follows: the template download stays disabled until
+# every plate has samples, standards and blanks AND every description shape of
+# every present specimen type is bound and approved (which includes resolving
+# each Standard's dilution -- from the text, the instrument, or the optional
+# step-3 table). A descriptor that omits `preprocess` skips all three and behaves
 # exactly as before.
 #
 # Depends on: assay_import_contract.R (readers/registry/validator),
@@ -120,6 +121,7 @@ assay_import_ui <- function(id, descriptor) {
           ai_plate_grid_ui(ns("grid"))),
         .import_step_box(3,
           tags$h4("3. Standards dilution reference",
+                  uiOutput(ns("stdref_badge"), inline = TRUE),
                   help_icon("compute.import.dilution_source_precedence", ns)),
           ai_std_reference_ui(ns("stdref"))),
         .import_step_box(4,
@@ -236,6 +238,14 @@ assay_import_server <- function(id, pool, descriptor, scope) {
                                       specimen_type = "S",
                                       refresh = reactive(rv$raw),
                                       design = grid$design)
+    # Step 3 is optional unless some Standard's dilution is written nowhere in
+    # its text; the heading says which, so the user isn't left guessing.
+    output$stdref_badge <- renderUI({
+      if (isTRUE(stdref$n_required() > 0L))
+        tags$small(style = "color:#b02a37;font-weight:600;", " — needs your input")
+      else
+        tags$small(style = "font-weight:normal;color:#5f6368;", " (optional)")
+    })
     shape  <- ai_shape_server("shape", inventory_rv,
                              enabled   = reactive(isTRUE(grid$ready()) && isTRUE(stdref$ready())),
                              assay     = reactive(descriptor$assay),
@@ -374,10 +384,29 @@ assay_import_server <- function(id, pool, descriptor, scope) {
       # click cannot queue a duplicate parse) and withProgress() names the phase
       # that is running.
       #
-      # The stages are honest about their granularity: parse_raw() is one call
-      # over the whole batch -- the readers loop files internally -- so there is
-      # no per-file hook to report against. What the user gets is WHICH PHASE is
-      # running, which is what answers "has it crashed".
+      # parse_raw() is one call over the whole batch, so a reader that loops its
+      # files (currently .rbx, where a 20-plate batch takes minutes) is handed a
+      # `progress(i, n, file, stage)` callback through opts$progress; the bar
+      # then advances plate by plate across 5%-65% with "Plate i of n: <file>"
+      # and a time-remaining estimate. Readers that ignore it just show the
+      # phase text, which still answers "has it crashed".
+      t_parse0 <- Sys.time()
+      parse_progress <- function(i, n, fn, stage) {
+        lo <- 0.05; span <- 0.60
+        done <- if (identical(stage, "done")) i else i - 1L
+        eta <- ""
+        if (done >= 1L && done < n) {
+          el  <- as.numeric(difftime(Sys.time(), t_parse0, units = "secs"))
+          rem <- el / done * (n - done)
+          eta <- if (rem >= 90) sprintf(" — about %d min left", as.integer(ceiling(rem / 60)))
+                 else sprintf(" — about %d sec left", as.integer(ceiling(rem / 5) * 5))
+        }
+        setProgress(
+          value  = lo + span * done / n,
+          detail = if (identical(stage, "done"))
+            sprintf("Finished plate %d of %d: %s%s", i, n, fn, eta)
+          else sprintf("Reading plate %d of %d: %s%s", i, n, fn, eta))
+      }
       shinyjs::disable("parse_btn")
       updateActionButton(session, "parse_btn", label = "Parsing\u2026")
       on.exit({
@@ -392,7 +421,8 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         # DIAGNOSTIC 1: capture the call stack at the moment parse_raw fails, so
         # the console shows WHICH function/line did the failing assignment.
         rv$raw    <- withCallingHandlers(
-          rdr$parse_raw(input$raw_files, build_opts()),
+          rdr$parse_raw(input$raw_files,
+                        modifyList(build_opts(), list(progress = parse_progress))),
           error = function(e) {
             cat("[assay_import] DIAG call stack at failure (outermost first):\n")
             calls <- sys.calls()
@@ -492,7 +522,7 @@ assay_import_server <- function(id, pool, descriptor, scope) {
         return(tags$div(style = "color:#2e7d32;font-weight:600;margin-bottom:8px;",
                         "Layout and description rules confirmed."))
       tags$div(style = "color:#b02a37;margin-bottom:8px;",
-        "Finish steps 2 and 3 first. The template is built from what you ",
+        "Finish the layout (step 2) and the description rules (step 4) first. The template is built from what you ",
         "confirm there, so downloading now would only produce a workbook you ",
         "have to redo.")
     })
