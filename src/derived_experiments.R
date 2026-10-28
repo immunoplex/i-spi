@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Section 11.7: consolidated home for the two DERIVED-EXPERIMENT generators that
 # surface on the Data tab (buttons placed by data_tab_module.R uiOutputs):
-#   * ELISA wavelength subtraction    -> new "<exp>|D" experiment (450 - 620)
+#   * ELISA wavelength subtraction    -> moved to wavelength_subtraction_module.R (Data > Raw inputs)
 #   * split by nominal sample dilution -> single-dilution curve sets (same exp)
 #
 # Consolidated from elisa_wavelength_subtraction.R, split_plates_nominal_sample_
@@ -16,8 +16,6 @@
 # =============================================================================
 
 
-# subtract_wavelength_mfi() (the R merge + row-by-row VALUES path) was removed
-# in favour of the set-based subtract_wavelength_sql() below.
 
 get_insertable_cols <- function(conn, schema, table_name) {
   col_sql <- glue::glue("
@@ -72,63 +70,10 @@ insert_delta_sql <- function(conn, schema, table_name, df) {
   
   DBI::dbExecute(conn, sql)
 }
+# ELISA wavelength subtraction now lives on Data > Raw inputs > Subtract Wavelengths
+# (wavelength_subtraction_module.R): user-named experiment, per-plate and per-wavelength
+# choices, replacing the old single-plate Plates-tab button and its '<exp>|D' SQL.
 
-# Set-based ELISA wavelength subtraction for ONE xmap_* table. Replaces the old
-# R merge + insert_delta_sql VALUES path with a single INSERT ... SELECT self-
-# join: pair low vs high wavelength on the natural keys, response = (low - high),
-# write a "<exp>|D" experiment. Column list is resolved dynamically
-# (get_insertable_cols) and the response column is the first of assay_response /
-# antibody_mfi the table actually has, so it adapts across assay types and the
-# antibody_mfi -> assay_response migration. Runs on the passed (transaction) conn.
-subtract_wavelength_sql <- function(conn, schema, table_name,
-                                    study_accession, experiment_accession, plate,
-                                    nominal_sample_dilution, wavelengths, join_keys) {
-  wl_parts <- strsplit(wavelengths, "\\|")[[1]]
-  wl_low   <- as.character(min(as.numeric(wl_parts)))
-  wl_high  <- as.character(max(as.numeric(wl_parts)))
-  delta_experiment <- paste0(experiment_accession, "|D")
-
-  cols <- get_insertable_cols(conn, schema, table_name)
-  resp <- intersect(c("assay_response", "antibody_mfi", "mfi"), cols)
-  if (length(resp) == 0) {
-    cat("  [wsub-sql] no response column in", table_name, "-- skipped\n"); return(0L)
-  }
-  resp <- resp[1]
-  qs <- function(x) DBI::dbQuoteString(conn, x)
-
-  sel <- vapply(cols, function(cn) {
-    if (identical(cn, resp))                        sprintf("(lo.%s - hi.%s)", cn, cn)
-    else if (identical(cn, "wavelength"))           "'delta'"
-    else if (identical(cn, "experiment_accession")) as.character(qs(delta_experiment))
-    else                                            paste0("lo.", cn)
-  }, character(1), USE.NAMES = FALSE)
-
-  jk <- intersect(join_keys, cols)
-  on_clause <- paste(sprintf("lo.%s IS NOT DISTINCT FROM hi.%s", jk, jk),
-                     collapse = "\n            AND ")
-
-  has_nsd <- ("nominal_sample_dilution" %in% cols) &&
-             !is.null(nominal_sample_dilution) && !is.na(nominal_sample_dilution)
-  filt <- function(al) {
-    s <- sprintf("%s.study_accession = %s AND %s.experiment_accession = %s AND %s.plate = %s",
-                 al, qs(study_accession), al, qs(experiment_accession), al, qs(as.character(plate)))
-    if (has_nsd) s <- paste0(s, sprintf(" AND %s.nominal_sample_dilution = %s",
-                                         al, qs(as.character(nominal_sample_dilution))))
-    s
-  }
-  where <- sprintf("%s AND lo.wavelength = %s\n       AND %s AND hi.wavelength = %s",
-                   filt("lo"), qs(wl_low), filt("hi"), qs(wl_high))
-
-  sql <- sprintf(
-    "INSERT INTO %s.%s (%s)\n    SELECT %s\n      FROM %s.%s lo\n      JOIN %s.%s hi\n        ON %s\n     WHERE %s",
-    schema, table_name, paste(cols, collapse = ", "),
-    paste(sel, collapse = ",\n           "),
-    schema, table_name, schema, table_name, on_clause, where)
-
-  n <- DBI::dbExecute(conn, sql)
-  cat("  [wsub-sql]", table_name, "->", n, "delta rows (", wl_low, "-", wl_high, ")\n")
-  n
-}
 
 
 
@@ -308,91 +253,8 @@ register_derived_curves <- function(conn, project, study, experiment) {
 }
 
 
-# Verbatim ELISA subtraction body (moved from ui_handler.R). Reads the selected
-# header row + stored_plates_data from the server env; all DB writes go through
-# the passed `conn` so the caller can run it inside a transaction.
-perform_wavelength_subtraction <- function(conn) {
-  hr    <- stored_plates_data$stored_header[input$stored_header_rows_selected, ]
-  study <- hr$study_accession
-  exp   <- hr$experiment_accession
-  plate <- hr$plate
-  nsd   <- hr$nominal_sample_dilution
-  wls   <- hr$wavelengths
-  delta_experiment <- paste0(exp, "|D")
-
-  scb_keys  <- c("project_id", "study_accession", "experiment_accession", "well",
-                 "sampleid", "antigen", "dilution", "feature", "source", "stype",
-                 "nominal_sample_dilution", "plate")
-  samp_keys <- c("project_id", "study_accession", "experiment_accession", "well",
-                 "sampleid", "patientid", "timeperiod", "antigen", "feature",
-                 "stype", "dilution")
-
-  showNotification(id = "subtract_wavelength_notify",
-                   HTML("Subtracting wavelengths<span class='dots'>"),
-                   duration = NULL, type = "message")
-
-  # Set-based subtraction (INSERT ... SELECT) for the four data tables.
-  subtract_wavelength_sql(conn, "madi_results", "xmap_standard", study, exp, plate, nsd, wls, scb_keys)
-  subtract_wavelength_sql(conn, "madi_results", "xmap_control",  study, exp, plate, nsd, wls, scb_keys)
-  subtract_wavelength_sql(conn, "madi_results", "xmap_buffer",   study, exp, plate, nsd, wls, scb_keys)
-  subtract_wavelength_sql(conn, "madi_results", "xmap_sample",   study, exp, plate, nsd, wls, samp_keys)
-
-  # Delta header (single row): carried from the selected header, marked |D.
-  delta_header <- hr
-  delta_header$experiment_accession <- delta_experiment
-  delta_header$wavelengths          <- "delta"
-  insert_delta_sql(conn, "madi_results", "xmap_header", delta_header)
-
-  # Copy antigen-family settings base -> |D (only rows not already present).
-  antigen_family_base <- DBI::dbGetQuery(conn, glue::glue("
-    SELECT * FROM madi_results.xmap_antigen_family
-    WHERE study_accession      = '{study}'
-      AND experiment_accession = '{exp}'
-      AND project_id           = {hr$project_id}
-      AND NOT EXISTS (
-        SELECT 1 FROM madi_results.xmap_antigen_family tgt
-        WHERE tgt.study_accession      = '{study}'
-          AND tgt.experiment_accession = '{delta_experiment}'
-          AND tgt.antigen              = xmap_antigen_family.antigen
-          AND tgt.project_id           = {hr$project_id}
-      );
-  "))
-  if (nrow(antigen_family_base) > 0) {
-    antigen_family_base$experiment_accession <- delta_experiment
-    antigen_family_base <- antigen_family_base[, !names(antigen_family_base) %in% "xmap_antigen_family_id"]
-    insert_delta_sql(conn, "madi_results", "xmap_antigen_family", antigen_family_base)
-    cat("antigen family rows copied to delta experiment:", nrow(antigen_family_base), "\n")
-  } else {
-    cat("no antigen family rows to copy\n")
-  }
-
-  removeNotification(id = "subtract_wavelength_notify")
-  cat("all delta inserts complete\n")
-}
 
 
-## ELISA wavelength subtraction -- transactional + curve_lookup + refresh
-observeEvent(input$wavelength_subtraction, {
-  hr <- stored_plates_data$stored_header[input$stored_header_rows_selected, ]
-  ok <- tryCatch({
-    pool::poolWithTransaction(db_pool, function(conn) {
-      perform_wavelength_subtraction(conn)
-      register_derived_curves(conn, project = hr$project_id,
-                              study = hr$study_accession,
-                              experiment = paste0(hr$experiment_accession, "|D"))
-    })
-    TRUE
-  }, error = function(e) {
-    removeNotification(id = "subtract_wavelength_notify")
-    showNotification(paste("Subtraction failed (rolled back):", conditionMessage(e)),
-                     type = "error", duration = NULL); FALSE
-  })
-  if (isTRUE(ok)) {
-    reload_trigger(reload_trigger() + 1)
-    refresh_experiment_trigger(refresh_experiment_trigger() + 1)
-    showNotification("Wavelength subtraction complete; curves registered.", type = "message")
-  }
-})
 
 ## Split by nominal sample dilution -- transactional + curve_lookup + refresh
 observeEvent(input$split_plates_nominal, {
@@ -429,14 +291,6 @@ output$split_plate_nominal_UI <- renderUI({
   }
 })
 
-output$wavelength_subtraction_UI <- renderUI({
-  req(input$stored_header_rows_selected)
-  if ((show_wavelength_subtraction())) {
-    actionButton("wavelength_subtraction", "Subtract Wavelengths")
-  } else {
-    NULL
-  }
-})
 
 ## --- Eligibility: on plate selection, decide which buttons to show ---
 observeEvent(input$stored_header_rows_selected, {
@@ -486,30 +340,6 @@ observeEvent(input$stored_header_rows_selected, {
     split_by_nominal_dilution(FALSE)
   }
 
-  ## wavelength check
-  wl_parts <- strsplit(selected_studyexpplate$wavelengths, "\\|")[[1]]
-  if (length(wl_parts) == 2) {
-    delta_experiment <- paste0(input$readxMap_experiment_accession, "|D")
-
-    already_subtracted_sql <- glue::glue("
-      SELECT EXISTS (
-        SELECT 1
-        FROM madi_results.xmap_header
-        WHERE study_accession     = '{input$readxMap_study_accession}'
-          AND experiment_accession = '{delta_experiment}'
-          AND plate_id              = '{plate_id}'
-      ) AS already_subtracted;
-    ")
-    already_subtracted <- DBI::dbGetQuery(conn, already_subtracted_sql)$already_subtracted
-
-    if (!already_subtracted) {
-      show_wavelength_subtraction(TRUE)
-    } else {
-      show_wavelength_subtraction(FALSE)
-    }
-  } else {
-    show_wavelength_subtraction(FALSE)
-  }
 
 
 

@@ -1224,6 +1224,8 @@ server <- function(input, output, session) {
       source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
       source("assay_response.R",     local = TRUE)
       source("data_dictionary.R",    local = TRUE)
+      source("replicates_module.R",  local = TRUE)   # Data > Raw inputs > Replicates (before the Data tab, which hosts it)
+      source("wavelength_subtraction_module.R", local = TRUE)  # Data > Raw inputs > Subtract Wavelengths (needs replicates_module.R)
       source("data_tab_module.R",    local = TRUE)
       source("delete_study_components_ui.R", local = TRUE)
       source("delete_study_components.R",    local = TRUE)

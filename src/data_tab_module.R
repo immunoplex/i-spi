@@ -121,38 +121,53 @@
   calib_weights_fit = "data.results.precision_weights_fit"
 )
 
-dataTabUI <- function() {
-  # Flat module (see file header) -- no NS, so help_icon()'s click event is
-  # unnamespaced; ui_handler.R's single shared observeEvent(input$help_show, ...)
-  # handles it (and every other flat module's help_icon(), e.g.
-  # delete_study_components_ui.R's -- one observer for the whole flat scope).
+# One table's tab: caption from the data dictionary, the DT, CSV download, and
+# (Plates only) the plate-ops UI hooks so that slice keeps working untouched.
+# Flat module (see file header) -- no NS, so help_icon()'s click event is
+# unnamespaced; ui_handler.R's single shared observeEvent(input$help_show, ...)
+# handles it (and every other flat module's help_icon(), e.g.
+# delete_study_components_ui.R's -- one observer for the whole flat scope).
+.data_tab_table_panel <- function(tb) {
   ns <- function(x) x
+  doc <- table_doc(tb)
+  extra <- if (identical(tb, "xmap_header")) shiny::tagList(
+    shiny::uiOutput("header_actions"),
+    shiny::uiOutput("split_plate_nominal_UI")
+  ) else NULL
+  help_id <- .DATA_TAB_HELP_ID[[tb]]
+  shiny::tabPanel(
+    title = doc$label,
+    shiny::div(class = "help-block", style = "margin:8px 0;",
+      shiny::strong(doc$what),
+      if (!is.null(help_id)) help_icon(help_id, ns),
+      shiny::br(),
+      shiny::tags$small(sprintf("Grain: %s", doc$grain))),
+    shinycssloaders::withSpinner(
+      DT::dataTableOutput(.dt_output_id(tb)), type = 4, color = "#337ab7"),
+    shiny::div(style = "margin-top:6px;",
+      shiny::downloadButton(paste0("dl_", tb), "Download CSV", class = "btn-xs")),
+    extra
+  )
+}
+
+# Raw inputs tabset: the five raw tables, then (only when the selected experiment
+# was read at 2+ wavelengths) "Subtract Wavelengths", then "Replicates".
+# Rendered by the SERVER (output$raw_inputs_tabset) so the optional tab is part
+# of the UI itself and survives dynamic_data_ui re-rendering the Data tab.
+.data_tab_raw_tabset <- function(with_wavelength_tab) {
+  tabs <- lapply(CALIB_TABLE_ORDER[["Raw inputs"]], .data_tab_table_panel)
+  if (isTRUE(with_wavelength_tab))
+    tabs <- c(tabs, list(shiny::tabPanel("Subtract Wavelengths", wavelengthSubtractUI("wsub"))))
+  tabs <- c(tabs, list(shiny::tabPanel("Replicates", replicatesUI("replicates"))))
+  do.call(shiny::tabsetPanel, c(list(id = "raw_inputs_tabs"), tabs))
+}
+
+dataTabUI <- function() {
   groups <- lapply(names(CALIB_TABLE_ORDER), function(grp) {
-    inner <- lapply(CALIB_TABLE_ORDER[[grp]], function(tb) {
-      doc <- table_doc(tb)
-      # The Plates tab also hosts the plate-ops UI hooks (split / wavelength
-      # subtraction / header actions) so that slice keeps working untouched.
-      extra <- if (identical(tb, "xmap_header")) shiny::tagList(
-        shiny::uiOutput("header_actions"),
-        shiny::uiOutput("split_plate_nominal_UI"),
-        shiny::uiOutput("wavelength_subtraction_UI")
-      ) else NULL
-      help_id <- .DATA_TAB_HELP_ID[[tb]]
-      shiny::tabPanel(
-        title = doc$label,
-        shiny::div(class = "help-block", style = "margin:8px 0;",
-          shiny::strong(doc$what),
-          if (!is.null(help_id)) help_icon(help_id, ns),
-          shiny::br(),
-          shiny::tags$small(sprintf("Grain: %s", doc$grain))),
-        shinycssloaders::withSpinner(
-          DT::dataTableOutput(.dt_output_id(tb)), type = 4, color = "#337ab7"),
-        shiny::div(style = "margin-top:6px;",
-          shiny::downloadButton(paste0("dl_", tb), "Download CSV", class = "btn-xs")),
-        extra
-      )
-    })
-    shiny::tabPanel(grp, do.call(shiny::tabsetPanel, inner))
+    if (identical(grp, "Raw inputs"))
+      return(shiny::tabPanel(grp, shiny::uiOutput("raw_inputs_tabset")))
+    shiny::tabPanel(grp, do.call(shiny::tabsetPanel,
+                                 lapply(CALIB_TABLE_ORDER[[grp]], .data_tab_table_panel)))
   })
 
   shiny::tagList(
@@ -475,6 +490,25 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
           list(error = data.frame(message = "Excel bundle could not be written.")), file)
     }
   )
+
+  # ---- Replicates tab (Raw inputs): report + aggregated-experiment creator.
+  # Reads the same frames as the tables above; a new experiment bumps the
+  # shared reload trigger and the app's experiment list.
+  refresh_exps <- get0("refresh_experiment_trigger", inherits = TRUE)
+  replicatesServer("replicates", scope = scope, get_table = get_table, pool = db_pool,
+                   reload_trigger = reload_trigger, refresh_experiments = refresh_exps)
+
+  # ---- Subtract Wavelengths tab: present only while the selected experiment has
+  # 2+ wavelengths, placed just before Replicates (subtract first, then aggregate).
+  # The raw tables' own outputs are the render_table() ones above.
+  wsub <- wavelengthSubtractServer("wsub", scope = scope, get_table = get_table,
+                                   pool = db_pool, reload_trigger = reload_trigger,
+                                   refresh_experiments = refresh_exps)
+  # (Rendered, not inserted: dynamic_data_ui re-renders the whole Data tab on
+  # experiment / tab changes, which would drop an inserted tab.)
+  output$raw_inputs_tabset <- shiny::renderUI({
+    .data_tab_raw_tabset(isTRUE(tryCatch(wsub$multi(), error = function(e) FALSE)))
+  })
 
   invisible(NULL)
 }
