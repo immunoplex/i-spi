@@ -57,6 +57,42 @@ FD_SETTINGS <- c("is_log_response", "is_log_independent", "model_form_list", "ap
                  "blank_option", "adapt_delta", "bayes_chains", "bayes_warmup", "bayes_sampling",
                  "bayes_single_plate", "pcov_threshold", "include_measurement_error")
 
+# Assay type of the experiment, from the header's own record of what the response
+# value MEANS ('absorbance' = ELISA, 'mfi' = bead arrays). Same rule as
+# response_var_of() in assay_response.R, kept local so this file stays standalone.
+.fd_response_var <- function(header) {
+  if (!.fd_has(header, "assay_response_variable")) return(NA_character_)
+  v <- unique(tolower(stats::na.omit(header$assay_response_variable)))
+  if (length(v) == 1L) v else if (!length(v)) NA_character_ else paste(v, collapse = "|")
+}
+
+# Which cascade tier supplies each setting for one (feature, antigen), who set it and
+# when, and whether it differs from the study-level value. Tiers: study < experiment <
+# feature < antigen (deepest non-wildcard column of the override row); no override row
+# means the value is inherited (project / system default).
+.fd_prov <- function(settings, overrides, study_settings, feature, antigen) {
+  if (!length(settings)) return(NULL)
+  tier_of <- function(o) ifelse(o$antigen != "__none__", "antigen",
+               ifelse(o$feature != "__none__", "feature",
+                 ifelse(o$experiment != "__none__", "experiment", "study")))
+  rank <- c(study = 2L, experiment = 3L, feature = 4L, antigen = 5L)
+  rows <- lapply(names(settings), function(p) {
+    o <- if (.fd_has(overrides, c("param", "value"))) overrides[overrides$param == p &
+           overrides$feature %in% c("__none__", feature) & overrides$antigen %in% c("__none__", antigen), , drop = FALSE] else NULL
+    win <- if (.fd_has(o)) { o$tier <- tier_of(o); o[which.max(rank[o$tier]), , drop = FALSE] } else NULL
+    sv <- if (.fd_has(study_settings, c("param", "value"))) study_settings$value[match(p, study_settings$param)] else NA_character_
+    v  <- as.character(settings[[p]])
+    src <- if (is.null(win)) "default" else win$tier
+    data.frame(param = p, value = v, source = src,
+               set_by = if (is.null(win)) NA_character_ else win$set_by,
+               set_at = if (is.null(win)) NA_character_ else win$set_at,
+               study_value = sv,
+               differs = !is.null(win) && rank[[win$tier]] >= 3L && !is.na(sv) && !identical(tolower(v), tolower(sv)),
+               stringsAsFactors = FALSE)
+  })
+  do.call(rbind, rows)
+}
+
 # Scale each stored curve was fitted on, from deviations measured in SQL.
 .fd_scale <- function(dev_raw, dev_log10, dev_ln, tol = 1e-6) {
   vapply(seq_along(dev_raw), function(i) {
@@ -116,8 +152,31 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
                  value = as.character(r$value_text), stringsAsFactors = FALSE)
     }))
   })
+  # Provenance: the override rows that exist for this experiment (any tier, with who/when)
+  # and what the STUDY-level value is, so an experiment/feature/antigen override that
+  # differs from it can be called out.
+  overrides <- try1(function() {
+    o <- export_settings_scoped(pool, project, study)
+    o <- o[o$param_name %in% FD_SETTINGS & o$experiment_accession %in% c("__none__", experiment), , drop = FALSE]
+    if (!nrow(o)) return(NULL)
+    val <- vapply(seq_len(nrow(o)), function(i) {
+      if (!is.na(o$param_boolean_value[i])) tolower(as.character(o$param_boolean_value[i]))
+      else if (!is.na(o$param_character_value[i])) as.character(o$param_character_value[i])
+      else if (!is.na(o$param_numeric_value[i])) as.character(o$param_numeric_value[i])
+      else as.character(o$param_integer_value[i])
+    }, character(1))
+    data.frame(experiment = o$experiment_accession, feature = o$feature, antigen = o$antigen,
+               param = o$param_name, value = val, set_by = as.character(o$param_user),
+               set_at = format(o$updated_at, "%Y-%m-%d %H:%M"), stringsAsFactors = FALSE)
+  })
+  study_settings <- try1(function() {
+    r <- resolve_settings_scoped(pool, project, study)
+    r <- r[r$param_name %in% FD_SETTINGS, , drop = FALSE]
+    data.frame(param = r$param_name, value = as.character(r$value_text), stringsAsFactors = FALSE)
+  })
   list(
-    lookup = lookup, settings = settings,
+    lookup = lookup, settings = settings, overrides = overrides, study_settings = study_settings,
+    header = try1(function() fetch_raw_header(pool, project, study, experiment)),
     std    = try1(function() fetch_calib_standards_summary_scoped(pool, project, study, experiment)),
     groups = groups,
     fit    = try1(function() fetch_calib_fit_scoped(pool, project, study, experiment)),
@@ -185,6 +244,8 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
       info$raw_range <- c(min(.fd_n(sm$raw_min), na.rm = TRUE), max(.fd_n(sm$raw_max), na.rm = TRUE))
     }
   }
+  info$assay <- .fd_response_var(d$header)
+  nu_val <- NA_real_
   rn <- d$run
   if (.fd_has(rn, c("job_id", "params")) && u$job_id[1] %in% as.character(rn$job_id))
     info$job_params <- as.character(rn$params[match(u$job_id[1], as.character(rn$job_id))])
@@ -192,6 +253,18 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
   if (.fd_has(st, c("param", "value"))) {
     st <- st[(is.na(u$antigen[1]) | st$antigen == u$antigen[1]) & (is.na(u$feature[1]) | st$feature == u$feature[1]), , drop = FALSE]
     info$settings <- stats::setNames(st$value, st$param)
+    info$setting_prov <- .fd_prov(info$settings, d$overrides, d$study_settings, u$feature[1], u$antigen[1])
+    # An override that changes a setting away from the study value is the usual reason
+    # "I changed the setting but nothing happened"; say where it lives and who set it.
+    ov <- info$setting_prov[info$setting_prov$differs, , drop = FALSE]
+    for (k in seq_len(nrow(ov))) {
+      crit <- ov$param[k] %in% c("is_log_response", "is_log_independent")
+      add("setting-overridden", if (crit) "warn" else "info",
+          sprintf("%s=%s is set at the %s level here, overriding the study value (%s).",
+                  ov$param[k], ov$value[k], ov$source[k], ov$study_value[k]),
+          sprintf("set by %s on %s", .fd_or(ov$set_by[k], "?"), .fd_or(ov$set_at[k], "?")),
+          "If this is not intended, revert it in Change Study Settings at this scope, then recompute.")
+    }
     lr <- info$settings[["is_log_response"]]
     if (!is.null(info$scale) && info$scale %in% c("raw", "log10") && !is.null(lr) && !is.na(lr)) {
       want <- if (identical(tolower(lr), "true")) "log10" else "raw"
@@ -366,7 +439,7 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
       add("population-wide", "warn", "Between-plate spread of the upper asymptote is large relative to its mean.",
           sprintf("sigma_d/mu_d = %s", .fd_fmt(g("sigma_d") / abs(g("mu_d")), 3)),
           "The pooled population is describing plates that differ more than a single hierarchy should.")
-    nu <- g("nu")
+    nu <- g("nu"); nu_val <- nu
     if (is.finite(nu) && nu < TH$nu_warn)
       add("noise-heavy-tails", "warn",
           "Student-t degrees of freedom sit at their lower bound (2): the noise model cannot describe the scatter, so the fit is absorbing misfit as 'outliers'.",
@@ -377,6 +450,21 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
     else if (is.finite(nu) && nu < TH$nu_info)
       add("noise-heavy-tails", "info", "Student-t degrees of freedom are low: some outlying wells.",
           sprintf("nu=%s", .fd_fmt(nu, 3)))
+  }
+
+  # -- assay-aware: absorbance (ELISA) on the raw scale ---------------------------------
+  # Absorbance noise grows with the signal just like MFI, and the log scale is the
+  # system default. Raw is allowed, but with the noise model pinned it is the likely cause.
+  if (identical(info$assay, "absorbance") && identical(info$scale, "raw")) {
+    if (is.finite(nu_val) && nu_val < TH$nu_warn)
+      add("scale-vs-assay", "warn",
+          "This is an absorbance (ELISA) experiment fitted on the raw scale, and the noise model is pinned at its limit: this setting is probably wrong for OD data.",
+          sprintf("assay_response_variable=absorbance; scale=raw; nu=%s", .fd_fmt(nu_val, 3)),
+          "Use the log scale (is_log_response = true) for this experiment and recompute.")
+    else
+      add("scale-vs-assay", "info",
+          "Absorbance (ELISA) data fitted on the raw scale; the system default is the log scale. Confirm that raw is intended.",
+          "assay_response_variable=absorbance; scale=raw")
   }
 
   # -- LOO ----------------------------------------------------------------------------
@@ -414,9 +502,19 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
 
   # Scale first: if the model is fitted on the wrong scale, nothing downstream
   # (heterogeneity, sampler knobs, plate count) is interpretable.
-  if (any(ids == "noise-heavy-tails" & sev == "warn") && identical(info$scale, "raw"))
-    act(0, "Fit on the log scale: set is_log_response = true for this experiment, then recompute the Bayesian fit and rebuild this report.",
+  if (any(ids == "noise-heavy-tails" & sev == "warn") && identical(info$scale, "raw")) {
+    pv  <- info$setting_prov
+    lrp <- if (.fd_has(pv, "param")) pv[pv$param == "is_log_response", , drop = FALSE] else NULL
+    what <-
+      if (!is.null(lrp) && nrow(lrp) && isTRUE(lrp$differs))
+        sprintf("is_log_response=%s is an %s-level override (set by %s on %s; study value is %s). Revert that override in Change Study Settings at this scope, then recompute the Bayesian fit and rebuild this report.",
+                lrp$value, lrp$source, .fd_or(lrp$set_by, "?"), .fd_or(lrp$set_at, "?"), lrp$study_value)
+      else if (!is.null(lrp) && nrow(lrp) && identical(tolower(lrp$value), "true"))
+        "is_log_response is already true now, so this fit predates it: recompute the Bayesian fit and rebuild this report."
+      else "Fit on the log scale: set is_log_response = true for this experiment, then recompute the Bayesian fit and rebuild this report."
+    act(0, what,
         "The Student-t df is pinned at its lower bound on the raw response scale, the signature of noise that grows with the signal. Plate count is not the cause.")
+  }
   if (has("^settings-stale"))
     act(0, "Recompute so the stored fit matches the intended response scale (or restore the previous setting).",
         "Stored results and current settings disagree, so comparisons with other runs are not like-for-like.")
@@ -527,6 +625,7 @@ fit_diag_report_text <- function(rep) {
     "A *fit unit* is one (multiplate group, job): the plates that were fitted together in one job. A pooled Bayesian fit is ONE joint hierarchical model over all plates in the unit: priors, the noise terms (sigma_obs, nu) and the population means/spreads are shared, and a model is called eligible only if EVERY plate passes the quantification gates (relative SE, dynamic range). Results are stored per curve and each new job overwrites the previous fit of the same curves, so earlier runs of a different plate subset are not recoverable from this data.",
     "Thresholds used by the automated assessment: R-hat > 1.01 warn / > 1.05 error; min ESS < 400 warn / < 100 error; any divergence warns, >= 1% of draws is an error; E-BFMI < 0.3 warns; |robust z| > 3.5 flags an outlier plate (needs >= 5 plates); (max-min)/median of d > 0.5 flags signal-level heterogeneity; SE/|estimate| > 0.5 flags a weak plate.",
     "The response scale each fit used (raw / log10 / ln) is MEASURED from calib_standards, not assumed. Settings shown are those in effect now; the run record does not store them, so a mismatch with the fitted scale means the setting changed after the fit ran.",
+    "Settings cascade study < experiment < feature < antigen and the most specific row wins, so a value shown in the study settings screen can be overridden for one experiment; the settings tables name the tier, who set it and when. The assay type is the header's assay_response_variable (absorbance = ELISA, mfi = bead arrays).",
     "Not available here: the data-adaptive priors, per-plate sampler statistics when the fit was pooled (one set for the unit), and the raw standard-curve wells. Do not infer values that are not shown; say what extra data you would need.", "")
 
   if (!length(rep$units)) return(paste(c(L, "## Result", "", "No fitted curves were found for this experiment.", "",
@@ -544,7 +643,8 @@ fit_diag_report_text <- function(rep) {
   L <- c(L, "## Fit units", "")
   su <- do.call(rbind, lapply(rep$units, function(i) data.frame(
     unit = i$unit, method = i$method, plates = i$n_plates, model = i$model,
-    fit_mode = .fd_or(i$fit_mode, NA_character_), response_scale = .fd_or(i$scale, NA_character_),
+    fit_mode = .fd_or(i$fit_mode, NA_character_), assay = .fd_or(i$assay, NA_character_),
+    response_scale = .fd_or(i$scale, NA_character_),
     ineligible = .fd_or(i$n_ineligible, NA_integer_), fallback = i$fallback,
     antigen = .fd_or(i$antigen, NA_character_), feature = .fd_or(i$feature, NA_character_),
     wavelength = .fd_or(i$wavelength, NA_character_), stringsAsFactors = FALSE)))
@@ -561,8 +661,12 @@ fit_diag_report_text <- function(rep) {
     if (!is.null(i$raw_range)) L <- c(L, sprintf("Raw standard responses span %s to %s (%s standard wells, %s included); fitted on the **%s** scale.",
                                                  .fd_fmt(i$raw_range[1]), .fd_fmt(i$raw_range[2]),
                                                  .fd_fmt(i$n_std), .fd_fmt(i$n_std_included), .fd_or(i$scale, "unknown")))
-    if (!is.null(i$settings)) L <- c(L, sprintf("Settings in effect NOW for this antigen/feature (the run record does not store them): %s",
-                                                paste(sprintf("%s=%s", names(i$settings), i$settings), collapse = ", ")))
+    if (!is.null(i$setting_prov))
+      L <- c(L, "", "Settings in effect NOW for this antigen/feature, with the cascade tier each value comes from (the run record does not store settings; differs=TRUE means an override here changes the study-level value):",
+             .fd_md_table(i$setting_prov))
+    else if (!is.null(i$settings))
+      L <- c(L, sprintf("Settings in effect NOW for this antigen/feature (the run record does not store them): %s",
+                        paste(sprintf("%s=%s", names(i$settings), i$settings), collapse = ", ")))
     L <- c(L, "")
     if (!is.null(i$tables$population)) L <- c(L, "Population / noise parameters (selected model):", .fd_md_table(i$tables$population), "")
     if (!is.null(i$tables$plate_params)) L <- c(L, "Per-plate curve parameters (z_* = robust z across plates):", .fd_md_table(i$tables$plate_params), "")

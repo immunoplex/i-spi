@@ -195,6 +195,70 @@ test_that("scale: units fitted on different scales are flagged at experiment lev
   expect_match(rep$findings$evidence[rep$findings$finding == "scale-mixed"], "raw")
 })
 
+prov_frames <- function(assay = "absorbance", nu = 2.1) {
+  d <- scale_frames(mk_data(), raw_ids = 1:15, log_ids = integer(0), is_log_setting = "false", nu = nu)
+  d$header <- data.frame(experiment_accession = "E1", assay_response_variable = assay)
+  d$study_settings <- data.frame(param = "is_log_response", value = "true")
+  d$overrides <- data.frame(
+    experiment = c("__none__", "E1"), feature = "__none__", antigen = "__none__",
+    param = "is_log_response", value = c("true", "false"),
+    set_by = c("me@x.org", "colleague@y.be"), set_at = c("2026-11-11 04:05", "2026-11-06 07:46"),
+    stringsAsFactors = FALSE)
+  d
+}
+
+test_that("provenance: an experiment override of the study value is named, with who and when", {
+  rep <- fit_diag_build(prov_frames())
+  big <- Filter(function(i) i$n_plates == 10L, rep$units)[[1]]
+  p <- big$setting_prov[big$setting_prov$param == "is_log_response", ]
+  expect_equal(p$source, "experiment"); expect_true(p$differs)
+  expect_equal(p$set_by, "colleague@y.be"); expect_equal(p$study_value, "true")
+  f <- big$findings[big$findings$finding == "setting-overridden", ]
+  expect_equal(f$severity, "warn")
+  expect_match(f$message, "overriding the study value \\(true\\)")
+  expect_match(f$evidence, "colleague@y.be on 2026-11-06 07:46")
+  expect_match(fit_diag_report_text(rep), "cascade tier", fixed = TRUE)
+  # an override that matches the study value, or none at all, is not flagged
+  d <- prov_frames(); d$overrides$value[2] <- "true"; d$settings$value <- "true"
+  expect_false("setting-overridden" %in% fit_diag_build(d)$findings$finding)
+  d2 <- prov_frames(); d2$overrides <- NULL
+  expect_false("setting-overridden" %in% fit_diag_build(d2)$findings$finding)
+})
+
+test_that("provenance: a non-critical override is only informational; strategy names the override", {
+  d <- prov_frames(); d$settings <- rbind(d$settings,
+    data.frame(feature = "Abs", antigen = "Ag", param = "adapt_delta", value = "0.99"))
+  d$overrides <- rbind(d$overrides, data.frame(experiment = "E1", feature = "__none__", antigen = "__none__",
+    param = "adapt_delta", value = "0.99", set_by = "c@y.be", set_at = "2026-11-06 07:50"))
+  d$study_settings <- rbind(d$study_settings, data.frame(param = "adapt_delta", value = "0.9"))
+  big <- Filter(function(i) i$n_plates == 10L, fit_diag_build(d)$units)[[1]]
+  f <- big$findings[big$findings$finding == "setting-overridden", ]
+  expect_equal(f$severity[grepl("adapt_delta", f$message)], "info")
+  s <- big$strategy[order(big$strategy$priority), ]
+  expect_equal(s$priority[1], 0)
+  expect_match(s$action[1], "experiment-level override.*colleague@y.be.*Revert that override")
+})
+
+test_that("assay-aware: absorbance on raw with nu pinned is flagged as the wrong setting for OD", {
+  big <- Filter(function(i) i$n_plates == 10L, fit_diag_build(prov_frames())$units)[[1]]
+  expect_equal(big$assay, "absorbance")
+  f <- big$findings[big$findings$finding == "scale-vs-assay", ]
+  expect_equal(f$severity, "warn"); expect_match(f$message, "probably wrong for OD data")
+  # healthy noise model: only a gentle confirm-it note
+  big2 <- Filter(function(i) i$n_plates == 10L, fit_diag_build(prov_frames(nu = 25))$units)[[1]]
+  expect_equal(big2$findings$severity[big2$findings$finding == "scale-vs-assay"], "info")
+  # bead data on the raw scale is not an ELISA concern
+  big3 <- Filter(function(i) i$n_plates == 10L, fit_diag_build(prov_frames(assay = "mfi"))$units)[[1]]
+  expect_false("scale-vs-assay" %in% big3$findings$finding)
+})
+
+test_that("strategy: when the setting is already true the advice is simply to recompute", {
+  d <- prov_frames(); d$settings$value <- "true"; d$overrides <- NULL
+  big <- Filter(function(i) i$n_plates == 10L, fit_diag_build(d)$units)[[1]]
+  s <- big$strategy[order(big$strategy$priority), ]
+  expect_match(s$action[1], "already true now")
+})
+
 test_that("frequentist: per-plate fits, no pooling advice, systematic gate failures summarised", {
   ids <- 1:38
   fit <- data.frame(curve_id = ids, method = "frequentist", model_name = "logistic4", is_best = TRUE,
