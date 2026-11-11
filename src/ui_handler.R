@@ -575,22 +575,18 @@ output$view_stored_experiments_ui <- renderUI({
                         ),
                         tabPanel(
                           id = "basic_qc",
-                          title = "Quality Control - Basic",
+                          title = "Quality Control",
                           radioGroupButtons(
                             inputId = "qc_component",
                             label = "",
-                            choices = c("Bead Count", "Plate Dilution Series", "Standard Curve",
+                            choices = c("Beads", "Plate Dilution Series", "Standard Curve",
                                         "Replicate Linearity", "Precision Weights"),
                             selected = character(0)
                           ),
                           conditionalPanel(
-                            condition = "input.qc_component == 'Bead Count' && output.exp_assay_type_js == 'bead_assay'",
+                            condition = "input.qc_component == 'Beads' && output.exp_assay_type_js == 'bead_assay'",
                             uiOutput("bead_count_available_ui"),
                             uiOutput("bead_count_module_ui")
-                          ),
-                          conditionalPanel(
-                            condition = "input.qc_component == 'Bead Count' && output.exp_assay_type_js == 'ELISA'",
-                            uiOutput("bead_not_available_ui")
                           ),
 
                           # Plate Dilution Series: faceted standard-curve-by-plate
@@ -778,6 +774,19 @@ output$bead_count_available_ui <- renderUI({
 # Keep it alive even when the UI element that uses it is hidden
 outputOptions(output, "exp_assay_type_js", suspendWhenHidden = FALSE)
 
+# The "Beads" choice exists only for bead-array experiments (an absorbance/ELISA
+# experiment has no beads). When the experiment changes to one, drop the choice,
+# and clear the selection if it was Beads.
+observeEvent(exp_assay_info(), {
+  info <- exp_assay_info()
+  is_bead <- !identical(info$assay_type, "ELISA")      # unknown type: keep Beads (the default)
+  ch <- c(if (is_bead) "Beads", "Plate Dilution Series", "Standard Curve",
+          "Replicate Linearity", "Precision Weights")
+  cur <- isolate(input$qc_component)
+  sel <- if (length(cur) && cur %in% ch) cur else character(0)
+  updateRadioGroupButtons(session, "qc_component", choices = ch, selected = sel)
+})
+
 
 optimization_parsed_boolean <- reactive({
   optimization_refresh() # refresh dependency
@@ -905,7 +914,7 @@ observeEvent(input$qc_component, {
 
  # cat("Current open panel(s):", input$standardCurveCollapse, "\n")
   # ----- Bead Count Module -----
-  if (input$qc_component == "Bead Count" &&
+  if (input$qc_component == "Beads" &&
       input$readxMap_study_accession != "" &&
       input$readxMap_study_accession != "Click here" &&
       input$readxMap_experiment_accession != "" &&

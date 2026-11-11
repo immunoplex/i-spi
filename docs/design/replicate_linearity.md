@@ -2,7 +2,7 @@
 
 Status: phase 1 (test samples). Code: `src/linearity_report.R` (pure logic),
 `src/linearity_module.R` (UI, plot, wiring), `src/test-linearity.R`. Placement:
-Quality Control - Basic, between Standard Curve and Precision Weights.
+Quality Control, between Standard Curve and Precision Weights.
 
 ## Purpose
 Replace the old dilutional-linearity tool (`dev/dilutional_linearity_ui.R`, built

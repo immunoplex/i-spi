@@ -298,9 +298,15 @@ plateDilutionSeriesServer <- function(id, pool, scope,
           series    = as.character(samples$sample_lbl),
           type      = "Test sample",
           stringsAsFactors = FALSE)
+        # Where the point came from: its plate well, patient and timeperiod.
+        pick <- function(nm) if (nm %in% names(samples)) as.character(samples[[nm]]) else rep(NA_character_, nrow(samples))
+        shown <- function(v) ifelse(is.na(v) | v %in% c("", "__none__"), "-", v)
         samp$hover_txt <- paste0(
           "Test sample: ", samp$series,
           "<br>plate: ",    samp$plate_lbl,
+          "<br>well: ",       shown(pick("well")),
+          "<br>patientid: ",  shown(pick("patientid")),
+          "<br>timeperiod: ", shown(pick("timeperiod")),
           "<br>dilution: ", fmt(samp$dil_num),
           "<br>MFI: ",      fmt(samp$mfi_num))
         combined <- rbind(base, samp)

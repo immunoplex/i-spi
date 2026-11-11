@@ -485,13 +485,28 @@ fetch_calib_blanks <- function(pool, curve_id, method) {
 #' Per-sample back-calculated concentrations for a curve+method.
 #' predicted_concentration is on the curve; final_concentration is x dilution.
 #' The '__none__' identity sentinels are decoded back to NA on the way out.
+#' `well` is the plate well the sample was read from: calib_samples does not store
+#' it, so it comes from xmap_sample for this curve's plate/antigen/feature (NA when
+#' no row matches). Note `sampleid` is often the well label itself when the layout
+#' supplied no separate sample id.
 fetch_calib_samples <- function(pool, curve_id, method) {
   df <- .calib_q(pool, sprintf(
-    "SELECT sampleid, patientid, timeperiod, dilution,
-            predicted_concentration, final_concentration, se_concentration,
-            pcov, pcov_rmse, pcov_pass%s
-       FROM %s WHERE curve_id = $1 AND method = $2",
-    .oor_select(pool), .tbl("calib_samples")),
+    "SELECT cs.sampleid, cs.patientid, cs.timeperiod, cs.dilution, xs.well,
+            cs.predicted_concentration, cs.final_concentration, cs.se_concentration,
+            cs.pcov, cs.pcov_rmse, cs.pcov_pass%s
+       FROM %s cs
+       LEFT JOIN (SELECT x.sampleid, x.patientid, x.timeperiod, x.dilution::text AS dilution,
+                         string_agg(DISTINCT x.well, ',' ORDER BY x.well) AS well
+                    FROM %s x
+                    JOIN %s c2 ON c2.curve_id = $1
+                     AND x.project_id = c2.project_id AND x.study_accession = c2.study_accession
+                     AND x.experiment_accession = c2.experiment_accession AND x.plateid = c2.plateid
+                     AND x.antigen = c2.antigen AND x.feature IS NOT DISTINCT FROM c2.feature
+                   GROUP BY 1, 2, 3, 4) xs
+              ON xs.sampleid = cs.sampleid AND xs.patientid = cs.patientid
+             AND xs.timeperiod = cs.timeperiod AND xs.dilution = cs.dilution
+      WHERE cs.curve_id = $1 AND cs.method = $2",
+    .oor_select(pool, "cs"), .tbl("calib_samples"), .tbl("xmap_sample"), .tbl("curve_lookup")),
     params = list(curve_id, method))
   .decode_none(df, c("sampleid", "patientid", "timeperiod", "dilution"))
 }

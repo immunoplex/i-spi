@@ -59,6 +59,11 @@ beadCountModuleUI <- function(id) {
         }
       "))),
     br(),
+    # Mode switch: the existing Bead Count view, or % aggregate beads by well.
+    radioGroupButtons(inputId = ns("bead_mode"), label = NULL,
+                      choices = c("Bead Count", "Aggregate Beads"), selected = "Bead Count"),
+    conditionalPanel(
+      condition = sprintf("input['%s'] == 'Bead Count'", ns("bead_mode")),
     fluidRow(
       div(style = "padding: 0 15px;",
         tags$h4("Bead Count Analysis", help_icon("qc.bead_count.methods", ns), style = "display:inline-flex; align-items:center; gap:.4rem;")
@@ -87,6 +92,23 @@ beadCountModuleUI <- function(id) {
         br(),
         #uiOutput(ns("download_bead_gating"))
         downloadButton(ns("download_bead_gating"), "Download Bead Count Data")
+      )
+    )
+    ),
+    conditionalPanel(
+      condition = sprintf("input['%s'] == 'Aggregate Beads'", ns("bead_mode")),
+      fluidRow(
+        div(style = "padding: 0 15px;",
+          tags$h4("Aggregate Beads", help_icon("qc.bead_aggregate", ns), style = "display:inline-flex; align-items:center; gap:.4rem;")
+        ),
+        mainPanel(
+          fluidRow(column(4, uiOutput(ns("agg_plate_ui"))), column(8, uiOutput(ns("agg_status")))),
+          plotlyOutput(ns("aggPlot"), width = "75vw"),
+          br(),
+          div(style = "overflow-x: auto; width: 100%;", tableOutput(ns("agg_table"))),
+          br(),
+          downloadButton(ns("download_pct_agg"), "Download % Aggregate Beads Data")
+        )
       )
     )
   )
@@ -339,6 +361,71 @@ beadCountServer <- function(id, selected_study, selected_experiment,currentuser)
       write.csv(bead_count_gc_table, file)
     }
   )
+
+  # ---- Aggregate Beads mode: % aggregate beads by well position ----
+  # Read from the four raw tables (xmap_sample / standard / control / buffer) when
+  # the mode is first opened; pctaggbeads is a per-well value from the import.
+  agg_data <- reactive({
+    req(selected_study(), selected_experiment())
+    pid <- userWorkSpaceID()
+    get1 <- function(f) tryCatch(f(db_pool, project = pid, study = selected_study(), experiment = selected_experiment()),
+                                 error = function(e) { message("[aggregate beads] ", conditionMessage(e)); NULL })
+    pct_agg_prep(list(sample = get1(fetch_raw_sample), standard = get1(fetch_raw_standard),
+                      control = get1(fetch_raw_control), blank = get1(fetch_raw_blank)))
+  })
+
+  output$agg_plate_ui <- renderUI({
+    d <- agg_data(); req(d)
+    keep <- isolate(input$agg_plate)
+    ch <- unique(d$plate_nom)
+    selectInput(ns("agg_plate"), label = "Plate - Sample Dilution", choices = ch,
+                selected = if (!is.null(keep) && keep %in% ch) keep else ch[1])
+  })
+
+  agg_plate_data <- reactive({
+    d <- agg_data(); req(d, input$agg_plate)
+    d[d$plate_nom == input$agg_plate, , drop = FALSE]
+  })
+
+  agg_threshold <- reactive({
+    v <- suppressWarnings(as.numeric(pct_agg_threshold))
+    if (length(v) && is.finite(v[1])) v[1] else NA_real_
+  })
+
+  output$agg_status <- renderUI({
+    d <- agg_data()
+    if (is.null(d) || !nrow(d))
+      return(div(class = "alert alert-info", style = "padding:6px 10px;margin-top:25px;",
+                 "No wells were found for this experiment."))
+    if (!any(is.finite(d$pctagg)))
+      return(div(class = "alert alert-warning", style = "padding:6px 10px;margin-top:25px;",
+                 "No % aggregate beads were found. They are read from the instrument file (the '% Agg Beads' column) when the plate is imported; re-import with that column to see them."))
+    pd <- agg_plate_data()
+    thr <- agg_threshold()
+    div(class = "text-muted", style = "margin-top:25px;",
+        sprintf("%d wells on this plate; threshold %s.", nrow(pd),
+                if (is.na(thr)) "not set (Study Overview > Bead Count Options)" else paste0(thr, "%")))
+  })
+
+  output$aggPlot <- renderPlotly({
+    pd <- agg_plate_data()
+    pct_agg_plot(pd, agg_threshold(), title = paste("% aggregate beads,", input$agg_plate))
+  })
+
+  output$agg_table <- renderTable({
+    pd <- agg_plate_data()
+    tb <- pct_agg_table(pd, agg_threshold())
+    names(tb) <- c("Type", "Plate", "Well", "Sample", "Patient", "Timeperiod", "% aggregate beads")
+    tb
+  }, caption = "Wells above the % aggregate beads threshold (or, with no threshold set, the ten highest)",
+     caption.placement = getOption("xtable.caption.placement", "top"))
+
+  output$download_pct_agg <- downloadHandler(
+    filename = function() paste(selected_study(), selected_experiment(), "pct_aggregate_beads.csv", sep = "_"),
+    content = function(file) {
+      d <- agg_data(); req(d)
+      write.csv(d, file, row.names = FALSE, na = "")
+    })
 
   })
   #})

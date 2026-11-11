@@ -1,7 +1,7 @@
 # =============================================================================
 # std_curve_weights_module.R  --  the "Precision Weights" tab.
 #
-# A sibling to "Standard Curve" under Quality Control - Basic (qc_component),
+# A sibling to "Standard Curve" under Quality Control (qc_component),
 # NOT nested under it -- curveRweights precision-weighting is a fully
 # separate job family from calibration, submitted via its OWN script_type
 # (weights_bayesian/weights_frequentist) and reading/writing its OWN tables

@@ -2,6 +2,34 @@
 
 Releases are tagged `vYYYY.MM.DD` (the date the tag was cut); a second release on the same day takes a `.N` suffix.
 
+## v2026.11.11.2 — Quality Control: beads, sample identity, curve downloads
+
+### Changed
+- The **Quality Control - Basic** tab is now **Quality Control**.
+- The **Bead Count** choice is now **Beads**, and appears only for bead-array
+  experiments (it is hidden for absorbance/ELISA). A switch at the top selects
+  **Bead Count** (the existing view) or **Aggregate Beads**.
+
+### Added
+- **Beads > Aggregate Beads**: percent aggregate beads (`pctaggbeads`, stored from
+  the instrument file for samples, standards, controls and blanks) on the y axis
+  against well position on the x axis, coloured by well type, with the study's
+  `% aggregate beads` threshold, a list of wells above it, hover detail, and a
+  CSV download. Help note `qc.bead_aggregate`.
+- **Plate Dilution Series > Sources**: the details of a test-sample point now also
+  show its well, patientid and timeperiod.
+- **Standard Curve > Curve and Precision**: the test-sample popup shows patientid and
+  timeperiod.
+- **Standard Curve > Back-calculated samples**: a real **well** column (from the
+  raw sample table) and **specimen_id** replace `sampleid`; where the importer stored
+  the well as the sample id, specimen_id reads "(same as well)". The sample popup
+  leads with the well, and the Replicate Linearity hover uses the same rule.
+- **Standard Curve > Back-calculated samples**: experiment, plate (short name),
+  antigen, feature and method are added to the table, with downloads of the table
+  (.csv) and of everything stored for the selected plate, antigen and method (.xlsx:
+  samples, standards, blanks, model selection, parameters, gates, LOQ/LOD limits,
+  fitted grid).
+
 ## v2026.11.11.1 — Replicate Linearity
 
 ### Added

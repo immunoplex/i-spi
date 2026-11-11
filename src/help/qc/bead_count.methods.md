@@ -3,7 +3,7 @@ id: qc.bead_count.methods
 title: Bead Count Analysis Methods
 audience: user
 category: procedural
-see_also: [qc.bead_count.thresholds]
+see_also: [qc.bead_count.thresholds, qc.bead_aggregate]
 references:
   - text: "Matson, Zachary et al. \"shinyMBA: a novel R shiny application for quality control of the multiplex bead assay for serosurveillance studies.\" Scientific reports vol. 14,1 7442. 28 Mar. 2024."
     doi: "10.1038/s41598-024-57652-4"

@@ -33,6 +33,33 @@
 
 .sc_fmt <- function(x) ifelse(is.finite(x), trimws(formatC(x, format = "g", digits = 3)), "–")
 
+.SC_SAME_AS_WELL <- "(same as well)"
+
+# The specimen id for display. The layout often supplies no separate sample id and
+# the importer then stores the well label as `sampleid`; show that as
+# "(same as well)" rather than letting it pass for a specimen id.
+.sc_specimen <- function(sampleid, well) {
+  s <- as.character(sampleid); w <- as.character(well)
+  same <- !is.na(s) & !is.na(w) & nzchar(s) & toupper(trimws(s)) == toupper(trimws(w))
+  s[same] <- .SC_SAME_AS_WELL
+  s
+}
+
+# The Back-calculated samples table: the curve's identity (experiment, plate,
+# antigen, feature, method), the plate well, the specimen id (replacing sampleid),
+# then the rest of the stored columns.
+.sc_samples_view <- function(smp, id) {
+  n <- nrow(smp)
+  lead <- id[rep(1L, n), c("experiment", "plate"), drop = FALSE]
+  well <- if ("well" %in% names(smp)) as.character(smp$well) else rep(NA_character_, n)
+  sid  <- if ("sampleid" %in% names(smp)) smp$sampleid else rep(NA_character_, n)
+  front <- cbind(lead, well = well,
+                 id[rep(1L, n), c("antigen", "feature", "method"), drop = FALSE],
+                 specimen_id = .sc_specimen(sid, well), row.names = NULL)
+  rest <- smp[, setdiff(names(smp), c("sampleid", "well")), drop = FALSE]
+  cbind(front, rest, row.names = NULL)
+}
+
 # Hover text for back-calculated samples: class, point estimate, the asymmetric
 # 95% predictive interval, and the threshold probabilities. Every piece is
 # optional so older rows (no out-of-range columns) still get a sensible tooltip.
@@ -51,7 +78,19 @@
                        ifelse(up_unb, "unbounded", .sc_fmt(hi)), "]"), "")
   pr <- function(nm, txt) { v <- col(nm); ifelse(is.finite(v), sprintf("<br>%s %.2f", txt, v), "") }
   sid <- if ("sampleid" %in% names(smp)) as.character(smp$sampleid) else rep("", n)
-  paste0("<b>", ifelse(is.na(sid), "", sid), "</b> — ", lab,
+  # Lead with the plate well; the specimen id follows only when it says something
+  # other than the well (it is often the well label itself).
+  wl <- if ("well" %in% names(smp)) as.character(smp$well) else rep(NA_character_, n)
+  spec <- .sc_specimen(sid, wl)
+  head_txt <- ifelse(is.na(wl) | !nzchar(wl), ifelse(is.na(sid), "", sid),
+                     paste0(wl, ifelse(is.na(spec) | spec == .SC_SAME_AS_WELL, "", paste0(" (specimen ", spec, ")"))))
+  # What identifies the sample: its patient and timeperiod (blank when not recorded).
+  idv <- function(nm) {
+    v <- if (nm %in% names(smp)) as.character(smp[[nm]]) else rep(NA_character_, n)
+    ifelse(is.na(v) | v %in% c("", "__none__"), "–", v)
+  }
+  who <- paste0("<br>patientid ", idv("patientid"), " · timeperiod ", idv("timeperiod"))
+  paste0("<b>", head_txt, "</b> — ", lab, who,
          "<br>Concentration ", .sc_fmt(col("final_concentration")), ivl,
          pr("p_below_lloq", "P(< LLOQ)"), pr("p_above_uloq", "P(> ULOQ)"),
          pr("p_below_cutoff", "P(< cutoff)"),
@@ -361,7 +400,13 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
             shiny::uiOutput(ns("precision_panel"))),
           shiny::tabPanel("Model selection", DT::DTOutput(ns("fits_table"))),
           shiny::tabPanel("Parameters",      DT::DTOutput(ns("params_table"))),
-          shiny::tabPanel("Back-calculated samples", DT::DTOutput(ns("samples_table")))
+          shiny::tabPanel("Back-calculated samples",
+            shiny::div(style = "margin:6px 0;",
+              shiny::downloadButton(ns("dl_samples_csv"), "Samples (.csv)", class = "btn-xs"),
+              shiny::downloadButton(ns("dl_curve_xlsx"), "All data for this curve (.xlsx)", class = "btn-xs"),
+              shiny::tags$small(class = "text-muted", style = "margin-left:8px;",
+                "The workbook has the samples, standards, blanks, model selection, parameters, gates, LOQ/LOD limits and fitted grid of the selected plate, antigen and method.")),
+            DT::DTOutput(ns("samples_table")))
         ))
     })
 
@@ -1519,9 +1564,67 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       p <- bundle()$params; shiny::req(nrow(p) > 0)
       DT::datatable(p, rownames = FALSE, options = list(dom = "t"))
     })
+    # The selected curve's identity: experiment, plate (the short name, not the
+    # long plateid), antigen, feature, source, method.
+    curve_ident <- shiny::reactive({
+      lk <- lookup(); cid <- curve_id()
+      cr <- lk[as.character(lk$curve_id) == as.character(cid), , drop = FALSE]
+      shiny::req(nrow(cr) > 0)
+      cr <- cr[1, , drop = FALSE]
+      pl <- as.character(cr$plate); if (is.na(pl) || !nzchar(pl)) pl <- as.character(cr$plateid)
+      none <- function(v) { v <- as.character(v); if (is.na(v) || v %in% c("", "__none__")) NA_character_ else v }
+      data.frame(experiment = as.character(cr$experiment_accession), plate = pl,
+                 antigen = as.character(cr$antigen), feature = none(cr$feature),
+                 source = none(cr$source), method = as.character(method()),
+                 stringsAsFactors = FALSE)
+    })
+    samples_view <- shiny::reactive({
+      smp <- bundle()$samples
+      shiny::req(!is.null(smp), nrow(smp) > 0)
+      .sc_samples_view(smp, curve_ident())
+    })
     output$samples_table <- DT::renderDT(
-      DT::datatable(bundle()$samples, rownames = FALSE,
-                    options = list(pageLength = 15)))
+      DT::datatable(samples_view(), rownames = FALSE, filter = "top",
+                    options = list(pageLength = 15, scrollX = TRUE)))
+
+    .sc_file <- function(ext) {
+      id <- curve_ident()
+      clean <- function(x) gsub("[^A-Za-z0-9]+", "_", as.character(x))
+      sprintf("curve_%s_%s_%s_%s.%s", clean(id$experiment), clean(id$plate), clean(id$antigen), clean(id$method), ext)
+    }
+    output$dl_samples_csv <- shiny::downloadHandler(
+      filename = function() sub("^curve_", "samples_", .sc_file("csv")),
+      content = function(file) utils::write.csv(samples_view(), file, row.names = FALSE, na = ""))
+
+    # Everything stored about the selected curve (one plate, one antigen, one
+    # method), one sheet per kind, for people who want the numbers in Excel.
+    output$dl_curve_xlsx <- shiny::downloadHandler(
+      filename = function() .sc_file("xlsx"),
+      content = function(file) {
+        b <- bundle(); id <- curve_ident(); cid <- curve_id(); meth <- method()
+        safe <- function(df, prefix = TRUE) {
+          if (is.null(df) || !is.data.frame(df) || !nrow(df)) return(data.frame(Message = "Nothing stored."))
+          df[] <- lapply(df, function(col) {
+            if (inherits(col, "integer64")) bit64::as.character.integer64(col)
+            else if (inherits(col, c("POSIXct", "POSIXt", "Date")) || is.factor(col)) as.character(col)
+            else if (is.list(col)) vapply(col, function(x) paste(as.character(x), collapse = ","), "")
+            else col
+          })
+          if (!prefix) return(df)
+          cbind(id[rep(1L, nrow(df)), c("experiment", "plate", "antigen", "feature", "method"), drop = FALSE], df, row.names = NULL)
+        }
+        std <- tryCatch(fetch_calib_standards(pool, cid, meth), error = function(e) NULL)
+        blk <- tryCatch(fetch_calib_blanks(pool, cid, meth), error = function(e) NULL)
+        info <- data.frame(item = c("project_id", "study", "experiment", "plate", "antigen", "feature", "source", "method", "curve_id", "exported"),
+                           value = c(as.character(cur()$project_id), as.character(cur()$study), id$experiment, id$plate, id$antigen,
+                                     as.character(id$feature), as.character(id$source), id$method, as.character(cid),
+                                     format(Sys.time(), "%Y-%m-%d %H:%M:%S")), stringsAsFactors = FALSE)
+        sheets <- list(curve = info, samples = safe(samples_view(), prefix = FALSE), standards = safe(std), blanks = safe(blk),
+                       model_selection = safe(b$fits), parameters = safe(b$params), gates = safe(b$gates),
+                       limits_loq_lod = safe(b$diagnostics), fitted_grid = safe(b$grid))
+        ok <- tryCatch({ openxlsx::write.xlsx(sheets, file); TRUE }, error = function(e) FALSE)
+        if (!ok) openxlsx::write.xlsx(list(error = data.frame(message = "The workbook could not be written.")), file)
+      })
 
     list(curve_id = curve_id, method = method, bundle = bundle)
   })

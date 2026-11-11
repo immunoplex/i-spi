@@ -23,7 +23,7 @@ lin_hover <- function(d) {
                    "concentration %s · pcov %s · %s"),
             lab, .lin_esc(d[[paste0(p, "plate")]]), .lin_esc(d[[paste0(p, "well")]]),
             .lin_esc(d$patientid), .lin_esc(d$timeperiod),
-            .lin_esc(d[[paste0(p, "specimen_id")]]), .lin_esc(d[[paste0(p, "dilution")]]),
+            .lin_esc(.lin_spec(d[[paste0(p, "specimen_id")]], d[[paste0(p, "well")]])), .lin_esc(d[[paste0(p, "dilution")]]),
             .lin_esc(d[[paste0(p, "wavelength")]]), .lin_esc(d[[paste0(p, "method")]]), .lin_esc(d[[paste0(p, "source")]]),
             .lin_fmt(d[[paste0(p, "conc")]], 4), .lin_fmt(d[[paste0(p, "pcov")]], 3),
             LIN_GATE_LABEL[d[[paste0(p, "gate_class")]]])

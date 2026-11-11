@@ -119,6 +119,13 @@ lin_preset_sel <- function(pts, key) {
   if (is.na(p)) "NA" else if (p < 1e-4) "<0.0001" else format(round(p, 4), nsmall = 0, scientific = FALSE)
 }
 .lin_chr <- function(x) ifelse(is.na(x), "-", as.character(x))
+# Specimen id for display: when it is just the well label, say so.
+.lin_spec <- function(specimen, well) {
+  s <- as.character(specimen); w <- as.character(well)
+  same <- !is.na(s) & !is.na(w) & nzchar(s) & toupper(trimws(s)) == toupper(trimws(w))
+  s[same] <- "(same as well)"
+  s
+}
 .lin_sort_dil <- function(x) {
   x <- unique(x[!is.na(x)]); n <- suppressWarnings(as.numeric(x))
   x[order(is.na(n), n, x)]
