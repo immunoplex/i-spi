@@ -1226,6 +1226,8 @@ server <- function(input, output, session) {
       source("data_dictionary.R",    local = TRUE)
       source("replicates_module.R",  local = TRUE)   # Data > Raw inputs > Replicates (before the Data tab, which hosts it)
       source("wavelength_subtraction_module.R", local = TRUE)  # Data > Raw inputs > Subtract Wavelengths (needs replicates_module.R)
+      source("fit_diagnostics_report.R", local = TRUE)  # Data > Results > Fit diagnostics (report + assessment)
+      source("fit_diagnostics_module.R", local = TRUE)
       source("data_tab_module.R",    local = TRUE)
       source("delete_study_components_ui.R", local = TRUE)
       source("delete_study_components.R",    local = TRUE)

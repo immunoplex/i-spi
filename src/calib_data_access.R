@@ -644,6 +644,33 @@ fetch_calib_grid_scoped <- function(pool, project, study, experiment, display_li
 fetch_calib_samples_scoped     <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_samples")
 fetch_calib_diagnostics_scoped <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_diagnostics")
 fetch_calib_loo_scoped         <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_loo")
+# Sampler/optimizer diagnostics (rhat, ESS, divergences, treedepth, E-BFMI) and the
+# Bayesian population/noise parameters (mu_*, sigma_*, sigma_obs, nu), both written
+# by the worker for the selected model. Feed the fit-diagnostics report.
+fetch_calib_fit_diag_scoped    <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_fit_diag")
+fetch_calib_hyperparam_scoped  <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_hyperparam")
+
+# Which response scale each stored fit was actually computed on, per (curve, method).
+# calib_standards keeps both the response the model saw (response_model) and the raw
+# one, so the scale is measured, not assumed: dev_raw ~ 0 means the model fitted the
+# raw response, dev_log10 ~ 0 means log10, dev_ln ~ 0 natural log. Aggregated in SQL
+# (one row per curve/method) so no standard-well rows cross the wire.
+fetch_calib_standards_summary_scoped <- function(pool, project, study, experiment) {
+  .calib_q(pool, sprintf(
+    "SELECT cs.curve_id, cs.method, count(*) AS n_std,
+            count(*) FILTER (WHERE cs.included) AS n_included,
+            min(cs.assay_response_raw)::float8 AS raw_min, max(cs.assay_response_raw)::float8 AS raw_max,
+            avg(abs(cs.response_model::float8 - cs.assay_response_raw::float8)) AS dev_raw,
+            avg(abs(cs.response_model::float8 - log(cs.assay_response_raw::float8)))
+                FILTER (WHERE cs.assay_response_raw > 0) AS dev_log10,
+            avg(abs(cs.response_model::float8 - ln(cs.assay_response_raw::float8)))
+                FILTER (WHERE cs.assay_response_raw > 0) AS dev_ln
+       FROM %s cs JOIN %s cl ON cl.curve_id = cs.curve_id
+      WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
+      GROUP BY cs.curve_id, cs.method",
+    .tbl("calib_standards"), .tbl("curve_lookup")),
+    params = list(project, study, experiment))
+}
 
 # Per-sample curveRweights precision weights (calib_weights) for a study/
 # experiment. Same shape/key as calib_samples -- curve_id-keyed, so the

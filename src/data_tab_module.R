@@ -166,8 +166,10 @@ dataTabUI <- function() {
   groups <- lapply(names(CALIB_TABLE_ORDER), function(grp) {
     if (identical(grp, "Raw inputs"))
       return(shiny::tabPanel(grp, shiny::uiOutput("raw_inputs_tabset")))
-    shiny::tabPanel(grp, do.call(shiny::tabsetPanel,
-                                 lapply(CALIB_TABLE_ORDER[[grp]], .data_tab_table_panel)))
+    tabs <- lapply(CALIB_TABLE_ORDER[[grp]], .data_tab_table_panel)
+    if (identical(grp, "Results"))   # interpretation of the tables above, not a table itself
+      tabs <- c(tabs, list(shiny::tabPanel("Fit diagnostics", fitDiagnosticsUI("fitdiag"))))
+    shiny::tabPanel(grp, do.call(shiny::tabsetPanel, tabs))
   })
 
   shiny::tagList(
@@ -497,6 +499,9 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
   refresh_exps <- get0("refresh_experiment_trigger", inherits = TRUE)
   replicatesServer("replicates", scope = scope, get_table = get_table, pool = db_pool,
                    reload_trigger = reload_trigger, refresh_experiments = refresh_exps)
+
+  # ---- Results > Fit diagnostics: assessed report of the stored fit statistics
+  fitDiagnosticsServer("fitdiag", scope = scope, pool = db_pool, reload_trigger = reload_trigger)
 
   # ---- Subtract Wavelengths tab: present only while the selected experiment has
   # 2+ wavelengths, placed just before Replicates (subtract first, then aggregate).

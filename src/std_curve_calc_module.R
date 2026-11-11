@@ -385,6 +385,7 @@ stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), 
     job_started_at <- shiny::reactiveVal(NULL)  # wall-clock; drives escalation
     job_detail     <- shiny::reactiveVal(NULL)  # last full JobStatus from the API
     job_checked_at <- shiny::reactiveVal(NULL)  # when we last polled (for display)
+    fit_checked_job <- NULL   # job whose finished fits we already screened (plain var: not a trigger)
     queue_pos      <- shiny::reactiveVal(NULL)  # list(pos,total) while queued
     job_batch      <- shiny::reactiveVal(NULL)  # data.frame(curve_id, ...) we submitted (diag)
     job_api        <- shiny::reactiveVal(NULL)  # client THIS job was submitted/resumed through
@@ -511,6 +512,25 @@ stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), 
           batch_cids <- tryCatch(as.integer(job_batch()$curve_id), error = function(e) integer(0))
           if (length(batch_cids))
             tryCatch(clear_recalc_flags(pool, batch_cids), error = function(e) NULL)
+
+          # Screen the fresh fits once and say so if they look unreliable (sampler
+          # trouble, wrong response scale, a plate dragging a pooled fit...). The
+          # full evidence is Data > Results > Fit diagnostics. Never blocks the poll.
+          if (!identical(fit_checked_job, jid)) {
+            fit_checked_job <<- jid
+            tryCatch({
+              s  <- cur()
+              rp <- fit_diag_build(fit_diag_fetch(pool, s$project_id, s$study, s$experiment),
+                                   list(project_id = s$project_id, study = s$study, experiment = s$experiment))
+              nt <- fit_diag_notice(rp, jid)
+              if (!is.null(nt))
+                shiny::showNotification(duration = NULL,
+                  type = if (identical(nt$severity, "error")) "error" else "warning",
+                  shiny::tagList(shiny::strong("These fits may not be reliable"),
+                    shiny::tags$ul(lapply(nt$text, shiny::tags$li)),
+                    shiny::tags$small("Details: Data > Results > Fit diagnostics.")))
+            }, error = function(e) message("[fit-diag] post-job check skipped: ", conditionMessage(e)))
+          }
         }
       }
       invisible()
