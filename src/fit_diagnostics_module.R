@@ -12,6 +12,7 @@ fitDiagnosticsUI <- function(id) {
   shiny::tagList(
     shiny::div(class = "help-block", style = "margin:8px 0;",
       shiny::strong("Why a fit looks odd, in one place."),
+      help_icon("data.results.fit_diagnostics", function(x) x),
       " Gathers the sampler statistics, population parameters, per-plate curve parameters, ",
       "quantification gates and LOO results for the selected experiment, assesses them, ",
       "and suggests what to do. The download is written so it can be pasted straight into an LLM."),

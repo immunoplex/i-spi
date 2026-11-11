@@ -4,7 +4,7 @@ title: Convergence (fit diagnostics)
 audience: both
 category: glossary
 topic: Curve models and fitting
-see_also: [glossary.frequentist_approach, glossary.bayesian_approach, glossary.hierarchical_priors, glossary.robust_nonlinear_estimation, compute.standard_curve.bayes_draws]
+see_also: [glossary.frequentist_approach, glossary.bayesian_approach, glossary.hierarchical_priors, glossary.robust_nonlinear_estimation, compute.standard_curve.bayes_draws, glossary.fit_diagnostics_report]
 references:
   - text: "curveRcore::tidy_fit_diag() — the per-fit diagnostic columns stored for every candidate model (frequentist and Bayesian)."
   - text: "Vehtari A, Gelman A, Simpson D, Carpenter B, Bürkner PC (2021). Rank-normalization, folding, and localization: An improved Rhat for assessing convergence of MCMC. Bayesian Analysis 16(2):667-718. (general interpretation of Rhat/ESS/divergences below is standard MCMC-diagnostics practice, not drawn from this app's own documentation)."
