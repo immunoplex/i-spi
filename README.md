@@ -28,6 +28,7 @@ A Shiny-based web application for analyzing and managing serology assay data wit
 - **Bead Count Metrics:** Quality checks (`bead_count_functions.R`)
 - **Curve Fitting:** Advanced algorithms (`standard_curve_ui.R`)
 - **Fit Diagnostics:** Data > Results > Fit diagnostics assesses a fitted experiment (sampler health, response scale, settings provenance, plate heterogeneity, gates) and suggests next steps; downloadable as Markdown/JSON for an LLM. Design: `docs/design/fit_diagnostics.md`
+- **Replicate Linearity:** Quality Control > Replicate Linearity compares repeated estimates of the same sample (duplicates, dilutions, plates, methods) with a 1:1 plot, errors-in-variables regression, concordance and Bland-Altman agreement, optional harmonization, and a consensus concentration per sample. Design: `docs/design/replicate_linearity.md`
 - **Dilution Analysis:** Comprehensive dilution series analysis (`dilution_analysis_ui.R`)
 - **Dilutional Linearity Correction:** Interactive method for computing corrected interpolated values comparable between samples run at different dilutions. ('dilutional_linearity_ui.R')
 - **Outlier Detection:** Statistical outlier analysis (`outliers.R`)

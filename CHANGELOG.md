@@ -1,6 +1,41 @@
 # Changelog
 
-Releases are tagged `vYYYY.MM.DD` (the date the tag was cut).
+Releases are tagged `vYYYY.MM.DD` (the date the tag was cut); a second release on the same day takes a `.N` suffix.
+
+## v2026.11.11.1 — Replicate Linearity
+
+### Added
+- **Quality Control > Replicate Linearity** (between Standard Curve and Precision
+  Weights): finds samples measured more than once (duplicates, several dilutions,
+  several plates, frequentist vs Bayesian, several curve sources), lets you choose
+  what goes on each axis, and shows how well the estimates agree. Test samples
+  only; standards, controls and blanks are planned.
+- Scatter with a 1:1 line, regression line with confidence band, fill colour by
+  the y point's gate class and outline by the x point's (9 combinations), point
+  size by combined precision, and hover with plate, well, patientid, timeperiod,
+  specimen_id, sample_dilution, wavelength, method and source for both axes.
+- **Error model:** both estimates carry error (Deming; York when weighted) or only
+  y (ordinary / weighted least squares), on the log10 or natural scale, with the
+  error-variance ratio taken from pcov, set to 1, or entered.
+- **Regression uses** all pairs, pairs within a pcov gate for each axis, or all
+  pairs weighted by precision; the two not chosen are reported as sensitivity
+  analyses.
+- **Agreement:** Lin's concordance coefficient and Bland-Altman bias, limits of
+  agreement and trend lead; Pearson r, R-squared and Spearman are kept. Duplicates
+  also report within-pair CV and ICC.
+- **Transforms:** map y onto x (1:1), or harmonize both sets to the latent
+  concentration; plus a consensus concentration with an interval per sample.
+- Report (Markdown and JSON) with project, study, experiment, set definition,
+  model, regression and agreement, sensitivity analyses, transformation parameters
+  and consensus; downloads for the pairs and the consensus table.
+- Help: an information icon beside every control opens a plain-language note
+  (`qc.linearity.*`), and three Glossary entries under a new topic, "Agreement and
+  linearity". Design note: `docs/design/replicate_linearity.md`.
+
+### Notes
+- Gate class is missing for about 40% of stored samples; it is then inferred from
+  the pcov pass flag and the report says how many were.
+- No schema changes and no worker changes.
 
 ## v2026.11.11 — Fit diagnostics
 

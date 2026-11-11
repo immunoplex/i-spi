@@ -580,7 +580,7 @@ output$view_stored_experiments_ui <- renderUI({
                             inputId = "qc_component",
                             label = "",
                             choices = c("Bead Count", "Plate Dilution Series", "Standard Curve",
-                                        "Precision Weights"),
+                                        "Replicate Linearity", "Precision Weights"),
                             selected = character(0)
                           ),
                           conditionalPanel(
@@ -608,6 +608,14 @@ output$view_stored_experiments_ui <- renderUI({
                           conditionalPanel(
                             condition = "input.qc_component == 'Standard Curve'",
                             uiOutput("std_curver_ui")
+                          ),
+
+                          # Replicate Linearity: agreement between repeated estimates of
+                          # the same sample (duplicates, dilutions, plates, methods).
+                          # Rendered by linearityServer (wired in app.R).
+                          conditionalPanel(
+                            condition = "input.qc_component == 'Replicate Linearity'",
+                            uiOutput("replicate_linearity_ui")
                           ),
 
                           # Precision Weights: curveRweights precision-weighting jobs

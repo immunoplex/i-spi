@@ -101,6 +101,7 @@ GLOSSARY_TOPICS <- c(
   "Detection and quantification limits",
   "Precision and uncertainty",
   "Out-of-range samples",
+  "Agreement and linearity",
   "Projects and data import"
 )
 

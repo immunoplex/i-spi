@@ -1222,6 +1222,8 @@ server <- function(input, output, session) {
       source("std_curve_compare_module.R", local = TRUE)
       source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
       source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
+      source("linearity_report.R",   local = TRUE)   # QC: Replicate Linearity (sets, pairs, regression, report)
+      source("linearity_module.R",   local = TRUE)
       source("assay_response.R",     local = TRUE)
       source("data_dictionary.R",    local = TRUE)
       source("replicates_module.R",  local = TRUE)   # Data > Raw inputs > Replicates (before the Data tab, which hosts it)
@@ -1290,6 +1292,12 @@ server <- function(input, output, session) {
         plateDilutionSeriesUI("plate_dil_series")
       })
 
+      # Replicate Linearity QC tab: sibling of Standard Curve, between it and
+      # Precision Weights (see ui_handler.R). Reads computed samples read-only.
+      output$replicate_linearity_ui <- renderUI({
+        linearityUI("rep_lin")
+      })
+
       # stdCurveServer("std_curve", conn = db_pool, api = compute_api_client(),
       #                scope = calib_scope)
       calib_dirty    <- shiny::reactiveVal(0)
@@ -1307,6 +1315,8 @@ server <- function(input, output, session) {
       plateDilutionSeriesServer("plate_dil_series", pool = db_pool,
                                 scope = calib_scope, reload_trigger = reload_trigger,
                                 calib_dirty = calib_dirty)
+      linearityServer("rep_lin", pool = db_pool, scope = calib_scope,
+                      reload_trigger = reload_trigger, calib_dirty = calib_dirty)
       settingsCascadeServer("settings", pool = db_pool, scope = calib_scope)
       settingsExportImportServer("settings_io", pool = db_pool,
                                  scope = calib_scope, user = currentuser)
