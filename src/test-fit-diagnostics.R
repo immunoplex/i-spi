@@ -195,6 +195,33 @@ test_that("scale: units fitted on different scales are flagged at experiment lev
   expect_match(rep$findings$evidence[rep$findings$finding == "scale-mixed"], "raw")
 })
 
+test_that("frequentist: per-plate fits, no pooling advice, systematic gate failures summarised", {
+  ids <- 1:38
+  fit <- data.frame(curve_id = ids, method = "frequentist", model_name = "logistic4", is_best = TRUE,
+    is_fallback = TRUE, eligible = FALSE, job_id = "F1", plateid = paste0("plate_", ids),
+    antigen = "Ag", feature = "Abs", source = "S", wavelength = "0", stringsAsFactors = FALSE)
+  par <- do.call(rbind, lapply(ids, function(i) data.frame(curve_id = i, method = "frequentist",
+    model_name = "logistic4", term = c("a", "b", "c", "d"),
+    estimate = c(0.3, 0.3, 2.8, 2 + 0.1 * i), std_error = 0.05, stringsAsFactors = FALSE)))
+  gate <- rbind(
+    data.frame(curve_id = ids[1:27], gate = "at_bound", detail = "d at upper bound"),
+    data.frame(curve_id = ids[28:38], gate = "dynamic_range", detail = "dynamic range = 0 log10 (need >= 0.5)"))
+  gate$method <- "frequentist"; gate$model_name <- "logistic4"; gate$passed <- FALSE
+  diag <- data.frame(curve_id = ids, method = "frequentist", model_name = "logistic4", fit_seconds = NA_real_,
+    fit_seed = NA_real_, converged = TRUE, hessian_condition_number = 4e5, stringsAsFactors = FALSE)
+  rep <- fit_diag_build(list(fit = fit, param = par, gate = gate, diag = diag,
+                             groups = data.frame(curve_id = ids, multiplate_group_id = "G")))
+  u <- rep$units[[1]]
+  expect_match(u$fit_mode, "per-plate")                       # NA seed/seconds must not read as pooled
+  expect_false(any(grepl("^heterogeneity|^population", rep$findings$finding)))
+  expect_false(any(grepl("bayes_single_plate|exchangeable", rep$strategy$action)))
+  expect_match(rep$findings$evidence[rep$findings$finding == "eligibility"], "by gate: at_bound=27, dynamic_range=11")
+  expect_match(rep$findings$evidence[rep$findings$finding == "eligibility"], "more, see table")
+  s <- rep$strategy
+  expect_true(any(grepl("upper plateau", s$action))); expect_true(any(grepl("dynamic_range", s$action)))
+  expect_false(any(grepl("Review plate\\(s\\)", s$action)))   # no 38-plate list
+})
+
 test_that("integer64 curve ids are keyed correctly", {
   skip_if_not_installed("bit64")
   d <- mk_data(); for (n in names(d)) if (is.data.frame(d[[n]]) && "curve_id" %in% names(d[[n]]))

@@ -265,6 +265,12 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
     add("no-sampler-diagnostics", "info", "No sampler/optimizer diagnostics are stored for this unit (older run, or table missing).")
   }
 
+  # curveRfreq fits every plate on its own (no shared population, fit_seed/fit_seconds
+  # are NA), so the "same seed + runtime = one joint fit" inference only holds for
+  # Bayesian. Pooling-specific findings below are gated on pooled_fit.
+  if (identical(method, "frequentist")) info$fit_mode <- "per-plate (independent fits)"
+  pooled_fit <- !identical(method, "frequentist") && !grepl("^per-plate", .fd_or(info$fit_mode, ""))
+
   # -- eligibility: a model passes only if EVERY plate passes ---------------------
   ft <- d$fit
   ft <- ft[as.character(ft$curve_id) %in% cids & ft$method == method & ft$model_name == model, , drop = FALSE]
@@ -276,14 +282,19 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
       fails <- if (.fd_has(gt, c("curve_id", "gate", "passed")))
         gt[as.character(gt$curve_id) %in% as.character(bad$curve_id) & gt$method == method &
            gt$model_name == model & gt$passed %in% FALSE, , drop = FALSE] else NULL
-      gtxt <- if (.fd_has(fails)) paste(sprintf("%s: %s", plates[match(as.character(fails$curve_id), cids)],
-                                                 fails$gate), collapse = ", ") else "gate detail unavailable"
+      pf <- if (.fd_has(fails)) sprintf("%s: %s", plates[match(as.character(fails$curve_id), cids)], fails$gate) else character(0)
+      info$gate_counts <- if (.fd_has(fails)) { tb <- table(fails$gate); stats::setNames(as.integer(tb), names(tb)) } else NULL
+      # Many failing plates: lead with counts per gate, list only the first few.
+      gtxt <- if (!length(pf)) "gate detail unavailable" else
+        paste0("by gate: ", paste(sprintf("%s=%d", names(info$gate_counts), info$gate_counts), collapse = ", "),
+               "; ", if (length(pf) > 12L) paste0(paste(utils::head(pf, 12L), collapse = ", "), ", ... (+", length(pf) - 12L, " more, see table)")
+                     else paste(pf, collapse = ", "))
       tabs$gate_failures <- if (.fd_has(fails)) data.frame(
         plate = plates[match(as.character(fails$curve_id), cids)], gate = fails$gate,
         detail = if ("detail" %in% names(fails)) fails$detail else NA_character_, stringsAsFactors = FALSE) else NULL
       add("eligibility", if (nrow(bad) == n) "error" else "warn",
-          sprintf("%d of %d plates fail the quantification gates for the selected model; a pooled model counts as ineligible if any plate fails.",
-                  nrow(bad), n),
+          sprintf("%d of %d plates fail the quantification gates for the selected model%s.", nrow(bad), n,
+                  if (pooled_fit) "; a pooled model counts as ineligible if any plate fails" else ""),
           gtxt, "Inspect or mask the failing plate(s)' standards, or fit them separately from the rest.")
       info$ineligible_plates <- plates[match(as.character(bad$curve_id), cids)]
     }
@@ -305,7 +316,7 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
     wide$max_rel_se[!is.finite(wide$max_rel_se)] <- NA_real_
     for (t in intersect(c("a", "c", "d"), terms)) wide[[paste0("z_", t)]] <- .fd_rz(wide[[t]])
     tabs$plate_params <- wide
-    if (n >= TH$outlier_min_plates) {
+    if (pooled_fit && n >= TH$outlier_min_plates) {
       zc <- intersect(paste0("z_", c("a", "c", "d")), names(wide))
       out <- which(apply(wide[zc], 1, function(r) any(abs(r) > TH$outlier_z, na.rm = TRUE)))
       if (length(out)) {
@@ -318,7 +329,7 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
             "A pooled hierarchy shrinks every plate toward a shared mean; exclude or separately fit the outlier plate(s).")
       }
     }
-    if (n >= 2L && "d" %in% terms) {
+    if (pooled_fit && n >= 2L && "d" %in% terms) {
       dd <- wide$d[is.finite(wide$d)]
       sp <- if (length(dd) >= 2L && stats::median(abs(dd)) > 0) (max(dd) - min(dd)) / stats::median(abs(dd)) else NA_real_
       info$d_spread <- sp
@@ -328,7 +339,7 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
             sprintf("(max-min)/median of d = %s across %d plates", .fd_fmt(sp, 3), length(dd)),
             "Plates from different days/lots are not exchangeable; fit similar plates together or per plate.")
     }
-    if (n >= 2L && "c" %in% terms) {
+    if (pooled_fit && n >= 2L && "c" %in% terms) {
       cc <- wide$c[is.finite(wide$c)]
       if (length(cc) >= 2L && diff(range(cc)) > TH$c_spread_warn)
         add("heterogeneity-inflection", "warn", "Inflection point shifts a lot between plates.",
@@ -410,7 +421,17 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
     act(0, "Recompute so the stored fit matches the intended response scale (or restore the previous setting).",
         "Stored results and current settings disagree, so comparisons with other runs are not like-for-like.")
 
-  if (!is.null(info$outlier_plates) || !is.null(info$ineligible_plates)) {
+  many <- length(info$ineligible_plates) > max(5L, 0.25 * info$n_plates)
+  if (many && !is.null(info$gate_counts)) {
+    # A systematic failure, not a few bad plates: say what the gate means.
+    gc <- info$gate_counts
+    if ("at_bound" %in% names(gc))
+      act(1, sprintf("%d gate failure(s) are 'at_bound' (usually the upper asymptote d at its allowed maximum): the standard series does not reach an upper plateau on those plates. Check whether the top standards are masked or the top concentration is too low to saturate; the curve above the last standard is extrapolation.", gc[["at_bound"]]),
+          "A parameter pinned at its bound is not identified, so its uncertainty and the quantification limits are unreliable. This is a property of the standards, not of pooling.")
+    if ("dynamic_range" %in% names(gc))
+      act(1, sprintf("%d plate(s) fail 'dynamic_range': no concentration range meets the precision (pcov) threshold. Inspect those plates' standards (flat, noisy or mostly masked) before trusting their sample estimates.", gc[["dynamic_range"]]),
+          "Zero dynamic range means the fitted curve cannot quantify any sample on that plate.")
+  } else if (!is.null(info$outlier_plates) || !is.null(info$ineligible_plates)) {
     bad <- unique(c(info$outlier_plates, info$ineligible_plates))
     act(1, sprintf("Review plate(s) %s: unmask/inspect their standards, or exclude them and refit.", paste(bad, collapse = ", ")),
         "These plates are discordant with the rest or fail the gates; in a pooled fit they affect all plates.")
