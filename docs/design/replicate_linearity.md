@@ -1,7 +1,8 @@
 # Replicate linearity (QC) — design
 
-Status: phase 1 (test samples). Code: `src/linearity_report.R` (pure logic),
-`src/linearity_module.R` (UI, plot, wiring), `src/test-linearity.R`. Placement:
+Status: test samples, controls and standards. Code: `src/linearity_report.R` (pure logic),
+`src/linearity_backcalc.R` (controls and standards), `src/linearity_module.R` (UI, plot,
+wiring), `src/test-linearity.R`, `src/test-linearity-backcalc.R`. Placement:
 Quality Control, between Standard Curve and Precision Weights.
 
 ## Purpose
@@ -103,11 +104,44 @@ scale, transform, intervals, agreement, consensus. Three Glossary concept entrie
 icons work inside the QC tab. A test checks that every icon id and every
 `[[link]]` resolves. When an option is added, add its note and icon in the same change.
 
-## Phase 2 (not built)
-Standards, controls and blanks have no stored back-calculated concentration,
-pcov or gate class. Back-calculate them in the app from `calib_param` and the
-LLOQ/ULOQ (validate against stored sample values) and add rows with
-`kind = "standard" | "control" | "blank"`.
+## Controls and standards (phase 2, built)
+Code: `src/linearity_backcalc.R`, `src/test-linearity-backcalc.R`, help note
+`qc.linearity.kinds`. The **Include** boxes choose test samples, controls, standards;
+**Compare estimates of** then picks one type at a time (an estimate of a control is
+never paired with one of a patient sample). Set ids carry the type
+(`control:spec:<name>`, `standard:spec:std <dilution>`).
+
+Controls and standards have no stored concentration, pcov or gate class, so the app
+computes them per curve and method from what is stored:
+- **Concentration**: the best model's `calib_param` inverted at the response with
+  `.fda_backcalc_conc` (the worker's inverses, copied from curveRcore). Bayesian
+  uses `q_med` per parameter (the worker takes the median of the draw-wise
+  inverses, so this is an approximation, measured below).
+- **Response scale**: standards already carry `response_model`. Controls
+  (`xmap_control.antibody_mfi`) are put on the scale measured from `calib_standards`
+  (`lin_scales`); when it cannot be measured (blank-subtracted fits) the experiment's
+  most common scale is used and the notification says how many curves.
+- **pcov**: `calib_grid.pcov` read at the estimated log10 concentration. The grid is
+  the delta-method pcov at y = f(x), so a response inverting to x has the pcov the grid has
+  at x. The parameter covariance is not stored, which is why the grid is used. Off the
+  curve (or outside the grid) pcov is 150, as in the worker.
+- **Gate class**: `lin_gate_class`, the curveRcore rule, from `calib_diagnostics`
+  (LLOQ/ULOQ, else pcov threshold + inflection).
+- **Dilution**: a control's final concentration is the estimate x its dilution; a standard's is
+  the estimate (its dilution is already in the nominal concentration).
+- **Which curves**: a control well is read through every curve of its plate and
+  antigen (key without `source`, as blanks are), so each source gives an estimate. Masked
+  control wells and excluded standards are left out (`include_masked` is a fetch argument,
+  not yet a control).
+
+**Check against the worker** (`lin_backcalc_check`, shown on load and in the report):
+re-inverting the stored grid's response against its own log10 concentration (exact for
+frequentist), and the grid-read pcov against the pcov stored for test samples. If the
+check is poor for a study, trust the test-sample numbers and treat controls as approximate.
+
+Blanks have no concentration and are not included. A standard's set is its level
+(`std <dilution>`), so wells of one level on different plates are replicates; comparing
+back-calculated against nominal concentration (recovery) is not part of this tab.
 
 ## Not built
 - Anchoring one axis to a reference (alpha1 = 0, beta1 = 1) for harmonization.

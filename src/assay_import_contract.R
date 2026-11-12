@@ -485,6 +485,9 @@ assemble_upload_frames <- function(sheets, scope, opts = list()) {
   # on the plates_map side for bead; add them to the response intersect too. No
   # assay carries them on BOTH sides, so this cannot create a .x/.y collision.
   resp_extra <- c(resp_extra, "pctaggbeads", "samplingerrors")
+  # masked / mask_reason: a reader may flag points that the instrument software had
+  # already excluded (.rbx outlier flags); they are stored as masks from the start.
+  resp_extra <- c(resp_extra, "masked", "mask_reason")
   resp_cols  <- intersect(c(nk, resp_extra), names(assay_response))
 
   # header (one row per plate) from plate_id sheet
@@ -542,6 +545,16 @@ assemble_upload_frames <- function(sheets, scope, opts = list()) {
     df$project_id           <- project_id
     df <- apply_column_mapping(df, col_mapping)
 
+    # Masks carried by the reader. masked is never NA (the column is NOT NULL, and a
+    # well the reader had no flag for is simply not masked); a masked row always has
+    # a reason -- the reader's, or "masked at import" when it gave none; an unmasked
+    # row has none. Absent for readers that carry no flags (the DB default applies).
+    if ("masked" %in% names(df)) {
+      df$masked <- !is.na(df$masked) & as.logical(df$masked)
+      rs <- if ("mask_reason" %in% names(df)) trimws(as.character(df$mask_reason)) else rep(NA_character_, nrow(df))
+      df$mask_reason <- ifelse(df$masked, ifelse(is.na(rs) | !nzchar(rs), "masked at import", rs), NA_character_)
+    }
+
     # sampleid must be non-null; fall back to well
     if (!"sampleid" %in% names(df)) df$sampleid <- NA_character_
     empty_sid <- is.na(df$sampleid) | trimws(as.character(df$sampleid)) == ""
@@ -553,6 +566,7 @@ assemble_upload_frames <- function(sheets, scope, opts = list()) {
       "patientid", "plate_id", "well", "stype", "sampleid", "agroup", "source",
       "dilution", "pctaggbeads", "samplingerrors", "antigen", "antibody_mfi",
       "antibody_n", "feature", "plate", "plateid", "nominal_sample_dilution",
+      "masked", "mask_reason",
       extra_cols
     )
     df <- df[, intersect(keep, names(df)), drop = FALSE]

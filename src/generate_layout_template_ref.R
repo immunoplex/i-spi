@@ -486,9 +486,13 @@ generate_layout_template <- function(all_plates,
     assay_response_long$feature          <- input_feature_value
 
     # Select and order final columns
+    # pctaggbeads / masked / mask_reason are the instrument's per-well quality
+    # fields (.rbx: derived % aggregate beads and the Bio-Plex outlier flag); they
+    # ride on this sheet to the assembler, which writes them to the xmap_* tables.
     final_cols <- c("project_id", "study_name", "experiment_name",
                     "plateid", "well", "antigen", "feature",
-                    "assay_response", "assay_bead_count")
+                    "assay_response", "assay_bead_count",
+                    "pctaggbeads", "masked", "mask_reason")
     available_final <- intersect(final_cols, names(assay_response_long))
     assay_response_long <- assay_response_long[, available_final, drop = FALSE]
 

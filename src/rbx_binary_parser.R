@@ -14,6 +14,10 @@
 #   * per-well x per-analyte statistics: median (FI) [576/576], mean, trimmed
 #     mean, cv, trimmed cv, sd, trimmed sd, std err, trimmed std err, bead count
 #   * per-well total/gated/in-region event counts
+#   * per well x analyte OUTLIER flag (the mask): byte 12 of the 24-byte quantification
+#     record; matches the vendor export's "Outlier" sheet cell for cell
+#   * % aggregate beads per well, DERIVED: 100 * (total - gated) / total events
+#     (the binary stores no percentage; see rbx_pct_agg())
 #
 # NOT in the binary (need the XML export): observed/expected concentrations and
 # the standard-curve fit coefficients.
@@ -40,7 +44,7 @@
 # | `parse_samples()` — sample → well assignments | `doc$samples` | `tdap.samples` |
 # | `parse_quantification()` + `parse_stat_blocks()` + `merge_all()` — per-well per-analyte FI and stats | `doc$wells` | `tdap.wells` |
 #
-# **Nothing is left over.** The two things worth noting:
+# **The five stages cover the file; the quality fields above are read inside stage 5/7.** Two things worth noting:
 #
 # 1. **`medians` and `stat_blocks` are intermediate** — `parse_quantification()` and `parse_stat_blocks()` are parsed separately then merged by `merge_all()` into `doc$wells`. They aren't separate top-level components; the median FI and the full stats block are two encodings of the same well data that the parser reconciles into one unified wells list.
 #
@@ -256,15 +260,22 @@ parse_quantification <- function(raw, region_order, qend) {
   wells <- list()
   for (pos1 in idx0) {
     o <- pos1 - 1L                            # 0-based offset
-    vals <- numeric(Nreg); ok <- TRUE
+    vals <- numeric(Nreg); flg <- rep(NA_integer_, Nreg); ok <- TRUE
     for (k in 0:(Nreg - 1L)) {
       p <- o + stride * k
       reg <- rd_i32(raw, p); cnt <- rd_i32(raw, p + 4L); val <- rd_f64(raw, p + 16L)
       if (reg != region_order[k + 1L] || cnt != 1L || is.nan(val) || is.infinite(val) ||
           !(val == 0 || (abs(val) >= 1e-6 && abs(val) <= 1e7))) { ok <- FALSE; break }
       vals[k + 1L] <- val
+      # The 24-byte record is <i32 region><i32 count><i32 ?><i32 FLAG><f64 median>.
+      # FLAG (offset 12) is 1 for a point Bio-Plex Manager marks as an outlier --
+      # the "Outlier" sheet of its Excel export, and what an analyst's masking of a
+      # standard point sets -- and 0 otherwise. Matched cell-for-cell against the
+      # vendor export on every plate whose export came from the same .rbx.
+      f12 <- rd_i32(raw, p + 12L)
+      flg[k + 1L] <- if (!is.na(f12) && f12 %in% c(0L, 1L)) f12 else NA_integer_
     }
-    if (ok) wells[[length(wells) + 1L]] <- setNames(vals, as.character(region_order))
+    if (ok) wells[[length(wells) + 1L]] <- structure(setNames(vals, as.character(region_order)), outlier = flg)
   }
   # drop all-zero padding wells
   Filter(function(w) any(w != 0), wells)
@@ -506,15 +517,18 @@ merge_all <- function(medians, stat_blocks, region_order, region_name, samples,
     label <- rbx_well_label(idx, ncol)
     med <- medians[[i]]
     analytes <- list()
+    flags <- attr(med, "outlier")
     for (rg in names(med)) {
       nm <- region_name[[rg]]; if (is.null(nm)) nm <- rg
       st <- as.list(rep(NA_real_, length(STAT_FIELDS))); names(st) <- STAT_FIELDS
       st$region <- as.integer(rg); st$median <- med[[rg]]
+      st$outlier <- if (is.null(flags)) NA_integer_ else flags[match(rg, names(med))]
       analytes[[nm]] <- st
     }
     wells[[i]] <- list(well = label, index = idx + 1L, sample_label = NA, sample_description = NA,
                        sample_category = NA, dilution = NA, total_events = NA,
-                       gated_events = NA, region_events = NA, analytes = analytes)
+                       gated_events = NA, region_events = NA, pct_agg_beads = NA_real_,
+                       analytes = analytes)
   }
   # well -> sample, keyed on absolute plate position
   pos <- match(plate_idx, plate_idx)                  # identity; kept for clarity
@@ -558,7 +572,21 @@ merge_all <- function(medians, stat_blocks, region_order, region_name, samples,
       wells[[best]]$analytes[[nm]] <- a
     }
   }
+  for (i in seq_along(wells)) wells[[i]]$pct_agg_beads <- rbx_pct_agg(wells[[i]]$total_events, wells[[i]]$gated_events)
   wells
+}
+
+#' Percent aggregate beads for a well, derived from its event counts.
+#' The binary stores no percentage. It stores, per well, the total events read and
+#' the events inside the doublet-discriminator gate (the singlets); events outside
+#' it are aggregates and doublets, so  % aggregate = 100 * (total - gated) / total.
+#' NA when the well has no event counts (the first-read well's statistics block is
+#' not stored the same way, so A1 and occasionally B1 have none).
+rbx_pct_agg <- function(total, gated) {
+  total <- suppressWarnings(as.numeric(total)); gated <- suppressWarnings(as.numeric(gated))
+  if (length(total) != 1L || length(gated) != 1L || is.na(total) || is.na(gated) || total <= 0 || gated > total)
+    return(NA_real_)
+  100 * (total - gated) / total
 }
 
 # ---- top-level ------------------------------------------------------------- #
@@ -648,6 +676,8 @@ long_dataframe <- function(doc) {
       sample_category = w$sample_category, dilution = w$dilution,
       analyte = nm, region = s$region,
       total_events = w$total_events, gated_events = w$gated_events, region_events = w$region_events,
+      pct_agg_beads = if (is.null(w$pct_agg_beads)) NA_real_ else w$pct_agg_beads,
+      outlier = if (is.null(s$outlier)) NA_integer_ else as.integer(s$outlier),
       median = s$median, mean = s$mean, trimmed_mean = s$trimmed_mean,
       cv = s$cv, trimmed_cv = s$trimmed_cv, std_dev = s$std_dev,
       trimmed_std_dev = s$trimmed_std_dev, std_err = s$std_err,

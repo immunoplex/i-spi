@@ -173,6 +173,19 @@ process_rbx_files <- function(upload_df, progress = NULL) {
         source_file      = fn,
         feature          = "Net_MFI",
         stringsAsFactors  = FALSE)
+      # % aggregate beads of the well (derived from the binary's total and gated
+      # event counts; NA where the well has none). The same value on every analyte
+      # row of a well, as for the other instruments.
+      if ("pct_agg_beads" %in% names(long))
+        assay_long$pctaggbeads <- round(suppressWarnings(as.numeric(long$pct_agg_beads)), 2)
+      # Bio-Plex Manager's outlier flag per well x analyte (1 = flagged / masked in
+      # the .rbx). Carried here for the importer; whether it is written as a mask
+      # is the importer's decision.
+      if ("outlier" %in% names(long)) {
+        flag <- suppressWarnings(as.integer(long$outlier))
+        assay_long$masked      <- !is.na(flag) & flag == 1L
+        assay_long$mask_reason <- ifelse(assay_long$masked, "Bio-Plex Manager outlier flag (.rbx)", NA_character_)
+      }
 
       cat("    -> wells:", nrow(wi), " analytes:", length(antigen_cols),
           " long rows:", nrow(assay_long), "\n")

@@ -824,7 +824,11 @@ AI_LADDER_MAX_TREND    <- -0.6  # Spearman rho of response vs dilution
   out <- list()
   for (pk in unique(cnd$plate_key)) {
     on_plate  <- cnd[cnd$plate_key == pk, , drop = FALSE]
-    n_cand_wells <- length(unique(on_plate$row))
+    # rule 3's denominator is ALL of this plate's undifferentiated (candidate) wells,
+    # not just the ones that happen to carry a numeric token. Counting only the
+    # latter made the share 100% for any ladder among samples such as "051 V1" that
+    # carry no such token, so a real ladder was never proposed.
+    n_cand_wells <- sum(cand & !is.na(inv$plate_key) & inv$plate_key == pk)
     grp_key <- paste(on_plate$pos, on_plate$stem, sep = "\r")
 
     for (g in unique(grp_key)) {

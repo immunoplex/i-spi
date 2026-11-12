@@ -120,14 +120,20 @@ linearityUI <- function(id) {
       help_icon("qc.linearity.overview", ns),
       " Pairs up estimates of the same sample (duplicates, other dilutions, other plates, the two fitting ",
       "methods, other curve sources), plots one against the other with a 1:1 line, and fits a regression."),
+    shiny::checkboxGroupInput(ns("kinds"), shiny::tagList("Include", help_icon("qc.linearity.kinds", ns)),
+                              choices = stats::setNames(names(LIN_KINDS), unname(LIN_KINDS)), selected = "sample", inline = TRUE),
     shiny::actionButton(ns("load"), "Find replicate sets", icon = shiny::icon("search"), class = "btn-primary"),
+    shiny::uiOutput(ns("kind_ui")),
     shiny::uiOutput(ns("body")))
 }
 
 # ---- server ---------------------------------------------------------------------
 #' @param scope  reactive -> list(study, experiment, project_id)
 #' @param fetch  function(pool, project, study, experiment) -> raw frame (injectable)
-linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty = NULL, fetch = lin_fetch) {
+#' @param fetch_extra function(pool, project, study, experiment, kinds, samples) -> list(control, standard,
+#'   check, scales_inferred): back-calculated controls and standards (injectable)
+linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty = NULL, fetch = lin_fetch,
+                            fetch_extra = lin_fetch_extra) {
   shiny::moduleServer(id, function(input, output, session) {
     ns <- session$ns
     hi <- function(id) help_icon(id, ns)
@@ -138,31 +144,88 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
       if (is.null(body)) return()
       shiny::showModal(shiny::modalDialog(title = help_modal_title(hid), body, easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
     })
-    pts <- shiny::reactiveVal(NULL)
+    pts_all <- shiny::reactiveVal(NULL)       # everything loaded, all sample types
+    chk_txt <- shiny::reactiveVal("")         # how closely controls/standards match the worker
+
+    # The points of one sample type at a time: estimates of a control and of a test
+    # sample are never compared with each other. With one type loaded there is no choice.
+    cur_kind <- shiny::reactive({
+      p <- pts_all()
+      if (is.null(p) || !nrow(p)) return("sample")
+      kp <- intersect(names(LIN_KINDS), unique(p$kind)); k <- input$kind
+      if (!is.null(k) && k %in% kp) k else kp[1]
+    })
+    pts <- shiny::reactive({
+      p <- pts_all(); if (is.null(p)) return(NULL)
+      if (length(unique(p$kind)) > 1L) p <- p[p$kind == cur_kind(), , drop = FALSE]
+      p
+    })
 
     # A new experiment, a reload or a recompute makes loaded points stale.
     shiny::observeEvent(list(scope(), if (!is.null(reload_trigger)) reload_trigger(),
-                             if (!is.null(calib_dirty)) calib_dirty()), pts(NULL), ignoreInit = TRUE)
+                             if (!is.null(calib_dirty)) calib_dirty()), { pts_all(NULL); chk_txt("") }, ignoreInit = TRUE)
 
     shiny::observeEvent(input$load, {
       s <- scope()
+      kinds <- intersect(names(LIN_KINDS), input$kinds %||% "sample")
+      if (!length(kinds)) kinds <- "sample"
       res <- NULL
       shiny::withProgress(message = "Collecting back-calculated samples...", value = 0.3, {
-        res <- tryCatch(lin_prepare(fetch(pool, s$project_id, s$study, s$experiment)), error = function(e) e)
+        res <- tryCatch({
+          raw <- if ("sample" %in% kinds) fetch(pool, s$project_id, s$study, s$experiment) else NULL
+          parts <- list(lin_prepare(raw, "sample")); ex <- NULL
+          extra <- intersect(kinds, c("control", "standard"))
+          if (length(extra)) {
+            shiny::incProgress(0.3, message = "Back-calculating controls and standards from the stored curves...")
+            ex <- fetch_extra(pool, s$project_id, s$study, s$experiment, kinds = extra, samples = raw)
+            parts <- c(parts, list(lin_prepare(ex$control, "control"), lin_prepare(ex$standard, "standard")))
+          }
+          list(pts = do.call(rbind, parts), ex = ex)
+        }, error = function(e) e)
       })
-      if (inherits(res, "error"))
+      if (inherits(res, "error")) {
         shiny::showNotification(paste("Could not load samples:", conditionMessage(res)), type = "error")
-      else pts(res)
+        return()
+      }
+      pts_all(res$pts)
+      chk_txt(if (is.null(res$ex)) "" else lin_backcalc_check_text(res$ex$check))
+      if (!is.null(res$ex)) {
+        n <- table(factor(res$pts$kind, levels = names(LIN_KINDS)))
+        msg <- paste(sprintf("%s: %s estimates", tolower(LIN_KINDS[kinds]), format(as.integer(n[kinds]), big.mark = ",")), collapse = "; ")
+        if (isTRUE(res$ex$scales_inferred > 0L))
+          msg <- paste0(msg, sprintf(". The response scale could not be measured for %d curve(s); the experiment's usual scale was used.", res$ex$scales_inferred))
+        st <- res$ex$control_stages
+        if ("control" %in% kinds && !is.null(st)) {
+          msg <- paste(msg, lin_control_stages_text(st), sep = "\n")
+          chk_txt(paste(chk_txt(), lin_control_stages_text(st), sep = if (nzchar(chk_txt())) " | " else ""))
+        }
+        shiny::showNotification(msg, type = if (!is.null(st) && "control" %in% kinds && st$with_conc == 0L) "warning" else "message",
+                                duration = 20)
+      }
+    })
+
+    output$kind_ui <- shiny::renderUI({
+      p <- pts_all(); if (is.null(p) || !nrow(p)) return(NULL)
+      kp <- intersect(names(LIN_KINDS), unique(p$kind))
+      if (length(kp) < 2L) return(NULL)
+      keep <- shiny::isolate(input$kind)
+      shiny::div(style = "margin-top:10px;max-width:360px;",
+        shiny::selectInput(ns("kind"), shiny::tagList("Compare estimates of", help_icon("qc.linearity.kinds", ns)),
+                           choices = stats::setNames(kp, unname(LIN_KINDS[kp])),
+                           selected = if (!is.null(keep) && keep %in% kp) keep else kp[1]))
     })
 
     sets <- shiny::reactive({ p <- pts(); if (is.null(p)) NULL else lin_sets(p) })
+    sets_all <- shiny::reactive({ p <- pts_all(); if (is.null(p)) NULL else lin_sets(p) })
 
     # ---- the body: built once per load, from what the data holds ----
     output$body <- shiny::renderUI({
       p <- pts(); if (is.null(p)) return(NULL)
       if (!nrow(p))
         return(shiny::div(class = "alert alert-info", style = "margin-top:10px;",
-          "No back-calculated samples were found for this experiment. Compute fits first."))
+          "No back-calculated estimates were found for the types chosen. Compute fits first",
+          if (any(c("control", "standard") %in% (input$kinds %||% character()))) " (controls and standards need a stored best model for the curve)",
+          "."))
       st <- sets()
       sm <- lin_set_summary(st)
       first <- sm$type[sm$sets > 0][1]; if (is.na(first)) first <- "custom"
@@ -191,8 +254,8 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
       shiny::tagList(
         shiny::h4("1. Replicate sets in this experiment", hi("qc.linearity.sets")),
         shiny::p(class = "text-muted", style = "margin-bottom:6px;",
-          "A set is every estimate of the same sample (antigen, feature, patient, timeperiod). ",
-          "A set can be in several kinds at once. Click a kind to compare it."),
+          "A set is every estimate of the same sample (antigen, feature, patient, timeperiod; for a control, its name; ",
+          "for a standard, its level). A set can be in several kinds at once. Click a kind to compare it."),
         shiny::div(cards),
         shiny::div(style = "max-width:900px;", DT::dataTableOutput(ns("tbl_sets"))),
         shiny::hr(),
@@ -265,9 +328,9 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
 
     # ---- set overview tables ----
     output$tbl_sets <- DT::renderDataTable({
-      st <- sets(); req(st)
+      st <- sets_all(); req(st)
       d <- lin_set_summary_by_antigen(st)
-      lab <- c(antigen = "Antigen", sets = "Sets", LIN_SET_TYPES)
+      lab <- c(antigen = "Antigen", kind = "Type", sets = "Sets", LIN_SET_TYPES)
       names(d) <- lab[names(d)]
       DT::datatable(d, rownames = FALSE, selection = "none", options = list(dom = "tp", pageLength = 8))
     })
@@ -423,6 +486,7 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
         scope = list(project_id = s$project_id, study = s$study, experiment = s$experiment),
         preset = LIN_PRESETS[[.lin_or(input$preset, "custom")]]$label,
         x = sel_of("x"), y = sel_of("y"), match = input$match %||% character(), differ = input$differ %||% character(),
+        kind = cur_kind(), backcalc = chk_txt(),
         filters = list(antigen = input$antigen, feature = input$feature, timeperiod = input$timeperiod, patient = input$patient),
         sets = lin_sets(p), pairs = pairs(), reg = reg(), sens = sens(), consensus = consensus(),
         n_gate_inferred = sum(p$gate_inferred)))

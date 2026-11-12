@@ -2,6 +2,62 @@
 
 Releases are tagged `vYYYY.MM.DD` (the date the tag was cut); a second release on the same day takes a `.N` suffix.
 
+## Unreleased
+
+### Added
+- **Quality Control > Replicate Linearity: controls and standards.** Tick **Include**
+  (test samples, controls, standards) before *Find replicate sets*, then choose which
+  type to compare. A control's set is its name on one antigen and feature; a standard's
+  is its dilution level. The worker stores no concentration for either, so the app
+  computes it from each curve's stored best model (Bayesian: posterior-median
+  parameters), reads pcov from the stored precision profile and takes the gate class
+  from LLOQ/ULOQ. A control well is estimated through every source and method of its
+  plate and antigen. Masked controls and excluded standards are left out.
+  On load the app checks itself against the worker (the model inverse against the
+  stored grid; the pcov it reads against the pcov stored for test samples) and the
+  result goes in the report. Help note `qc.linearity.kinds`; design in
+  `docs/design/replicate_linearity.md`. No schema or worker changes.
+
+### Changed
+- **Importer, "Configure the description field" > 4. Result**: the table now shows
+  where each description is found: the number of wells and a "Where (plate: wells)"
+  column such as `1. p1: A1, A2, B4 (+3 more); 2. p2: C5`, with wells in plate order.
+  It lists every distinct string in the group (up to 200, paged, with column filters)
+  instead of the 12 longest, and the "incomplete" message names the plate and wells of
+  each example. In a big batch the sparse, oddly formatted label can be found without
+  scanning plate after plate.
+- **Importer, plate layout**: **Label characters** now defaults to 10 and offers 2 to 25
+  (plus Auto). Wells widen to fit the label, so a long label is not clipped; a plate
+  wider than the panel extends past it.
+
+### Fixed
+- **A long red error (for example after a failed batch fit) could not be closed.** The
+  notification grew taller than the screen, so its close button was off-screen. Every
+  notification is now capped to 60% of the window height and scrolls, with the close
+  button always visible.
+- **Bio-Plex .rbx / .srbx import: % aggregate beads and mask flags were never read.**
+  - The mask flag is the "outlier" flag Bio-Plex Manager stores for every well and
+    analyte (byte 12 of the 24-byte quantification record). It matches the vendor
+    export's Outlier sheet cell for cell on every plate exported from the same file.
+  - % aggregate beads is derived per well from the stored event counts:
+    100 x (total - gated) / total. The binary stores no percentage. The first-read
+    well (A1, occasionally B1) has no event counts, so it has no value.
+  - The reader puts `pctaggbeads`, `masked` and `mask_reason` on the long response
+    table, the layout template keeps them on its `assay_response_long` sheet, and the
+    assembler writes them to `xmap_standard`, `xmap_sample`, `xmap_control` and
+    `xmap_buffer`. Flagged points are therefore **masked from the start**, per analyte,
+    with the reason "Bio-Plex Manager outlier flag (.rbx)" (or "masked at import" when a
+    row has none). Edit the `masked` column of the template sheet before uploading to
+    change this; other readers are unchanged.
+- **Description pre-processor: two real defects found by the long-failing
+  `test-assay-shape-rules.R`.**
+  - A sample description like `PT01_T0_100` (PatientID_TimePeriod_Dilution) no longer
+    loses its dilution: one bare integer left over after both the subject and the
+    timepoint is proposed as the dilution.
+  - A dilution ladder among ordinary samples was never proposed as standards: the
+    "a curve is not a plate" size check divided by the wells that carry a numeric
+    token instead of by the plate's candidate wells, so it was always 100%.
+
 ## v2026.11.11.2 — Quality Control: beads, sample identity, curve downloads
 
 ### Changed

@@ -184,6 +184,24 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       if (is.null(d) || !nrow(d)) return(character())
       d$plate_key[!is.na(d$specimen_type) & d$specimen_type == t]
     }
+    # The plate's human label (what the plate switcher shows) and the well, aligned
+    # to desc_of(t): they say WHERE a description is, for the Result table.
+    plate_labels_of <- function(t) {
+      d <- inv()
+      if (is.null(d) || !nrow(d)) return(character())
+      sel <- !is.na(d$specimen_type) & d$specimen_type == t
+      lab <- if ("plate_label" %in% names(d)) as.character(d$plate_label) else as.character(d$plate_key)
+      lab[is.na(lab) | !nzchar(lab)] <- as.character(d$plate_key)[is.na(lab) | !nzchar(lab)]
+      # the switcher label is "1. plate_key  (file.xlsx)"; the file name is long and
+      # repeats in every entry, so keep "1. plate_key" here
+      lab <- trimws(sub("\\s*\\([^)]*\\)\\s*$", "", lab))
+      lab[sel]
+    }
+    wells_of <- function(t) {
+      d <- inv()
+      if (is.null(d) || !nrow(d)) return(character())
+      as.character(d$well[!is.na(d$specimen_type) & d$specimen_type == t])
+    }
     inst_of <- function(t) {
       d <- inv()
       if (is.null(d) || !nrow(d)) return(numeric())
@@ -431,6 +449,7 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
     }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
     # ── static per-type wiring (all four types, present or not) ──────────────
+    preview_frames <- new.env()      # type -> reactive of the Result table's rows
     lapply(AI_SPECIMEN_TYPES, function(t) local({
       tt <- t
 
@@ -635,14 +654,20 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
           tags$div(class = "ai-ok",
                    sprintf("All %d string(s) in this group resolve completely.",
                            v$n_strings))
-        else
+        else {
+          # say where each example is, so it can be found without scanning every plate
+          ex <- v$failing_examples
+          loc <- ai_locate_strings(ex, desc_of(tt), plate_labels_of(tt), wells_of(tt),
+                                   max_wells = 3L, max_plates = 2L)
+          ex_txt <- paste(sprintf("%s [%s]", ex, ifelse(nzchar(loc$where), loc$where, "not located")),
+                          collapse = " ; ")
           tags$div(class = "ai-req",
             sprintf("%d of %d string(s) incomplete%s. Examples: %s",
                     v$n_failing, v$n_strings,
                     if (length(v$missing_components))
                       sprintf(" \u2014 missing %s",
                               paste(v$missing_components, collapse = ", ")) else "",
-                    paste(v$failing_examples, collapse = " ; ")),
+                    ex_txt),
             # Step 3 is optional, so a Standard whose dilution is written
             # nowhere can reach this step -- say where to fix it.
             if (identical(tt, "S") && "DilutionFactor" %in% v$missing_components)
@@ -650,15 +675,18 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
                 tags$small("The dilution isn't in these descriptions. Enter it in ",
                            "step 3 (Standards dilution reference), or set a constant ",
                            "for DilutionFactor above if every standard shares one.")))
+        }
       })
 
-      output[[paste0("preview_", tt)]] <- DT::renderDataTable({
+      # The Result table's rows, as data. Separate from the DT so the rows can be read
+      # without rendering (and tested): DT serves its rows to the browser by ajax.
+      preview_df <- reactive({
         ss <- state_of(tt); k <- current_shape()
         s <- shape_strings()
-        if (is.null(ss) || is.null(k) || !length(s))
-          return(DT::datatable(data.frame(message = "Nothing to preview"),
-                               options = list(dom = "t"), rownames = FALSE))
-        s <- utils::head(s[order(-nchar(s))], 12L)
+        if (is.null(ss) || is.null(k) || !length(s)) return(NULL)
+        # Every distinct string in the group (longest first), up to a generous cap:
+        # in a big batch it is the sparse odd label that matters, and the table pages.
+        s <- utils::head(s[order(-nchar(s))], 200L)
 
         # Per-description coverage for the instrument/reference overrides --
         # same "every well sharing this description must be covered"
@@ -713,9 +741,25 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
                             "yes" else "no",
             stringsAsFactors = FALSE)
         }))
+        # Where each description is: how many wells, and which plate and wells. Placed
+        # next to the description so the odd label can be found without scanning plates.
+        loc <- ai_locate_strings(out$Description, desc_all, plate_labels_of(tt), wells_of(tt))
+        out$Wells <- loc$n_wells
+        out$`Where (plate: wells)` <- loc$where
+        lead <- c("Description", "Wells", "Where (plate: wells)")
+        out[, c(lead, setdiff(names(out), lead)), drop = FALSE]
+      })
+      assign(tt, preview_df, envir = preview_frames)
+
+      output[[paste0("preview_", tt)]] <- DT::renderDataTable({
+        out <- preview_df()
+        if (is.null(out))
+          return(DT::datatable(data.frame(message = "Nothing to preview"),
+                               options = list(dom = "t"), rownames = FALSE))
         DT::formatStyle(
-          DT::datatable(out, rownames = FALSE,
-                        options = list(dom = "tp", pageLength = 6, scrollX = TRUE)),
+          DT::datatable(out, rownames = FALSE, filter = "top",
+                        options = list(dom = "tp", pageLength = 10, scrollX = TRUE,
+                                       columnDefs = list(list(targets = 2, width = "340px")))),
           "OK",
           backgroundColor = DT::styleEqual(c("yes", "no"), c("#e6f4ea", "#f8d7da")))
       })

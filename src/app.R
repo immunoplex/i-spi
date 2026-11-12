@@ -80,6 +80,17 @@ body <- dashboardBody(
     # 2026-10-09 when help_icon() became usable from any module.
     if (exists("help_styles", mode = "function")) help_styles(),
     tags$style(HTML("
+      /* Notifications: a long error (a failed batch fit can run to dozens of lines)
+         used to grow past the screen so its close button was unreachable. Cap the
+         box to the viewport and scroll the text; the close button stays put. */
+      #shiny-notification-panel { width: min(560px, 94vw); max-width: 94vw; }
+      .shiny-notification { width: auto; max-width: 94vw; opacity: 1; }
+      .shiny-notification-content {
+        max-height: 60vh; overflow-y: auto; overflow-x: hidden;
+        overflow-wrap: anywhere; word-break: break-word; padding-right: 6px;
+      }
+      .shiny-notification-close { position: relative; z-index: 1; padding: 0 4px; }
+
       /* ==============================================
          LAYOUT: Fixed sidebar and header
          ============================================== */
@@ -1223,6 +1234,7 @@ server <- function(input, output, session) {
       source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
       source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
       source("linearity_report.R",   local = TRUE)   # QC: Replicate Linearity (sets, pairs, regression, report)
+      source("linearity_backcalc.R", local = TRUE)   # ... concentrations for controls and standards (back-calculated here)
       source("linearity_module.R",   local = TRUE)
       source("assay_response.R",     local = TRUE)
       source("data_dictionary.R",    local = TRUE)

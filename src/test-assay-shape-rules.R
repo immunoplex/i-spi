@@ -33,6 +33,21 @@ if (!exists("ai_shape_rule")) {
   source(hit)
 }
 
+# The geometry / file-name tests below exercise functions that live in these files;
+# without them every such test is SKIPPED and silently never runs. Loaded on their
+# own check (not inside the block above) because in a full-suite run another test
+# file has usually loaded the engine already.
+for (.sr_spec in list(c("rbx_binary_parser.R", "rbx_well_label"),
+                      c("plate_validator_functions.R", "looks_like_plate_filename"),
+                      c("assay_plate_grid.R", "ai_grid_label_geometry"))) {
+  if (exists(.sr_spec[2])) next
+  .sr_p <- c(.sr_spec[1], file.path("src", .sr_spec[1]), file.path("..", "src", .sr_spec[1]))
+  .sr_p <- .sr_p[file.exists(.sr_p)][1]
+  if (!is.na(.sr_p))
+    tryCatch(suppressMessages(suppressWarnings(source(.sr_p))),
+             error = function(e) message("test setup: could not load ", .sr_spec[1], ": ", conditionMessage(e)))
+}
+
 library(testthat)
 
 # ---- the real corpus --------------------------------------------------------
@@ -484,9 +499,10 @@ test_that("real .rbx standards and blanks are proposed correctly", {
     source_file = "p.rbx", response_hint = NA_real_,
     type_origin = "file", desc_origin = "file", stringsAsFactors = FALSE)
 
-  p <- ai_propose_specimen_types(mk(c("Inhouse Ref 1:2952450", "NIBSC06 1:100",
-                                      "blank", "PBS", "pool (mid)")))
-  ty <- setNames(p$proposed_type, p$description)
+  inv <- mk(c("Inhouse Ref 1:2952450", "NIBSC06 1:100", "blank", "PBS", "pool (mid)"))
+  p <- ai_propose_specimen_types(inv)
+  # the proposals frame is keyed by plate and well (it carries no description column)
+  ty <- setNames(p$proposed_type, inv$description[match(p$well, inv$well)])
   expect_equal(ty[["Inhouse Ref 1:2952450"]], "S")
   expect_equal(ty[["NIBSC06 1:100"]],         "S")
   expect_equal(ty[["blank"]],                 "B")
@@ -635,21 +651,30 @@ test_that("a numeric subject id at element 1 is never read as a dilution step", 
   expect_false(any(p$proposed_type == "S"))
 })
 
+# A ladder is only believed when it is a minority of the plate's candidate wells
+# (AI_LADDER_MAX_SHARE): a plate of nothing but a ladder looks like a plate of samples.
+# So these fixtures put the ladder among ordinary sample wells, as a real plate has it.
+.mk_inv_padded <- function(desc, hint, n_samples = 24L, type = "X") {
+  filler <- sprintf("%03d V1", 100L + seq_len(n_samples))
+  .mk_inv(c(desc, filler), type = type,
+          hint = c(rep_len(hint, length(desc)), rep(NA_real_, n_samples)))
+}
+
 test_that("a real 1:N dilution ladder IS still proposed as standards", {
   skip_if_not(exists("ai_propose_specimen_types"))
   dil  <- c(150, 450, 1350, 4050, 12150, 36450, 109350, 328050)
-  inv  <- .mk_inv(paste0("Unknown Ref 1:", dil),
-                  hint = c(30000, 22000, 15000, 9000, 5000, 2500, 1100, 400))
+  inv  <- .mk_inv_padded(paste0("Lot 1:", dil),
+                         hint = c(30000, 22000, 15000, 9000, 5000, 2500, 1100, 400))
   p <- ai_propose_specimen_types(inv)
-  expect_true(all(p$proposed_type == "S"))
+  expect_equal(sum(p$proposed_type == "S"), length(dil))           # the ladder, and only the ladder
+  expect_true(all(p$evidence == "ladder"))
   expect_true(any(grepl("dilution \\(1:N\\)", p$reason)))
 })
 
 test_that("a consecutive integer run is rejected even with a falling response", {
   skip_if_not(exists("ai_propose_specimen_types"))
-  # "Pool 1".."Pool 6" -- replicate indices, not a dilution series
-  inv <- .mk_inv(paste("Pool", 1:6), type = "X",
-                 hint = c(9000, 8000, 7000, 6000, 5000, 4000))
+  # "Rep 1".."Rep 6" -- replicate indices, not a dilution series (not "Pool": that is a control keyword)
+  inv <- .mk_inv_padded(paste("Rep", 1:6), hint = c(9000, 8000, 7000, 6000, 5000, 4000))
   p <- ai_propose_specimen_types(inv)
   expect_false(any(p$evidence == "ladder"))
 })
@@ -658,12 +683,12 @@ test_that("a bare-integer ladder needs both a wide span and a falling response",
   skip_if_not(exists("ai_propose_specimen_types"))
   vals <- c(100, 300, 900, 2700, 8100)          # 81-fold span, not consecutive
   # no response hint at all -> must NOT be proposed on span alone
-  p_no <- ai_propose_specimen_types(.mk_inv(paste("Ref", vals), hint = NA_real_))
+  p_no <- ai_propose_specimen_types(.mk_inv_padded(paste("Lot", vals), hint = NA_real_))
   expect_false(any(p_no$evidence == "ladder"))
   # with a falling response -> proposed
   p_yes <- ai_propose_specimen_types(
-    .mk_inv(paste("Ref", vals), hint = c(20000, 12000, 6000, 2000, 500)))
-  expect_true(any(p_yes$evidence == "ladder"))
+    .mk_inv_padded(paste("Lot", vals), hint = c(20000, 12000, 6000, 2000, 500)))
+  expect_equal(sum(p_yes$evidence == "ladder"), length(vals))
 })
 
 test_that("an implausibly large ladder group is rejected on size", {
@@ -671,8 +696,10 @@ test_that("an implausibly large ladder group is rejected on size", {
   # 60 wells sharing a stem with a wide, non-consecutive numeric span and a
   # falling response: still not a curve, because a curve is not 60 wells
   vals <- rep(c(10, 100, 1000, 10000), each = 15)
-  inv  <- .mk_inv(paste("Ref", vals),
-                  hint = rep(c(20000, 8000, 2000, 300), each = 15))
+  # padded with enough samples that the size share passes, so it is the ABSOLUTE cap
+  # (AI_LADDER_MAX_WELLS) that rejects it
+  inv  <- .mk_inv_padded(paste("Lot", vals), n_samples = 200L,
+                         hint = rep(c(20000, 8000, 2000, 300), each = 15))
   p <- ai_propose_specimen_types(inv)
   expect_false(any(p$evidence == "ladder"))
 })
@@ -681,10 +708,11 @@ test_that("keyword evidence still wins over everything else", {
   skip_if_not(exists("ai_propose_specimen_types"))
   inv <- .mk_inv(c("QC1 (Low) 1:2500", "blank", "051 V1"))
   p <- ai_propose_specimen_types(inv)
-  ty <- stats::setNames(p$proposed_type, p$description)
+  desc <- inv$description[match(p$well, inv$well)]   # proposals are keyed by well, not description
+  ty <- stats::setNames(p$proposed_type, desc)
   expect_equal(ty[["QC1 (Low) 1:2500"]], "C")
   expect_equal(ty[["blank"]], "B")
-  expect_false("051 V1" %in% p$description)
+  expect_false("051 V1" %in% desc)
 })
 
 

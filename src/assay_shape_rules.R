@@ -494,6 +494,23 @@ ai_propose_bindings <- function(type, example, delimiters,
       i <- take(any_class)
       if (!is.na(i)) b[[comp]] <- ai_binding("slot", slot = i)
     }
+    # The xPONENT convention is PatientID_TimePeriod_Dilution. Once the subject and
+    # timepoint are bound, ONE bare integer left over AFTER both of them is the
+    # dilution ("PT01_T0_100"). This cannot touch the cases above that must not
+    # read an integer as a dilution: a numeric subject id comes FIRST ("051 V1"),
+    # and "IFO 100" has no integer left once its two required parts are filled.
+    # The shape preview shows the resolved value, so a wrong guess is visible.
+    if (is.null(b$DilutionFactor)) {
+      slots <- unlist(lapply(b[intersect(names(b), c("PatientID", "TimePeriod"))],
+                             function(z) z$slot), use.names = FALSE)
+      if (length(slots)) {
+        rem <- which(!used & cls == "integer" & seq_along(toks) > max(slots))
+        if (length(rem) == 1L) {
+          used[rem] <- TRUE
+          b$DilutionFactor <- ai_binding("slot", slot = rem)
+        }
+      }
+    }
     if (is.null(b$Source)) b$Source <- ai_binding("constant", value = "sample")
 
   } else {
@@ -1319,4 +1336,64 @@ ai_dilution_gaps <- function(resolved) {
                     n_wells = as.integer(table(factor(key, levels = key[u]))[key[u]]),
                     stringsAsFactors = FALSE)
   out[order(-out$n_wells, out$specimen_type), , drop = FALSE]
+}
+
+
+# =============================================================================
+# Where a description is found (plates and wells)
+# -----------------------------------------------------------------------------
+# In a big batch the odd or sparse description is one well among thousands, and
+# scanning plate after plate to find it is slow. These turn "this string" into
+# "plate: wells" text for the Result table and the incomplete-string examples.
+# Pure functions over parallel vectors; no Shiny.
+# =============================================================================
+
+# Natural order of well labels: by row (A..H, then AA.. on a 1536 plate), then by
+# column number, so A2 precedes A10 and B1 follows A12.
+ai_well_order <- function(well) {
+  w <- toupper(trimws(as.character(well)))
+  letters_part <- sub("[0-9]+$", "", w)
+  num_part <- suppressWarnings(as.integer(sub("^[A-Z]+", "", w)))
+  order(nchar(letters_part), letters_part, num_part, na.last = TRUE)
+}
+
+#' One string saying where wells are: "Plate 1: A3, B4, C5 (+2 more); Plate 2: A1".
+#' @param plate plate labels, parallel to `well`
+#' @param max_wells wells listed per plate before "(+n more)"
+#' @param max_plates plates listed before "; +n more plate(s)"
+ai_where_text <- function(plate, well, max_wells = 8L, max_plates = 6L) {
+  ok <- !is.na(well) & nzchar(as.character(well))
+  if (!any(ok)) return("")
+  plate <- as.character(plate)[ok]; well <- as.character(well)[ok]
+  plate[is.na(plate) | !nzchar(plate)] <- "?"
+  pl <- unique(plate)                                  # first-seen order
+  shown <- utils::head(pl, max_plates)
+  parts <- vapply(shown, function(p) {
+    w <- unique(well[plate == p]); w <- w[ai_well_order(w)]
+    more <- length(w) - max_wells
+    paste0(p, ": ", paste(utils::head(w, max_wells), collapse = ", "),
+           if (more > 0L) sprintf(" (+%d more)", more) else "")
+  }, character(1))
+  out <- paste(parts, collapse = "; ")
+  extra <- length(pl) - length(shown)
+  if (extra > 0L) out <- paste0(out, sprintf("; +%d more plate%s", extra, if (extra == 1L) "" else "s"))
+  out
+}
+
+#' For each string: how many wells, on how many plates, and where.
+#' @param strs the descriptions to locate
+#' @param desc,plate,well parallel vectors over every well of the type
+#' @return data.frame(string, n_wells, n_plates, where)
+ai_locate_strings <- function(strs, desc, plate, well, max_wells = 8L, max_plates = 6L) {
+  strs <- as.character(strs)
+  rows <- lapply(strs, function(s) {
+    m <- which(!is.na(desc) & desc == s)
+    data.frame(string = s, n_wells = length(m),
+               n_plates = length(unique(plate[m])),
+               where = ai_where_text(plate[m], well[m], max_wells, max_plates),
+               stringsAsFactors = FALSE)
+  })
+  if (!length(rows)) return(data.frame(string = character(), n_wells = integer(), n_plates = integer(),
+                                       where = character(), stringsAsFactors = FALSE))
+  do.call(rbind, rows)
 }

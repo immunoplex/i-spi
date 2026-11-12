@@ -521,7 +521,7 @@ test_that("every info icon in the module points at a note that exists, and the n
   expect_true(all(ids %in% names(reg)), info = paste(setdiff(ids, names(reg)), collapse = ", "))
   # all the linearity notes, the three glossary concepts, and every [[link]] resolve
   mine <- grep("^qc\\.linearity\\.|^glossary\\.(errors_in_both_axes|agreement_ccc_ba|latent_consensus)$", names(reg), value = TRUE)
-  expect_equal(length(mine), 13L)
+  expect_equal(length(mine), 14L)
   for (id in mine) {
     e <- reg[[id]]
     txt <- paste(e$body, e$more)

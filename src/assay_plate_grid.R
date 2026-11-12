@@ -58,6 +58,20 @@ AI_GRID_LABEL_DEFAULTS <- list(
   `48` = c(chars = 2, font =  8, cell = 18)    #  > 24 cols (1536-well)
 )
 
+# The "Label characters" control: how many leading characters of the description
+# each well shows. Defaults to 10 and offers 2 to 25 (long, odd labels are the
+# point of reading them off the grid).
+AI_GRID_LABEL_CHOICES <- 2:25
+AI_GRID_LABEL_DEFAULT <- 10L
+
+#' Narrowest a well may be, in pixels, to show `n_chars` monospace characters at
+#' `font_px`. Monospace glyphs are about 0.6 of the font size wide, and the labels
+#' are tightened by letter-spacing, so 0.58 plus the cell padding. The grid scrolls
+#' sideways when the plate then no longer fits, rather than clipping the label.
+ai_grid_min_cell_px <- function(n_chars, font_px) {
+  as.integer(ceiling(n_chars * font_px * 0.58 + 8))
+}
+
 #' Label geometry for a column count, before any user override.
 ai_grid_label_geometry <- function(cols) {
   if (cols <= 12) AI_GRID_LABEL_DEFAULTS[["12"]]
@@ -116,10 +130,10 @@ ai_plate_grid_ui <- function(id) {
       fluidRow(
         column(5, uiOutput(ns("plate_switcher"))),
         column(3, selectInput(ns("label_chars"), "Label characters",
-                              choices = c("Auto" = "auto", "2" = "2", "3" = "3",
-                                          "4" = "4", "5" = "5", "6" = "6",
-                                          "8" = "8", "10" = "10", "12" = "12"),
-                              selected = "auto")),
+                              choices = c("Auto (by plate size)" = "auto",
+                                          stats::setNames(as.character(AI_GRID_LABEL_CHOICES),
+                                                          as.character(AI_GRID_LABEL_CHOICES))),
+                              selected = as.character(AI_GRID_LABEL_DEFAULT))),
         column(4, tags$div(style = "margin-top:25px;",
           actionButton(ns("prev_plate"), "\u2039 Previous", class = "btn-sm"),
           actionButton(ns("next_plate"), "Next \u203a", class = "btn-sm"),
@@ -333,7 +347,7 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
       n_chars <- as.integer(lg[["chars"]])
       font_px <- as.numeric(lg[["font"]])
       cell_px <- as.numeric(lg[["cell"]])
-      ovr <- input$label_chars %||% "auto"
+      ovr <- input$label_chars %||% as.character(AI_GRID_LABEL_DEFAULT)
       if (!identical(ovr, "auto")) {
         o <- suppressWarnings(as.integer(ovr))
         if (!is.na(o) && o > 0) {
@@ -393,9 +407,13 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
             lapply(cols, function(c) cell(paste0(r, c))))),
           recursive = FALSE))
 
+      # each well is at least wide enough for its label, so a long label is never
+      # clipped; a plate wider than the panel then simply extends past it
+      min_w <- ai_grid_min_cell_px(n_chars, font_px)
       tags$div(
         class = "ai-plate",
-        style = sprintf("grid-template-columns: 26px repeat(%d, minmax(0, 1fr));", ncl),
+        style = sprintf("grid-template-columns: 26px repeat(%d, minmax(%dpx, 1fr)); min-width:%dpx;",
+                        ncl, min_w, 26L + ncl * (min_w + 3L)),
         children)
     })
 

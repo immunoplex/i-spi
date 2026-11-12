@@ -39,11 +39,13 @@
 #   rep  <- lin_report_build(list(scope = ..., pairs = pr, reg = reg, ...))
 #   lin_report_text(rep) / lin_report_json(rep)
 #
-# PHASE 1 covers test samples (calib_samples). Standards, controls and blanks
-# have no stored back-calculated concentration / pcov / gate class; phase 2 will
-# back-calculate them and add rows with kind = "standard" | "control" | "blank".
+# Test samples come from calib_samples (kind = "sample"). Controls and standards
+# have no stored concentration / pcov / gate class; linearity_backcalc.R computes
+# them from the stored curves and adds rows with kind = "control" | "standard".
+# Blanks have no concentration and are not covered.
 # =============================================================================
 
+LIN_KINDS <- c(sample = "Test samples", control = "Controls", standard = "Standards")
 LIN_GATES <- c("belowLLOQ", "inDynamicRange", "aboveULOQ", "unclassified")
 LIN_GATE_LABEL <- c(belowLLOQ = "below LLOQ", inDynamicRange = "in range",
                     aboveULOQ = "above ULOQ", unclassified = "unclassified")
@@ -196,6 +198,9 @@ lin_prepare <- function(raw, kind = "sample") {
     censor_class = as.character(g("censor_class")),
     stringsAsFactors = FALSE)
   who <- ifelse(is.na(p$patientid), paste0("spec:", p$specimen_id), p$patientid)
+  # A control or standard level is its own sample, never the same set as a test sample
+  # that happens to share its id.
+  if (!identical(kind, "sample")) who <- paste0(kind, ":", who)
   p$set_id  <- paste(p$antigen, .lin_chr(p$feature), who, .lin_chr(p$timeperiod), sep = " | ")
   p$meas_id <- paste(p$plate, .lin_chr(p$well), .lin_chr(p$dilution), .lin_chr(p$specimen_id),
                      .lin_chr(p$wavelength), sep = "/")
@@ -223,7 +228,7 @@ LIN_SET_TYPES <- c(duplicate = "Duplicates (same plate, same dilution)",
 
 # One row per set with a TRUE/FALSE per type. A set can have several types.
 lin_sets <- function(pts) {
-  empty <- data.frame(set_id = character(), antigen = character(), feature = character(),
+  empty <- data.frame(set_id = character(), kind = character(), antigen = character(), feature = character(),
                       patientid = character(), timeperiod = character(), n_points = integer(),
                       n_plates = integer(), n_dilutions = integer(),
                       duplicate = logical(), dilution = logical(), plate = logical(),
@@ -232,7 +237,7 @@ lin_sets <- function(pts) {
   if (is.null(pts) || !nrow(pts)) return(empty)
   ids <- unique(pts$set_id)
   first <- !duplicated(pts$set_id)
-  out <- data.frame(set_id = pts$set_id[first], antigen = pts$antigen[first],
+  out <- data.frame(set_id = pts$set_id[first], kind = pts$kind[first], antigen = pts$antigen[first],
                     feature = pts$feature[first], patientid = pts$patientid[first],
                     timeperiod = pts$timeperiod[first], stringsAsFactors = FALSE)
   out$n_points <- as.integer(table(pts$set_id)[out$set_id])
@@ -270,12 +275,19 @@ lin_set_summary <- function(sets) {
 lin_set_summary_by_antigen <- function(sets) {
   if (!nrow(sets)) return(data.frame())
   types <- names(LIN_SET_TYPES)
-  ag <- sort(unique(sets$antigen))
-  m <- t(vapply(ag, function(a) vapply(types, function(t) sum(sets[[t]][sets$antigen == a]), integer(1)),
-                integer(length(types))))
+  # With more than one sample type loaded, one row per antigen and type.
+  by_kind <- length(unique(sets$kind)) > 1L
+  key <- if (by_kind) paste(sets$antigen, sets$kind, sep = "\r") else sets$antigen
+  ks <- unique(key); first <- match(ks, key)
+  ag <- sets$antigen[first]; ord <- if (by_kind) order(ag, match(sets$kind[first], names(LIN_KINDS))) else order(ag)
+  ks <- ks[ord]; first <- first[ord]; ag <- ag[ord]
+  m <- t(vapply(ks, function(k) vapply(types, function(t) sum(sets[[t]][key == k]), integer(1)), integer(length(types))))
   colnames(m) <- types
-  data.frame(antigen = ag, sets = as.integer(table(sets$antigen)[ag]), m,
-             stringsAsFactors = FALSE, row.names = NULL, check.names = FALSE)
+  out <- data.frame(antigen = ag, sets = as.integer(table(key)[ks]), m,
+                    stringsAsFactors = FALSE, row.names = NULL, check.names = FALSE)
+  if (by_kind) out <- data.frame(antigen = ag, kind = unname(LIN_KINDS[sets$kind[first]]), out[, -1, drop = FALSE],
+                                 stringsAsFactors = FALSE, row.names = NULL, check.names = FALSE)
+  out
 }
 
 # ---- pairing -----------------------------------------------------------------
@@ -883,6 +895,7 @@ lin_report_build <- function(ctx) {
   cons <- ctx$consensus
   list(generated = format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"),
        scope = ctx$scope, preset = ctx$preset, x = ctx$x, y = ctx$y, match = ctx$match, differ = ctx$differ,
+       kind = ctx$kind, backcalc = ctx$backcalc,
        n_gate_inferred = ctx$n_gate_inferred,
        filters = ctx$filters,
        sets = lin_set_summary(ctx$sets), n_sets = nrow(ctx$sets),
@@ -914,6 +927,12 @@ lin_report_text <- function(rep) {
   w("- study: %s", .lin_or(sc$study, "NA"))
   w("- experiment: %s", .lin_or(sc$experiment, "NA"))
   f <- rep$filters
+  if (!is.null(rep$kind) && length(rep$kind) == 1L && !is.na(rep$kind))
+    w("- sample type: %s", .lin_or(unname(LIN_KINDS[rep$kind]), rep$kind))
+  if (!is.null(rep$kind) && !identical(rep$kind, "sample")) {
+    w("- concentrations: computed in the app, not stored by the worker. Each is the stored best model inverted at the well's response (Bayesian: posterior-median parameters); pcov is the stored grid's pcov read at that concentration; gate class is from the curve's LLOQ/ULOQ.")
+    if (nzchar(.lin_or(rep$backcalc, ""))) w("- check against the worker: %s", rep$backcalc)
+  }
   w("- antigen: %s; feature: %s", .lin_or(f$antigen, "all"), .lin_or(f$feature, "all"))
   w("- timeperiod: %s; patient filter: %s", if (length(f$timeperiod)) paste(f$timeperiod, collapse = ", ") else "all",
     if (nzchar(.lin_or(f$patient, ""))) f$patient else "none")
@@ -1041,6 +1060,7 @@ lin_report_json <- function(rep) {
   reg <- rep$reg
   slim <- function(f) if (is.null(f)) NULL else f[setdiff(names(f), c("model", "draws"))]
   obj <- list(generated = rep$generated, scope = rep$scope, comparison = rep$preset,
+              sample_type = rep$kind, backcalculation_check = if (!identical(rep$kind, "sample")) rep$backcalc else NULL,
               filters = rep$filters, x = rep$x, y = rep$y, match = rep$match, differ = rep$differ,
               n_sets = rep$n_sets, n_pairs = rep$n_pairs, pair_types = rep$pair_types,
               gate_combos = rep$gate_combos,
