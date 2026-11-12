@@ -2,7 +2,7 @@
 
 Releases are tagged `vYYYY.MM.DD` (the date the tag was cut); a second release on the same day takes a `.N` suffix.
 
-## Unreleased
+## v2026.11.11.3 — Replicate Linearity: controls and standards
 
 ### Added
 - **Quality Control > Replicate Linearity: controls and standards.** Tick **Include**
@@ -13,6 +13,10 @@ Releases are tagged `vYYYY.MM.DD` (the date the tag was cut); a second release o
   parameters), reads pcov from the stored precision profile and takes the gate class
   from LLOQ/ULOQ. A control well is estimated through every source and method of its
   plate and antigen. Masked controls and excluded standards are left out.
+  A control is named by its `source` (for example `QC1 (Low)`, `Inhouse Ref`) when its
+  `sampleid` is only the well, so one control is one set across plates and dilutions.
+  Loading controls reports how many wells survive each stage (stored, matched to a curve,
+  not masked, fitted, with a concentration).
   On load the app checks itself against the worker (the model inverse against the
   stored grid; the pcov it reads against the pcov stored for test samples) and the
   result goes in the report. Help note `qc.linearity.kinds`; design in
