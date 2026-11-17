@@ -103,6 +103,12 @@ If you uncover a security vulnerability in this app or in its containerization, 
 
 ---
 
+## Use of generative AI
+
+The maintainer uses an AI assistant (Claude) to help refine the user interfaces and to check the integrity of the statistical analysis that processes assay responses. All changes are reviewed and approved by the maintainer. What AI did, what people did, and how output is verified are described in [AI_USE](AI_USE.md).
+
+---
+
 ## Contributing
 
 See the section: [CONTRIBUTING](CONTRIBUTING.md)
