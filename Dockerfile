@@ -1,6 +1,6 @@
 # Use an official R runtime as a parent image
 FROM rocker/tidyverse:latest
-LABEL org.opencontainers.image.source=https://github.com/hoenlab/i-spi
+LABEL org.opencontainers.image.source=https://github.com/immunoplex/i-spi
 
 # Switch to Azure mirror for reliable downloads on GitHub Actions runners
 RUN sed -i 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' \

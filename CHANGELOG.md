@@ -1,6 +1,29 @@
 # Changelog
 
-Releases are tagged `vYYYY.MM.DD` (the date the tag was cut); a second release on the same day takes a `.N` suffix.
+From v1.0.0, releases follow [semantic versioning](https://semver.org): `vMAJOR.MINOR.PATCH`.
+A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and `:MAJOR.MINOR`);
+pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
+a `.N` suffix for a second release on the same day); those tags remain as history.
+
+## v1.0.0 — Additive precision-weights model (feature-flagged); semantic versioning
+
+### Changed
+- Versioning: releases are now tagged with semantic versions (see above), and a release tag
+  builds a versioned image. The image records its version and commit in `BUILD_STAMP`.
+
+### Added
+- **Precision Weights: additive measurement-error model (feature-flagged, off by default).**
+  With `options(ispi.enable_additive_weights = TRUE)` the *Compute weights* panel offers a
+  *Variance model* choice. *Additive* writes each sample's variance as real between-sample
+  variation plus the measurement error the curve reports, so weights are bounded by
+  1/tau^2, each sample gets a reliability, and out-of-range samples are treated as censored
+  instead of weighted. The Summary figure, fit table and per-sample table are model aware
+  (tau, kappa, reliability, censoring). Guides and the curveRfreq / curveRbayes pages are
+  linked from the panel and the help pages. Needs i-spi-compute with migration 010 and
+  curveRweights >= 0.3.0 / curveRcore >= 0.6.0. With the flag off nothing changes.
+- Help: new glossary entry *Reliability*; schema and data-dictionary entries for the new
+  `calib_weights` / `calib_weights_fit` columns.
+- `AI_USE.md`: how generative AI is used in this project.
 
 ## v2026.11.11.3 — Replicate Linearity: controls and standards
 

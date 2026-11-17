@@ -1,10 +1,13 @@
 # Name of the workflow
 name: Create and publish a Docker image
 
-# Configures this workflow to run on pushes to the 'main' branch
+# Runs on pushes to 'main' (image :main) and on semantic-version tags vX.Y.Z
+# (images :X.Y.Z and :X.Y). The branches filter must stay, or branch pushes stop
+# triggering once a tags filter is present.
 on:
   push:
     branches: ['main']
+    tags: ['v*.*.*']
 
 # Environment variables for the workflow
 env:
@@ -42,6 +45,14 @@ jobs:
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # :main for branch pushes; :X.Y.Z and :X.Y for semver tags. No :latest,
+          # so a deployment only changes version when its manifest says so.
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=false
 
       - name: Build and push Docker image
         id: push
@@ -53,6 +64,9 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Recorded in /srv/shiny-server/BUILD_STAMP: tag or branch, and commit.
+          build-args: |
+            BUILD_STAMP=${{ github.ref_name }}@${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
