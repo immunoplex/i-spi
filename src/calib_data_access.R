@@ -99,6 +99,25 @@ family_short <- function(model_name) {
 
 .tbl <- function(name) sprintf("%s.%s", CALIB_SCHEMA, name)
 
+# Legacy tables that a fresh install (the curated DDL in i-spi-deployment) does
+# not create: replaced by the settings cascade (xmap_study_config) or no longer
+# read by any live code (xmap_dilution_*). Study clone/delete still copy or
+# remove their rows on databases that have them, and skip them where they are
+# absent. Existence is checked up front, never by catching an error: inside the
+# clone/delete transaction a failed statement would abort the whole transaction.
+LEGACY_OPTIONAL_TABLES <- c("xmap_dilution_analysis", "xmap_dilution_parameters",
+                            "xmap_study_config")
+
+# `tables` minus any LEGACY_OPTIONAL_TABLES that do not exist in the schema.
+.present_tables <- function(conn, tables) {
+  opt <- intersect(tables, LEGACY_OPTIONAL_TABLES)
+  if (!length(opt)) return(tables)
+  have <- vapply(opt, function(t) isTRUE(DBI::dbGetQuery(conn,
+    "SELECT to_regclass($1) IS NOT NULL AS ok", params = list(.tbl(t)))$ok[1]),
+    logical(1))
+  setdiff(tables, opt[!have])
+}
+
 # Out-of-range sample columns (censoring, predictive quantiles, threshold
 # probabilities) arrive with i-spi-compute migration 008. Explicit-column
 # SELECTs ask only for the ones the table actually has: a missing column would

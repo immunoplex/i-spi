@@ -85,7 +85,7 @@ count_study_components <- function(conn, project, study, experiment = NULL) {
 
   out[["curve_lookup"]] <- cnt(sprintf("SELECT count(*) FROM %s WHERE %s",
                                        .tbl("curve_lookup"), sw), sp)
-  for (tb in .DC_EXP_TABLES)
+  for (tb in .present_tables(conn, .DC_EXP_TABLES))
     out[[tb]] <- cnt(sprintf("SELECT count(*) FROM %s WHERE %s", .tbl(tb), sw), sp)
 
   out[["calib_settings"]] <- if (whole)
@@ -95,7 +95,7 @@ count_study_components <- function(conn, project, study, experiment = NULL) {
     cnt(sprintf("SELECT count(*) FROM %s WHERE project_id IS NOT DISTINCT FROM $1 AND study_accession = $2 AND experiment_accession = $3",
                 .tbl("calib_settings")), list(project, study, experiment))
 
-  if (whole) for (tb in .DC_STUDY_TABLES)
+  if (whole) for (tb in .present_tables(conn, .DC_STUDY_TABLES))
     out[[tb]] <- cnt(sprintf("SELECT count(*) FROM %s WHERE study_accession = $1 AND project_id IS NOT DISTINCT FROM $2",
                              .tbl(tb)), list(study, project))
   out[!is.na(out)]
@@ -135,7 +135,7 @@ delete_study_components <- function(conn, project, study, experiment = NULL) {
 
     deleted[["curve_lookup"]] <- ex(sprintf("DELETE FROM %s WHERE %s", .tbl("curve_lookup"), sw), sp)
 
-    for (tb in .DC_EXP_TABLES)
+    for (tb in .present_tables(co, .DC_EXP_TABLES))
       deleted[[tb]] <- ex(sprintf("DELETE FROM %s WHERE %s", .tbl(tb), sw), sp)
 
     deleted[["calib_settings"]] <- if (whole)
@@ -145,7 +145,7 @@ delete_study_components <- function(conn, project, study, experiment = NULL) {
       ex(sprintf("DELETE FROM %s WHERE project_id IS NOT DISTINCT FROM $1 AND study_accession = $2 AND experiment_accession = $3",
                  .tbl("calib_settings")), list(project, study, experiment))
 
-    if (whole) for (tb in .DC_STUDY_TABLES)
+    if (whole) for (tb in .present_tables(co, .DC_STUDY_TABLES))
       deleted[[tb]] <- ex(sprintf("DELETE FROM %s WHERE study_accession = $1 AND project_id IS NOT DISTINCT FROM $2",
                                   .tbl(tb)), list(study, project))
     deleted

@@ -84,7 +84,7 @@ count_clone_source <- function(conn, srcproj, srcstudy) {
   cnt <- function(tb) tryCatch(as.integer(DBI::dbGetQuery(conn, sprintf(
     "SELECT count(*) FROM %s WHERE project_id IS NOT DISTINCT FROM $1 AND study_accession = $2",
     .tbl(tb)), params = list(srcproj, srcstudy))[[1]]), error = function(e) NA_integer_)
-  out <- vapply(c(.CLONE_TABLES, "calib_settings"), cnt, integer(1))
+  out <- vapply(c(.present_tables(conn, .CLONE_TABLES), "calib_settings"), cnt, integer(1))
   out[!is.na(out)]
 }
 
@@ -116,7 +116,7 @@ clone_study_components <- function(conn, srcproj, srcstudy, newproj, newstudy, a
                    newproj, newstudy), call. = FALSE)
 
     ins <- integer(0)
-    for (tb in .CLONE_TABLES)
+    for (tb in .present_tables(co, .CLONE_TABLES))
       ins[[tb]] <- .clone_rescope(co, tb, newproj, newstudy, srcproj, srcstudy)
     ins[["calib_settings"]] <- .clone_settings(co, newproj, newstudy, srcproj, srcstudy)
 
