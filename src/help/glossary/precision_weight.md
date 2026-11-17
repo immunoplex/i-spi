@@ -4,9 +4,14 @@ title: Precision weight
 audience: user
 category: glossary
 topic: Precision and uncertainty
-see_also: [qc.precision_weights.method, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, schema.calib_weights, schema.calib_weights_fit, glossary.censoring, data.analysis.downstream_censoring]
+see_also: [glossary.reliability, qc.precision_weights.method, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, schema.calib_weights, schema.calib_weights_fit, glossary.censoring, data.analysis.downstream_censoring]
 references:
   - text: "curveRweights precision-weighting.Rmd §\"The problem: unequal precision across the calibration curve\""
+    url: "https://immunoplex.github.io/curveRweights/articles/precision-weighting.html"
+  - text: "curveRweights vignette \"Measurement error in assay data: what the weights mean\" (additive model, reliability, glossary)"
+    url: "https://immunoplex.github.io/curveRweights/articles/measurement-error.html"
+  - text: "curveRweights vignette \"Using the weights downstream: which analysis for which question\""
+    url: "https://immunoplex.github.io/curveRweights/articles/downstream-analysis.html"
 ---
 
 A **precision weight** is a continuous, per-sample weight (`w`, or its
@@ -28,4 +33,11 @@ and milder, but present, inside the range. For estimating group means and
 effects, prefer unweighted censored models and report a weighted-versus-
 unweighted comparison; see [[data.analysis.downstream_censoring|the downstream
 analysis guide]].
+
+**Two weighting models.** The original (multiplicative) model attributes all of a
+sample's variance to the measurement, so a very precisely measured sample can
+get an unbounded weight. The additive model, `variance = tau² + measurement
+variance`, caps every weight at `1/tau²` and adds a per-sample
+[[glossary.reliability|reliability]]. Which one produced a set of weights is
+recorded in the `model` column.
 :::

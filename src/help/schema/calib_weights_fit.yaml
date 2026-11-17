@@ -1,6 +1,7 @@
 # Source: i-spi-compute/worker/migrations/004_calib_weights.sql (authoritative
 # DDL, not a live DB query -- regenerate via dev/data_tab_schema_report.sql if
-# this drifts). multiplate_group_id is uuid, matching curve_lookup's column of
+# this drifts). Columns from `model` onward were added by
+# i-spi-compute migration 010 / curveRcore 0.6.0 (all nullable except `model`). multiplate_group_id is uuid, matching curve_lookup's column of
 # the same name/type, but is NOT a declared foreign key (see migration 004's
 # comment) -- no fk entry below is accurate, not an omission.
 columns:
@@ -22,6 +23,20 @@ columns:
   - {name: weight_ratio, type: "double precision", description: "", fk: ""}
   - {name: job_id, type: "varchar(64)", description: "", fk: ""}
   - {name: created_at, type: timestamptz, description: "DEFAULT now()", fk: ""}
+  - {name: model, type: text, description: "multiplicative (phi, beta1) or additive (tau, kappa, reliability); NOT NULL DEFAULT multiplicative", fk: ""}
+  - {name: weights_pkg_version, type: text, description: "curveRweights version that produced the row", fk: ""}
+  - {name: tau, type: "double precision", description: "Additive model: between-sample SD tau (log10)", fk: ""}
+  - {name: tau_lo, type: "double precision", description: "", fk: ""}
+  - {name: tau_hi, type: "double precision", description: "", fk: ""}
+  - {name: kappa, type: "double precision", description: "Additive model: measurement-error scale (1 = the curve se is the true measurement SD)", fk: ""}
+  - {name: kappa_lo, type: "double precision", description: "", fk: ""}
+  - {name: kappa_hi, type: "double precision", description: "", fk: ""}
+  - {name: reliability, type: "double precision", description: "Additive model: mean reliability across the group", fk: ""}
+  - {name: reliability_lo, type: "double precision", description: "", fk: ""}
+  - {name: reliability_hi, type: "double precision", description: "", fk: ""}
+  - {name: fix_beta1, type: boolean, description: "TRUE when the exponent beta1 was fixed at 1", fk: ""}
+  - {name: n_censored, type: integer, description: "Number of censored samples in the fit", fk: ""}
+  - {name: identifiability, type: text, description: "Whether tau and kappa could be separated for this group", fk: ""}
 indexes:
   - {name: calib_weights_fit_pkey, column: multiplate_group_id, type: btree}
   - {name: calib_weights_fit_pkey, column: method, type: btree}

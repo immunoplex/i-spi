@@ -24,6 +24,176 @@
 # this app (see e.g. std_curve_weights_module.R's own file header).
 # =============================================================================
 
+# ---- weights-model helpers (pure; unit-tested in test-weights-model-ui.R) ----
+# calib_weights / calib_weights_fit carry a `model` column since curveRcore
+# 0.6.0: "multiplicative" (phi, beta1) or "additive" (tau, kappa, reliability).
+# Rows written before that, or read from an un-migrated database, have no
+# `model` column and are multiplicative. The additive model is behind
+# options(ispi.enable_additive_weights = TRUE); with the flag off nothing
+# below changes what the user sees.
+
+WEIGHTS_DOCS <- list(
+  measurement_error = "https://immunoplex.github.io/curveRweights/articles/measurement-error.html",
+  downstream        = "https://immunoplex.github.io/curveRweights/articles/downstream-analysis.html",
+  multiplicative    = "https://immunoplex.github.io/curveRweights/articles/precision-weighting.html",
+  site              = "https://immunoplex.github.io/curveRweights/"
+)
+
+additive_weights_enabled <- function() {
+  isTRUE(getOption("ispi.enable_additive_weights", FALSE))
+}
+
+# Model(s) present in a weights / fit table. Missing column or NA => multiplicative.
+weights_models_present <- function(df) {
+  if (is.null(df) || !nrow(df)) return(character(0))
+  if (!"model" %in% names(df)) return("multiplicative")
+  m <- as.character(df$model)
+  m[is.na(m) | !nzchar(m)] <- "multiplicative"
+  sort(unique(m))
+}
+
+# One annotation line per fit row, model aware. `r` is a one-row data.frame
+# with source plus the fit columns.
+weights_fit_annotation <- function(r) {
+  num <- function(x, f = function(v) signif(v, 3L)) {
+    if (is.null(x) || length(x) == 0L || is.na(x[1L])) "NA" else f(x[1L])
+  }
+  m <- weights_models_present(r)[1L]
+  if (is.na(m)) m <- "multiplicative"
+  interp <- if (is.null(r$interpretation) || is.na(r$interpretation[1L])) "" else r$interpretation[1L]
+  neff <- num(r$n_eff, function(v) round(v, 1L))
+  if (identical(m, "additive")) {
+    sprintf("%s: tau=%s kappa=%s reliability=%s n_eff=%s\n%s",
+            r$source[1L], num(r$tau), num(r$kappa),
+            num(r$reliability, function(v) round(v, 2L)), neff, interp)
+  } else {
+    sprintf("%s: phi=%s beta1=%s n_eff=%s\n%s",
+            r$source[1L], num(r$phi), num(r$beta1), neff, interp)
+  }
+}
+
+# Caption sentence describing the model(s) drawn on the figure.
+weights_model_caption <- function(models) {
+  mult <- paste0(
+    "Model: sigma_i = phi * se_i^beta1 (curveRweights joint Bayesian/frequentist ",
+    "location-scale fit); w_i = 1/sigma_i^2, normalised to mean = 1 (w_norm; dashed ",
+    "blue line). Annotation per panel: one line per contributing standard curve ",
+    "source -- phi = baseline precision scaling; beta1 = precision exponent ",
+    "(near 1 = se is a direct proxy for residual SD, > 1 = amplified weighting, ",
+    "< 1 = compressed); n_eff = effective sample size.")
+  add <- paste0(
+    "Model: additive measurement error, sigma_i^2 = tau^2 + kappa^2 * se_i^2 ",
+    "(curveRweights); w_i = 1/sigma_i^2 can never exceed 1/tau^2, and is ",
+    "normalised to mean = 1 over quantified samples (w_norm; dashed blue line). ",
+    "Annotation per panel: tau = true between-sample SD (log10); kappa = ",
+    "measurement-error scale (1 = the curve's se is the true measurement SD); ",
+    "reliability = share of variance that is signal (0-1, mean over samples); ",
+    "n_eff = effective sample size. Out-of-range samples are censored, not ",
+    "weighted, so they carry no w_norm.")
+  if (!length(models)) models <- "multiplicative"
+  if (all(models == "additive")) add
+  else if (all(models == "multiplicative")) mult
+  else paste0("Mixed models in this view. Multiplicative: ", mult, " Additive: ", add)
+}
+
+# Columns (and rounding) for the per-group fit summary table.
+weights_fit_table <- function(df) {
+  if (is.null(df) || !nrow(df)) return(df)
+  rd <- function(col, k) if (col %in% names(df)) df[[col]] <<- round(df[[col]], k)
+  for (col in c("phi", "beta1", "tau", "kappa")) rd(col, 3L)
+  rd("reliability", 2L)
+  models <- weights_models_present(df)
+  base <- c("multiplate_group_id", "method")
+  # `model` is shown only once an additive fit exists, so views of
+  # multiplicative-only data stay exactly as they were before 0.6.0.
+  if (any(models == "additive")) base <- c(base, "model")
+  base <- c(base, "antigen", "feature", "design_cols", "scale_predictor")
+  mult <- c("phi", "beta1")
+  add  <- c("tau", "kappa", "reliability", "n_censored", "fix_beta1", "identifiability")
+  tail <- c("interpretation", "n_fit", "n_eff", "weight_ratio")
+  keep <- c(base, if (any(models == "multiplicative")) mult,
+            if (any(models == "additive")) add, tail)
+  df[, intersect(keep, names(df)), drop = FALSE]
+}
+
+# Columns for the per-sample weights table.
+weights_sample_table <- function(df) {
+  if (is.null(df) || !nrow(df)) return(df)
+  for (col in c("sigma", "w", "w_norm", "v_meas", "tau2")) if (col %in% names(df)) df[[col]] <- round(df[[col]], 4L)
+  for (col in c("reliability", "reliability_lo", "reliability_hi")) if (col %in% names(df)) df[[col]] <- round(df[[col]], 3L)
+  keep <- c("antigen", "feature", "curve_id", "method", "model", "sampleid",
+            "patientid", "timeperiod", "agroup", "se", "pcov", "sigma",
+            "v_meas", "tau2", "w", "w_norm", "reliability", "reliability_lo",
+            "reliability_hi", "censor_type", "bound")
+  out <- df[, intersect(keep, names(df)), drop = FALSE]
+  # additive-only columns are dropped while empty (multiplicative-only data)
+  for (col in c("v_meas", "tau2", "reliability", "reliability_lo", "reliability_hi",
+                "censor_type", "bound"))
+    if (col %in% names(out) && all(is.na(out[[col]]))) out[[col]] <- NULL
+  if ("model" %in% names(out) && all(weights_models_present(out) == "multiplicative"))
+    out[["model"]] <- NULL
+  out
+}
+
+# Wrap the figure caption to the drawn width so it never runs past the edge.
+# ggplot2 does not wrap captions itself. Caption text is 9 pt, ~0.55 em per
+# character, so about 13 characters per inch is a safe (slightly narrow)
+# estimate; paragraph breaks (blank lines) are kept.
+wrap_weights_caption <- function(cap, width_in = NULL) {
+  if (is.null(width_in) || !is.finite(width_in) || width_in <= 0) width_in <- 9
+  chars <- max(30L, as.integer(floor((width_in - 0.4) * 13)))
+  paras <- strsplit(cap, "\n\n", fixed = TRUE)[[1L]]
+  paste(vapply(paras, function(p) paste(strwrap(p, width = chars), collapse = "\n"),
+               character(1L)), collapse = "\n\n")
+}
+
+# Shiny pieces for the model choice. Return NULL when the flag is off, so the
+# Compute-weights panel is exactly the pre-0.6.0 one.
+weights_js_is_multiplicative <- function(ns) {
+  if (!additive_weights_enabled()) return("true")
+  sprintf("input['%s'] != 'additive'", ns("weights_model"))
+}
+
+weights_docs_links <- function() {
+  if (!additive_weights_enabled()) return(NULL)
+  shiny::tags$p(shiny::tags$small(style = "color:#787878;",
+    "Guides: ",
+    shiny::tags$a("what the weights mean (measurement error)",
+                  href = WEIGHTS_DOCS$measurement_error, target = "_blank", rel = "noopener"),
+    " · ",
+    shiny::tags$a("using the weights in an analysis",
+                  href = WEIGHTS_DOCS$downstream, target = "_blank", rel = "noopener"),
+    " · ",
+    shiny::tags$a("how the calibration curves are fitted: curveRfreq",
+                  href = "https://immunoplex.github.io/curveRfreq/", target = "_blank", rel = "noopener"),
+    " / ",
+    shiny::tags$a("curveRbayes",
+                  href = "https://immunoplex.github.io/curveRbayes/", target = "_blank", rel = "noopener")))
+}
+
+weights_model_selector_ui <- function(ns) {
+  if (!additive_weights_enabled()) return(NULL)
+  shiny::tagList(
+    shiny::radioButtons(ns("weights_model"), "Variance model",
+                        choices = c("Multiplicative (current default)" = "multiplicative",
+                                    "Additive measurement-error (new)"  = "additive"),
+                        selected = "multiplicative"),
+    shiny::conditionalPanel(
+      condition = sprintf("input['%s'] == 'additive'", ns("weights_model")),
+      shiny::tags$p(shiny::tags$small(style = "color:#555;",
+        "The additive model splits each sample's variance into real ",
+        "between-sample variation (tau²) plus the measurement error the ",
+        "calibration curve reports. Weights cannot exceed 1/tau²; each sample ",
+        "gets a reliability (0–1); out-of-range samples are treated as censored ",
+        "rather than weighted. ",
+        shiny::tags$strong("Running it replaces the stored weights"),
+        " for this method and experiment (the most recent run is the one kept)."),
+        shiny::checkboxInput(ns("estimate_beta1"),
+                             "Estimate the exponent beta1 (advanced; default: fixed at 1)",
+                             value = FALSE))),
+    weights_docs_links())
+}
+
 .pwp_plate_palette <- function(plate_levels) {
   base_cols <- c(
     "#1f78b4", "#33a02c", "#e31a1c", "#ff7f00", "#6a3d9a",
@@ -92,15 +262,8 @@
 
   # ---- phi/beta1 annotation: one line per contributing source --------------
   phi_ann <- if (!is.null(fit_rows) && nrow(fit_rows) > 0L) {
-    lines <- vapply(seq_len(nrow(fit_rows)), function(i) {
-      r <- fit_rows[i, ]
-      phi_txt   <- if (is.na(r$phi[1L]))   "NA" else signif(r$phi[1L], 3L)
-      beta1_txt <- if (is.na(r$beta1[1L])) "NA" else signif(r$beta1[1L], 3L)
-      neff_txt  <- if (is.na(r$n_eff[1L])) "NA" else round(r$n_eff[1L], 1L)
-      interp    <- if (is.na(r$interpretation[1L])) "" else r$interpretation[1L]
-      sprintf("%s: phi=%s beta1=%s n_eff=%s\n%s",
-              r$source[1L], phi_txt, beta1_txt, neff_txt, interp)
-    }, character(1L))
+    lines <- vapply(seq_len(nrow(fit_rows)), function(i)
+      weights_fit_annotation(fit_rows[i, , drop = FALSE]), character(1L))
     paste(lines, collapse = "\n")
   } else {
     "not estimated"
@@ -292,9 +455,11 @@
 #' @param ncol         panel grid width (default 3).
 #' @param x_log        log10 x-axis? (default TRUE)
 #' @param point_size   point size (default 2.0).
+#' @param width_in     drawn width in inches, used to wrap the caption (default 9).
 #' @return a patchwork figure.
 precision_weight_panel <- function(weights_df, fit_df, antigens, features = NULL,
-                                   ncol = 3L, x_log = TRUE, point_size = 2.0) {
+                                   ncol = 3L, x_log = TRUE, point_size = 2.0,
+                                   width_in = NULL) {
   antigens <- as.character(antigens)
   n_ag <- length(antigens)
   if (n_ag == 0L) stop("precision_weight_panel: no antigens to plot.")
@@ -353,12 +518,8 @@ precision_weight_panel <- function(weights_df, fit_df, antigens, features = NULL
 
   cap <- paste0(
     "Precision weights for ", n_ag, " target", if (n_ag > 1L) "s" else "",
-    ". Model: sigma_i = phi * se_i^beta1 (curveRweights joint Bayesian/frequentist ",
-    "location-scale fit); w_i = 1/sigma_i^2, normalised to mean = 1 (w_norm; dashed ",
-    "blue line). Annotation per panel: one line per contributing standard curve ",
-    "source -- phi = baseline precision scaling; beta1 = precision exponent ",
-    "(near 1 = se is a direct proxy for residual SD, > 1 = amplified weighting, ",
-    "< 1 = compressed); n_eff = effective sample size. Colour = plate.",
+    ". ", weights_model_caption(weights_models_present(fit_df)),
+    " Colour = plate.",
     "\n\n",
     "BLACK CIRCLE OVERLAY -- binary pcov_pass reference for direct comparison with ",
     "the old pass/fail gate: pcov_pass = TRUE -> black circle at y = 1 (mean line); ",
@@ -371,7 +532,7 @@ precision_weight_panel <- function(weights_df, fit_df, antigens, features = NULL
 
   patchwork::wrap_plots(panels, ncol = ncol) +
     patchwork::plot_annotation(
-      caption = cap,
+      caption = wrap_weights_caption(cap, width_in),
       theme = ggplot2::theme(
         plot.caption = ggplot2::element_text(
           size = 9L, hjust = 0, lineheight = 1.45,

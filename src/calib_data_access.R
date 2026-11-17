@@ -717,18 +717,22 @@ fetch_calib_weights_fit_scoped <- function(pool, project, study, experiment) {
 # computed_at substitutes for finished_at. In-flight (queued/running) weights
 # jobs are reported separately, by the shared queue-view box (same
 # list_jobs()-based mechanism std_curve_calc_module.R already uses), not here.
-fetch_weights_status_scoped <- function(pool, project, study, experiment) {
+# `extended = TRUE` also selects the additive-model columns added in
+# curveRcore 0.6.0 (model, tau, kappa, reliability). It is off by default so
+# the query is unchanged -- and cannot fail -- against an un-migrated database.
+fetch_weights_status_scoped <- function(pool, project, study, experiment, extended = FALSE) {
+  extra <- if (isTRUE(extended)) "cwf.model, cwf.tau, cwf.kappa, cwf.reliability," else ""
   .calib_q(pool, sprintf(
     "SELECT cl.curve_id, cl.antigen, cl.plateid, cl.plate, cl.feature,
             cl.source, cl.wavelength, cl.multiplate_group_id,
             cwf.method, cwf.phi, cwf.beta1, cwf.interpretation,
-            cwf.design_cols, cwf.n_eff, cwf.weight_ratio, cwf.job_id,
+            %s cwf.design_cols, cwf.n_eff, cwf.weight_ratio, cwf.job_id,
             cwf.created_at AS computed_at
        FROM %s cl
        LEFT JOIN %s cwf ON cwf.multiplate_group_id = cl.multiplate_group_id
       WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
       ORDER BY cl.antigen, cl.plateid, cl.feature, cwf.method",
-    .tbl("curve_lookup"), .tbl("calib_weights_fit")),
+    extra, .tbl("curve_lookup"), .tbl("calib_weights_fit")),
     params = list(project, study, experiment))
 }
 

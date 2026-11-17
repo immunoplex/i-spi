@@ -3,8 +3,16 @@ id: qc.precision_weights.method
 title: Precision weighting method & scope
 audience: user
 category: compute-decision
-see_also: [glossary.precision_weight, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, glossary.pcov, data.analysis.downstream_censoring]
+see_also: [glossary.reliability, glossary.precision_weight, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, glossary.pcov, data.analysis.downstream_censoring]
 references:
+  - text: "curveRweights vignette \"Measurement error in assay data: what the weights mean\" (start here if measurement-error models are new to you)"
+    url: "https://immunoplex.github.io/curveRweights/articles/measurement-error.html"
+  - text: "curveRweights vignette \"Using the weights downstream: which analysis for which question\""
+    url: "https://immunoplex.github.io/curveRweights/articles/downstream-analysis.html"
+  - text: "curveRfreq quickstart (how the frequentist calibration curves and their standard errors are produced)"
+    url: "https://immunoplex.github.io/curveRfreq/articles/frequentist-quickstart.html"
+  - text: "curveRbayes quickstart (how the Bayesian calibration curves and their standard errors are produced)"
+    url: "https://immunoplex.github.io/curveRbayes/articles/bayesian-quickstart.html"
   - text: "curveRweights precision-weighting.Rmd, §\"The problem: unequal precision across the calibration curve\", §\"The model\""
   - text: "i-spi-refactor dev/HANDOFF_precision_weighting.md (architecture: separate job family from calibration, writes calib_weights/calib_weights_fit)"
   - text: "curveRweights::fit_saturated_weight() — brms Gaussian location-scale model, saturated cell-means location (yi ~ 0 + cell [+ (1|plate)]), scale log(sigma) = gamma_0 + gamma_1*log(cv); curveRweights::interpret_beta1() — the named beta1 regimes cited below."
@@ -27,6 +35,15 @@ the job to one feature/antigen instead of the whole experiment. **Design
 columns** (timeperiod, agroup) define the experimental cells the weighting
 model estimates within — at least one must actually vary for a given
 scope, or the model has nothing to estimate against.
+
+**Variance model** (shown when the additive model is enabled). *Multiplicative*
+is the original model and stays the default. *Additive measurement-error* writes a
+sample's variance as real between-sample variation plus the measurement error the
+curve reports, so no weight can exceed `1/tau²`, every sample gets a
+[[glossary.reliability|reliability]], and out-of-range samples enter as censored
+rather than weighted. Running either model replaces the stored weights for that
+method and experiment: the most recent run is the one kept, and the `model`
+column records which it was.
 
 ::: more
 The scale model is a power law relating a sample's precision index
@@ -114,5 +131,5 @@ treat out-of-range samples as [[glossary.censoring|censored]] and prefer
 unweighted censored models, reporting a weighted-versus-unweighted comparison —
 see [[data.analysis.downstream_censoring|the downstream analysis guide]]. A
 censoring-aware weighting option (weights for in-range samples, censoring
-indicators for out-of-range ones) is planned.
+indicators for out-of-range ones) is what the additive model does.
 :::

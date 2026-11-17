@@ -3,9 +3,12 @@ id: data.results.precision_weights_fit
 title: Precision-weighting model fit (phi/beta1)
 audience: user
 category: compute-decision
-see_also: [glossary.precision_weight, qc.precision_weights.method, data.results.precision_weights, schema.calib_weights_fit]
+see_also: [glossary.reliability, glossary.precision_weight, qc.precision_weights.method, data.results.precision_weights, schema.calib_weights_fit]
 references:
   - text: "curveRweights precision-weighting.Rmd §\"Interpreting phi and beta1\""
+    url: "https://immunoplex.github.io/curveRweights/articles/precision-weighting.html"
+  - text: "curveRweights vignette \"Measurement error in assay data: what the weights mean\" (tau, kappa, reliability, identifiability)"
+    url: "https://immunoplex.github.io/curveRweights/articles/measurement-error.html"
 ---
 
 One row per multiplate group × method: the fitted scale-model parameters
@@ -21,6 +24,13 @@ information and weights end up close to uniform. `interpretation` gives a
 plain-language label for this combination; `n_fit`/`n_eff` and
 `weight_ratio` describe how much data the fit had and how much the weights
 actually vary.
+
+When the **additive** model was used (`model` = additive), the row instead
+reports **tau** (true between-sample SD, log10), **kappa** (measurement-error
+scale; 1 means the curve's own `se` is the true measurement SD), the group's
+mean [[glossary.reliability|reliability]], the number of censored samples, and
+an `identifiability` note. `tau` and `kappa` can be separated only because the
+samples' `se` values differ; when they barely do, treat both as provisional.
 
 ::: more
 `phi`/`beta1` are estimated jointly with a saturated cell-means location

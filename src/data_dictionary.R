@@ -96,16 +96,18 @@ CALIB_TABLE_DOCS <- list(
               "pareto_k_bad")),
   calib_weights = list(
     group = "Results", label = "Precision weights",
-    what  = "curveRweights per-sample precision weights (sigma/w/w_norm), from the saturated location-scale model sigma_i = phi * se_i^beta1.",
+    what  = "curveRweights per-sample precision weights (sigma/w/w_norm). Multiplicative model: sigma_i = phi * se_i^beta1. Additive model: sigma_i^2 = tau^2 + v_meas, with per-sample reliability and censoring flags.",
     grain = "one row per curve / method / sample identity",
     keys  = c("sampleid", "patientid", "timeperiod", "agroup", "dilution",
-              "se", "pcov", "sigma", "w", "w_norm")),
+              "se", "pcov", "sigma", "w", "w_norm", "model", "v_meas", "tau2",
+              "reliability", "censor_type", "bound")),
   calib_weights_fit = list(
     group = "Results", label = "Precision weights fit",
-    what  = "One curveRweights fit per multiplate group x method: phi/beta1 scale-model estimates, diagnostics, and interpretation.",
+    what  = "One curveRweights fit per multiplate group x method: phi/beta1 (multiplicative) or tau/kappa/reliability (additive) estimates, diagnostics, and interpretation.",
     grain = "one row per multiplate_group_id / method",
     keys  = c("method", "design_cols", "scale_predictor", "phi", "beta1",
-              "interpretation", "n_fit", "n_eff", "weight_ratio"))
+              "interpretation", "n_fit", "n_eff", "weight_ratio", "model", "tau", "kappa",
+              "reliability", "n_censored"))
 )
 
 #' Look up the human description for a table (by physical name). Returns a list
@@ -126,3 +128,56 @@ CALIB_TABLE_ORDER <- list(
                    "calib_grid", "calib_samples", "calib_diagnostics", "calib_loo",
                    "calib_weights", "calib_weights_fit")
 )
+
+#' Metadata describing HOW the precision weights in a bundle were produced.
+#'
+#' Included as `weights_meta` in the RData, JSON and Excel bundles (the per-table
+#' CSVs already carry `model` and `weights_pkg_version` on every row). One row per
+#' (method, model) present in calib_weights; a single "no weights" row when none
+#' have been computed. The most recent run for a sample and method is the one
+#' stored, so this says which model the weights in the bundle came from.
+#'
+#' @param weights_df calib_weights rows (any extra columns are ignored).
+#' @param fit_df     calib_weights_fit rows (optional).
+#' @return a data.frame.
+weights_bundle_meta <- function(weights_df, fit_df = NULL) {
+  docs <- c(
+    multiplicative = "sigma_i = phi * se_i^beta1; w = 1/sigma^2; every sample weighted (no censoring).",
+    additive       = "sigma_i^2 = tau^2 + kappa^2 * se_i^(2*beta1) (beta1 fixed at 1 by default); w = 1/sigma^2, bounded by 1/tau^2; reliability = tau^2 / sigma^2; out-of-range samples are censored and have no w_norm.")
+  guide <- "https://immunoplex.github.io/curveRweights/articles/measurement-error.html"
+  none <- data.frame(method = NA_character_, model = NA_character_,
+                     weights_pkg_version = NA_character_, n_samples = 0L,
+                     n_curve_groups = 0L, n_censored_samples = 0L,
+                     first_computed = NA_character_, last_computed = NA_character_,
+                     description = "No precision weights have been computed for this experiment.",
+                     guide = guide, stringsAsFactors = FALSE)
+  if (is.null(weights_df) || !nrow(weights_df)) return(none)
+
+  w <- weights_df
+  if (!"model" %in% names(w)) w$model <- "multiplicative"
+  w$model[is.na(w$model) | !nzchar(w$model)] <- "multiplicative"
+  if (!"weights_pkg_version" %in% names(w)) w$weights_pkg_version <- NA_character_
+  if (!"censor_type" %in% names(w)) w$censor_type <- NA_character_
+  w$.ts <- if ("created_at" %in% names(w)) as.character(w$created_at) else NA_character_
+  uniq <- function(x) { x <- unique(x[!is.na(x) & nzchar(x)]); if (length(x)) paste(sort(x), collapse = "; ") else NA_character_ }
+  tstat <- function(x, f) { x <- x[!is.na(x)]; if (length(x)) f(x) else NA_character_ }
+
+  f <- fit_df
+  if (!is.null(f) && nrow(f)) {
+    if (!"model" %in% names(f)) f$model <- "multiplicative"
+    f$model[is.na(f$model) | !nzchar(f$model)] <- "multiplicative"
+  }
+  key <- paste(w$method, w$model, sep = "\r")
+  out <- lapply(unique(key), function(k) {
+    i <- key == k; m <- w$model[i][1L]; me <- w$method[i][1L]
+    ng <- if (!is.null(f) && nrow(f) && "multiplate_group_id" %in% names(f))
+      length(unique(f$multiplate_group_id[f$method == me & f$model == m])) else NA_integer_
+    data.frame(method = me, model = m,
+               weights_pkg_version = uniq(w$weights_pkg_version[i]),
+               n_samples = sum(i), n_curve_groups = as.integer(ng),
+               n_censored_samples = sum(w$censor_type[i] %in% c("left", "right", "interval")),
+               first_computed = tstat(w$.ts[i], min), last_computed = tstat(w$.ts[i], max),
+               description = unname(docs[m]), guide = guide, stringsAsFactors = FALSE)
+  })
+  do.call(rbind, out)
+}

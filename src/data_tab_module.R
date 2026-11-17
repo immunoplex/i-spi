@@ -297,6 +297,15 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
     stats::setNames(lapply(tabs, get_table), tabs)
   }
 
+  # How the precision weights in a bundle were produced (model, package version,
+  # counts). Never lets a failure here break a download.
+  weights_meta_for <- function(tables) {
+    tryCatch(weights_bundle_meta(tables[["calib_weights"]], tables[["calib_weights_fit"]]),
+             error = function(e) data.frame(
+               message = paste("weights metadata unavailable:", conditionMessage(e)),
+               stringsAsFactors = FALSE))
+  }
+
   # Refresh button just bumps the shared trigger (same path a mask-save will use).
   shiny::observeEvent(input$data_refresh, {
     reload_trigger(reload_trigger() + 1)
@@ -392,6 +401,7 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
         project_id  = s$project_id,
         generated_at = as.character(Sys.time()),
         manifest    = manifest,
+        weights_meta = weights_meta_for(tables),
         settings    = settings,
         annotations = annotations,
         tables      = tables)
@@ -429,6 +439,7 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
           project_id   = s$project_id,
           generated_at = as.character(Sys.time()),
           manifest     = manifest,
+          weights_meta = .json_safe_df(weights_meta_for(tables)),
           settings     = settings,
           annotations  = annotations,
           tables       = tables)
@@ -482,7 +493,8 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
             if (is.null(df) || !nrow(df)) data.frame(Message = "No annotations of this kind.") else df
           }),
           paste0("annotations_", names(ann)))
-        c(list(manifest = manifest, settings = settings), ann_sheets, tables)
+        c(list(manifest = manifest, weights_meta = .json_safe_df(weights_meta_for(tables)),
+               settings = settings), ann_sheets, tables)
       }, error = function(e)
         list(error = data.frame(message = paste("bundle build failed:", conditionMessage(e)))))
 

@@ -75,6 +75,7 @@ stdCurveWeightsComputeUI <- function(id) {
                             choices = c("Bayesian" = "bayesian",
                                         "Frequentist" = "frequentist"),
                             selected = "bayesian", inline = TRUE),
+        weights_model_selector_ui(ns),
         shiny::radioButtons(ns("fit_scope"), "Scope",
                             choices = c("Whole experiment"       = "experiment",
                                         "Single feature/antigen" = "antigen"),
@@ -95,10 +96,13 @@ stdCurveWeightsComputeUI <- function(id) {
         shiny::checkboxGroupInput(ns("design_cols"), "Design columns",
                                   choices = c("timeperiod", "agroup"),
                                   selected = c("timeperiod", "agroup")),
-        shiny::radioButtons(ns("scale_predictor"), "Scale predictor",
-                            choices = c("se (recommended)" = "se",
-                                        "pcov (legacy)"     = "pcov"),
-                            selected = "se"),
+        shiny::conditionalPanel(
+          condition = weights_js_is_multiplicative(ns),
+          shiny::radioButtons(ns("scale_predictor"), "Scale predictor",
+                              choices = c("se (recommended)" = "se",
+                                          "pcov (legacy)"     = "pcov"),
+                              selected = "se"),
+        ),
         shiny::tags$details(
           shiny::tags$summary("Advanced MCMC settings"),
           shiny::tags$div(style = "margin-top:6px;",
@@ -183,6 +187,7 @@ stdCurveWeightsSummaryUI <- function(id) {
         shiny::plotOutput(ns("weights_panel_plot"), height = "auto"), type = 4, color = "#337ab7"),
       shiny::hr(),
       shiny::h4("Weights fit summary"),
+      weights_docs_links(),
       shiny::uiOutput(ns("weights_fit_summary_msg")),
       shinycssloaders::withSpinner(
         shiny::tableOutput(ns("weights_fit_summary")), type = 4, color = "#337ab7"),
@@ -344,7 +349,8 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
     weights_status <- shiny::reactive({
       design_dirty(); job_checked_at()   # refresh after upload / job completion
       s <- cur(); shiny::req(s$study, s$experiment)
-      fetch_weights_status_scoped(pool, project = s$project_id, study = s$study, experiment = s$experiment)
+      fetch_weights_status_scoped(pool, project = s$project_id, study = s$study, experiment = s$experiment,
+                                  extended = additive_weights_enabled())
     })
 
     output$weights_status_summary <- shiny::renderUI({
@@ -363,8 +369,11 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       ws <- weights_status(); shiny::req(nrow(ws) > 0)
       ws$method <- ifelse(is.na(ws$method), "not computed", ws$method)
       ws$phi    <- round(ws$phi, 3); ws$beta1 <- round(ws$beta1, 3)
+      for (col in c("tau", "kappa")) if (col %in% names(ws)) ws[[col]] <- round(ws[[col]], 3)
+      if ("reliability" %in% names(ws)) ws$reliability <- round(ws$reliability, 2)
       cols <- intersect(c("antigen", "plateid", "feature", "source", "wavelength",
-                          "method", "phi", "beta1", "interpretation", "design_cols",
+                          "method", "model", "phi", "beta1", "tau", "kappa",
+                          "reliability", "interpretation", "design_cols",
                           "computed_at"), names(ws))
       DT::datatable(ws[, cols, drop = FALSE], rownames = FALSE, filter = "top",
                     selection = "none", options = list(scrollX = TRUE, pageLength = 15))
@@ -606,6 +615,14 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
         warmup          = as.character(input$warmup),
         iter            = as.character(input$iter),
         adapt_delta     = as.character(input$adapt_delta))
+      # Additive model: sent ONLY when selected (and the feature flag is on),
+      # so a default submission is byte-identical to what the worker has always
+      # received. The additive fit always uses se as its predictor.
+      if (additive_weights_enabled() && identical(input$weights_model, "additive")) {
+        params$model <- "additive"
+        params$scale_predictor <- "se"
+        params$fix_beta1 <- if (isTRUE(input$estimate_beta1)) "false" else "true"
+      }
       if (!is.null(input$seed) && !is.na(input$seed)) params$seed <- as.character(input$seed)
 
       res <- tryCatch(
@@ -683,11 +700,7 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
     })
     output$weights_fit_summary <- shiny::renderTable({
       df <- weights_fit_rows(); shiny::req(nrow(df) > 0)
-      df$phi <- round(df$phi, 3); df$beta1 <- round(df$beta1, 3)
-      cols <- intersect(c("multiplate_group_id", "method", "antigen", "feature",
-                          "design_cols", "scale_predictor", "phi", "beta1",
-                          "interpretation", "n_fit", "n_eff", "weight_ratio"), names(df))
-      df[, cols, drop = FALSE]
+      weights_fit_table(df)
     }, rownames = FALSE)
 
     # Antigen multi-select + source single-select for the panel, both
@@ -783,8 +796,12 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       tg <- panel_targets()
       wd <- panel_weights_data(); shiny::req(nrow(wd) > 0)
       fd <- panel_fit_data()
+      # drawn width (CSS px; renderPlot's default 72 dpi, so 1 px = 1/72 in): the
+      # caption is wrapped to the figure instead of running off its edge
+      w_px <- session$clientData[[paste0("output_", session$ns("weights_panel_plot"), "_width")]]
       precision_weight_panel(wd, fd, antigens = tg$antigen, features = tg$feature,
-                             ncol = min(3L, nrow(tg)))
+                             ncol = min(3L, nrow(tg)),
+                             width_in = if (is.null(w_px)) NULL else w_px / 72)
     }, height = function() {
       tg <- panel_targets(); n <- max(1L, nrow(tg))
       ncol <- min(3L, n)
@@ -799,11 +816,8 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
 
     output$weights_table <- DT::renderDataTable({
       df <- weights_rows(); shiny::req(nrow(df) > 0)
-      df$sigma <- round(df$sigma, 4); df$w <- round(df$w, 4); df$w_norm <- round(df$w_norm, 4)
-      cols <- intersect(c("antigen", "feature", "curve_id", "method", "sampleid",
-                          "patientid", "timeperiod", "agroup", "se", "pcov",
-                          "sigma", "w", "w_norm"), names(df))
-      DT::datatable(df[, cols, drop = FALSE], rownames = FALSE, filter = "top",
+      df <- weights_sample_table(df)
+      DT::datatable(df, rownames = FALSE, filter = "top",
                     options = list(scrollX = TRUE, pageLength = 20))
     }, server = TRUE)
   })
