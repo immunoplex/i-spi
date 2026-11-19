@@ -1544,7 +1544,9 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       status_txt <- switch(s$status,
         OK = sprintf("LLOQ %s \u2013 ULOQ %s", g3(s$lloq_conc), g3(s$uloq_conc)),
         NO_PASSING_LEVELS = "no level passed",
-        NO_FREQ_FIT = "no frequentist fit", "no data")
+        NO_FREQ_FIT = "no frequentist fit",
+        NO_STORED_ESTIMATES = "no stored standard estimates yet (fitted before i-spi-compute 1.1; a refit or the backfill adds them)",
+        "no data")
       shiny::div(style = "font-size:11px;color:#666;margin:2px 0 6px;",
         sprintf("FDA 2018 (frequentist curve, cross-plate): %d/%d levels pass \u00b7 %s \u00b7 meets 75%%/\u22656: %s \u00b7 hollow = masked",
                 s$n_pass, s$n_total, status_txt, if (isTRUE(s$meets_fda_run)) "yes" else "no"))

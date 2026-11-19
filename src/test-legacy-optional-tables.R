@@ -64,7 +64,7 @@ withr_stop <- function() {
 con <- DBI::dbConnect(RPostgres::Postgres(), host = "localhost", port = port,
                       user = "tester", dbname = "postgres")
 
-build_db <- function(con, with_legacy) {
+build_db <- function(con, with_legacy, with_011 = TRUE) {
   q <- function(sql) DBI::dbExecute(con, sql)
   q("DROP SCHEMA IF EXISTS madi_results CASCADE"); q("DROP SCHEMA IF EXISTS madi_lumi_users CASCADE")
   q("CREATE SCHEMA madi_results"); q("CREATE SCHEMA madi_lumi_users")
@@ -73,8 +73,16 @@ build_db <- function(con, with_legacy) {
   q("CREATE TABLE madi_results.curve_lookup (curve_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
        project_id int, study_accession varchar(15), experiment_accession varchar(15),
        multiplate_group_id uuid)")
-  for (t in c(CALIB_CURVE_TABLES))
+  curve_tabs <- if (with_011) CALIB_CURVE_TABLES else setdiff(CALIB_CURVE_TABLES, "calib_controls")
+  for (t in curve_tabs)
     q(sprintf("CREATE TABLE madi_results.%s (curve_id bigint, job_id text)", t))
+  if (with_011) {
+    q("CREATE TABLE madi_results.control_reference (reference_id bigint GENERATED ALWAYS AS IDENTITY,
+         project_id int, study_accession varchar(15) NOT NULL DEFAULT '__none__', v int)")
+    # one study-specific value and one project-wide value (study '__none__')
+    q("INSERT INTO madi_results.control_reference (project_id, study_accession, v)
+         VALUES (1, 'S1', 1), (1, '__none__', 2)")
+  }
   q("CREATE TABLE madi_results.calib_run (job_id text)")
   exp_tabs <- c(unname(CALIB_RAW_TABLES), "xmap_antigen_family", "annotation_analyte",
                 "annotation_level", "annotation_order", "calib_settings",
@@ -89,7 +97,7 @@ build_db <- function(con, with_legacy) {
   # one study (project 1, 'S1') with two experiments
   q("INSERT INTO madi_results.curve_lookup (project_id, study_accession, experiment_accession)
        VALUES (1,'S1','E1'), (1,'S1','E2')")
-  for (t in CALIB_CURVE_TABLES)
+  for (t in curve_tabs)
     q(sprintf("INSERT INTO madi_results.%s SELECT curve_id, 'job1' FROM madi_results.curve_lookup", t))
   q("INSERT INTO madi_results.calib_run VALUES ('job1')")
   for (t in exp_tabs)
@@ -102,6 +110,9 @@ n_rows <- function(t, proj, study)
     "SELECT count(*) FROM madi_results.%s WHERE project_id = $1 AND study_accession = $2", t),
     params = list(proj, study))[[1]])
 legacy <- c("xmap_dilution_analysis", "xmap_dilution_parameters", "xmap_study_config")
+m011 <- c("calib_controls", "control_reference")
+n_curve_rows <- function(t)
+  as.integer(DBI::dbGetQuery(con, sprintf("SELECT count(*) FROM madi_results.%s", t))[[1]])
 
 test_that(".present_tables keeps legacy tables only where they exist", {
   build_db(con, with_legacy = TRUE)
@@ -109,6 +120,48 @@ test_that(".present_tables keeps legacy tables only where they exist", {
   build_db(con, with_legacy = FALSE)
   expect_equal(.present_tables(con, .CLONE_TABLES), setdiff(.CLONE_TABLES, legacy))
   expect_equal(.present_tables(con, c("xmap_header", "curve_lookup")), c("xmap_header", "curve_lookup"))
+  build_db(con, with_legacy = TRUE, with_011 = FALSE)
+  expect_equal(.present_tables(con, .CLONE_TABLES), setdiff(.CLONE_TABLES, "control_reference"))
+  expect_equal(.present_tables(con, CALIB_CURVE_TABLES), setdiff(CALIB_CURVE_TABLES, "calib_controls"))
+})
+
+test_that("migration-011 tables: calib_controls deleted with the curves, control_reference cloned and deleted by study", {
+  build_db(con, with_legacy = TRUE)
+  cnt <- count_study_components(con, 1L, "S1")
+  expect_equal(unname(cnt["calib_controls"]), 2L)
+  expect_equal(unname(cnt["control_reference"]), 1L)            # the study's row, not the project-wide one
+  expect_equal(unname(count_clone_source(con, 1L, "S1")["control_reference"]), 1L)
+
+  clone_study_components(con, 1L, "S1", 20L, "S2", auth0_user = "u")
+  expect_equal(n_rows("control_reference", 20L, "S2"), 1L)     # study-specific value copied
+  expect_equal(n_rows("control_reference", 20L, "__none__"), 0L) # project-wide value not copied
+  expect_equal(n_curve_rows("calib_controls"), 2L)              # fitted results are not cloned
+
+  delete_study_components(con, 1L, "S1", experiment = "E1")
+  expect_equal(n_curve_rows("calib_controls"), 1L)              # experiment delete: that experiment's curves
+  expect_equal(n_rows("control_reference", 1L, "S1"), 1L)      # study-level: kept by an experiment delete
+  del <- delete_study_components(con, 1L, "S1")
+  expect_equal(n_curve_rows("calib_controls"), 0L)
+  expect_equal(n_rows("control_reference", 1L, "S1"), 0L)
+  expect_equal(n_rows("control_reference", 1L, "__none__"), 1L) # project-wide value stays with the project
+  expect_equal(n_rows("control_reference", 20L, "S2"), 1L)      # the clone is untouched
+  expect_true(all(m011 %in% names(del)))
+
+  # Recalculation deletes (masking) go through calib_group_rowcounts' table set too
+  expect_true("calib_controls" %in% names(calib_group_rowcounts(con, 1:2)))
+})
+
+test_that("without the migration-011 tables: counts, clone and delete skip them", {
+  build_db(con, with_legacy = TRUE, with_011 = FALSE)
+  cnt <- count_study_components(con, 1L, "S1")
+  expect_false(any(m011 %in% names(cnt)))
+  expect_false("control_reference" %in% names(count_clone_source(con, 1L, "S1")))
+  clone_study_components(con, 1L, "S1", 20L, "S2", auth0_user = "u")
+  expect_equal(n_rows("xmap_header", 20L, "S2"), 2L)
+  del <- delete_study_components(con, 1L, "S1")
+  expect_false(any(m011 %in% names(del)))
+  expect_equal(n_rows("curve_lookup", 1L, "S1"), 0L)
+  expect_false("calib_controls" %in% names(calib_group_rowcounts(con, 1:2)))
 })
 
 test_that("with legacy tables: clone and delete still cover them (unchanged behaviour)", {

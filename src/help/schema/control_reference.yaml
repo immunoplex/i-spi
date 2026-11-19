@@ -1,0 +1,24 @@
+# Source: curveRcore 0.7.0 point_estimates_contract('control_reference') (calib schema 0.7.0;
+# i-spi-compute migration 011). Regenerate from the contract if it changes.
+columns:
+  - {name: reference_id, type: "bigint", description: "Primary key; NOT NULL. Row identifier (generated).", fk: ""}
+  - {name: project_id, type: "integer", description: "NOT NULL. Project the value belongs to.", fk: ""}
+  - {name: study_accession, type: "varchar(15)", description: "NOT NULL. Study, or '__none__' for a project-wide value.", fk: ""}
+  - {name: control_source, type: "varchar(64)", description: "NOT NULL. Control name; matches calib_controls.source.", fk: ""}
+  - {name: control_lot, type: "varchar(64)", description: "NOT NULL. Lot of the control material ('__none__' if not tracked).", fk: ""}
+  - {name: antigen, type: "varchar(64)", description: "NOT NULL. Antigen the value is for.", fk: ""}
+  - {name: feature, type: "varchar(15)", description: "NOT NULL. Feature, or '__none__' for every feature.", fk: ""}
+  - {name: units, type: "text", description: "Concentration units (those of the standard curve).", fk: ""}
+  - {name: expected_conc, type: "numeric", description: "Target concentration at stock (dilution 1), the scale of calib_controls.final_concentration.", fk: ""}
+  - {name: expected_sd, type: "numeric", description: "Expected run-to-run SD, same scale; gives z-scores and Levey-Jennings limits.", fk: ""}
+  - {name: lower_limit, type: "numeric", description: "Lower acceptance limit, same scale.", fk: ""}
+  - {name: upper_limit, type: "numeric", description: "Upper acceptance limit, same scale.", fk: ""}
+  - {name: basis, type: "text", description: "certificate, assigned or historical.", fk: ""}
+  - {name: valid_from, type: "date", description: "NOT NULL. First day the value applies ('-infinity' = always).", fk: ""}
+  - {name: valid_to, type: "date", description: "First day it no longer applies; NULL = still in force.", fk: ""}
+  - {name: assigned_by, type: "text", description: "Who assigned the value.", fk: ""}
+  - {name: assigned_at, type: "timestamptz", description: "NOT NULL. When the value was recorded.", fk: ""}
+  - {name: note, type: "text", description: "Free-text note (source document, reason for a change).", fk: ""}
+indexes:
+  - {name: control_reference_pkey, column: reference_id, type: btree}
+referenced_by: []

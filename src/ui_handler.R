@@ -292,7 +292,8 @@ output$body_tabs <- renderUI({
       tabItem(tabName = "import_tab", uiOutput("readxMapData")),
       tabItem(tabName = "manage_project_tab", uiOutput("manage_project_ui")),
       tabItem(tabName = "study_overview", studyOverviewUI("study_overview")),
-      tabItem(tabName = "glossary_page", uiOutput("glossary_page_ui"))
+      tabItem(tabName = "glossary_page", uiOutput("glossary_page_ui")),
+      tabItem(tabName = "about_page", uiOutput("about_page_ui"))
     )
    # dynamic_tabs  # append dynamic tabs here
   ))
@@ -348,6 +349,16 @@ output$body_tabs <- renderUI({
     tags$div(class = "panel-body",
              tags$ul(class = "list-unstyled", lapply(items, .glossary_toc_link, reg = reg))))
 }
+
+# About page (sidebar "About", tabName = "about_page"; about_page.R): I-SPI release,
+# the database's calib schema, and the compute releases behind the stored results,
+# overall and for the study selected (if any).
+output$about_page_ui <- renderUI({
+  shiny::req(identical(input$main_tabs, "about_page"))
+  about_page_ui(db_pool,
+                project = tryCatch(userWorkSpaceID(), error = function(e) NULL),
+                study = input$readxMap_study_accession)
+})
 
 output$glossary_page_ui <- renderUI({
   reg <- .help_registry(NULL)

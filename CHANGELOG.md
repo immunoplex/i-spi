@@ -5,6 +5,39 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## v1.1.0 — Stored estimates for controls and standards; About page
+
+Needs i-spi-compute 1.1 (migration 011, curveRcore 0.7.0). On a database without
+migration 011 the app still runs; the new tables are skipped and the views below
+say why they are empty.
+
+### Changed
+- **QC > Replicate Linearity: controls and standards are read, not computed.** The
+  compute job now stores, for every curve and method, the same estimates for control
+  wells (`calib_controls`) and standard points (`calib_standards`) that it stores for
+  test samples, from one calculation in curveRcore; earlier curves were filled once
+  by a backfill using the same code. The app's own back-calculation
+  (`linearity_backcalc.R`: posterior-median inverses, pcov read from the grid, scale
+  guessed from the standards, and its self-check) is removed. The load message and
+  the report state how many curves carry stored estimates.
+- **Standard Curve > FDA 2018 classification** takes each standard's accuracy from
+  the stored `recovery_pct` (median over a level's wells per plate) instead of
+  inverting the curve in the app; the in-app copies of the curveRcore inverses are
+  removed. A curve without stored estimates says so.
+
+### Added
+- **Data tab: Back-calculated controls and Control reference values** tabs, also in
+  the RData, JSON and Excel bundles and the per-table CSVs. Control reference values
+  show the study's rows and the project-wide rows.
+- **About** (sidebar): the I-SPI version and commit, the database's calib schema
+  version, and the compute releases (worker version, curveR packages, CmdStan) behind
+  the stored results, overall and for the selected study, read from
+  `calib_run.manifest`.
+- Study **clone** copies the study's `control_reference` rows; study **delete**
+  removes them and the curves' `calib_controls` rows; masking deletes clear
+  `calib_controls` with the other curve results.
+- Help: notes and schema entries for `calib_controls` and `control_reference`.
+
 ## v1.0.0 — Additive precision-weights model (feature-flagged); semantic versioning
 
 ### Changed

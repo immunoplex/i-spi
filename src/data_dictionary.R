@@ -88,6 +88,12 @@ CALIB_TABLE_DOCS <- list(
     grain = "one row per curve / method",
     keys  = c("method", "lloq_conc", "uloq_conc", "lloq_log10", "uloq_log10",
               "lower_lod_conc", "upper_lod_conc", "inflect_x", "pcov_threshold")),
+  calib_controls = list(
+    group = "Results", label = "Back-calculated controls",
+    what  = "Each control well's concentration read off the fitted curve, exactly as for test samples (predicted, final = x dilution, pcov, gate and censoring class, 95% interval). One row per standard source of the plate; masked wells are included with included = false. Needs i-spi-compute 1.1.",
+    grain = "one row per curve / method / control well",
+    keys  = c("well", "sampleid", "source", "dilution", "included", "predicted_concentration",
+              "final_concentration", "pcov", "pcov_gate_class", "censor_class", "conc_q_lo", "conc_q_hi")),
   calib_loo = list(
     group = "Results", label = "LOO comparison",
     what  = "Bayesian leave-one-out model comparison (Bayesian method only; empty for frequentist, which selects by AIC).",
@@ -107,7 +113,13 @@ CALIB_TABLE_DOCS <- list(
     grain = "one row per multiplate_group_id / method",
     keys  = c("method", "design_cols", "scale_predictor", "phi", "beta1",
               "interpretation", "n_fit", "n_eff", "weight_ratio", "model", "tau", "kappa",
-              "reliability", "n_censored"))
+              "reliability", "n_censored")),
+  control_reference = list(
+    group = "Results", label = "Control reference values",
+    what  = "Expected values for controls (assigned or established), with limits and the period they apply to. Rows for this study and project-wide rows (study_accession = '__none__') are shown; compare them with Back-calculated controls. Needs i-spi-compute 1.1.",
+    grain = "one row per project / study / control source / lot / antigen / feature / valid_from",
+    keys  = c("study_accession", "control_source", "control_lot", "antigen", "feature", "units",
+              "expected_conc", "expected_sd", "lower_limit", "upper_limit", "basis", "valid_from", "valid_to"))
 )
 
 #' Look up the human description for a table (by physical name). Returns a list
@@ -125,8 +137,8 @@ CALIB_TABLE_ORDER <- list(
   `Raw inputs` = c("xmap_header", "xmap_standard", "xmap_control", "xmap_buffer", "xmap_sample"),
   Registry     = c("curve_lookup"),
   Results      = c("calib_run", "calib_fit", "calib_param", "calib_gate",
-                   "calib_grid", "calib_samples", "calib_diagnostics", "calib_loo",
-                   "calib_weights", "calib_weights_fit")
+                   "calib_grid", "calib_samples", "calib_controls", "calib_diagnostics", "calib_loo",
+                   "calib_weights", "calib_weights_fit", "control_reference")
 )
 
 #' Metadata describing HOW the precision weights in a bundle were produced.

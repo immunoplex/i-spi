@@ -105,8 +105,11 @@ family_short <- function(model_name) {
 # remove their rows on databases that have them, and skip them where they are
 # absent. Existence is checked up front, never by catching an error: inside the
 # clone/delete transaction a failed statement would abort the whole transaction.
+#
+# calib_controls and control_reference arrive with i-spi-compute migration 011
+# (calib schema 0.7.0); on a database without it they are skipped the same way.
 LEGACY_OPTIONAL_TABLES <- c("xmap_dilution_analysis", "xmap_dilution_parameters",
-                            "xmap_study_config")
+                            "xmap_study_config", "calib_controls", "control_reference")
 
 # `tables` minus any LEGACY_OPTIONAL_TABLES that do not exist in the schema.
 .present_tables <- function(conn, tables) {
@@ -678,6 +681,15 @@ fetch_calib_grid_scoped <- function(pool, project, study, experiment, display_li
 fetch_calib_samples_scoped     <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_samples")
 fetch_calib_diagnostics_scoped <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_diagnostics")
 fetch_calib_loo_scoped         <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_loo")
+# calib_controls (i-spi-compute migration 011): stored estimates for control wells.
+fetch_calib_controls_scoped    <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_controls")
+# control_reference has no curve_id and no experiment: the rows for this study and
+# the project-wide rows (study_accession '__none__'). `experiment` is not used.
+fetch_control_reference_scoped <- function(pool, project, study, experiment = NULL)
+  .calib_q(pool, sprintf(
+    "SELECT * FROM %s WHERE project_id = $1 AND study_accession IN ($2, '__none__')
+      ORDER BY control_source, antigen, feature, valid_from", .tbl("control_reference")),
+    params = list(project, study))
 # Sampler/optimizer diagnostics (rhat, ESS, divergences, treedepth, E-BFMI) and the
 # Bayesian population/noise parameters (mu_*, sigma_*, sigma_obs, nu), both written
 # by the worker for the selected model. Feed the fit-diagnostics report.
@@ -1098,7 +1110,7 @@ curve_ids_for_standards <- function(pool, standard_ids) {
 # job-keyed (may span groups) and is intentionally NOT included.
 CALIB_CURVE_TABLES <- c("calib_fit", "calib_param", "calib_gate", "calib_grid",
                         "calib_samples", "calib_diagnostics", "calib_standards",
-                        "calib_blanks", "calib_loo")
+                        "calib_blanks", "calib_loo", "calib_controls")
 
 # ---------------------------------------------------------------------------
 # RECALC FLAG -- deferred-recalculation tracking (batched masking).
@@ -1206,7 +1218,7 @@ curve_recalc_flag <- function(pool, curve_id) {
 calib_group_rowcounts <- function(pool, curve_ids) {
   if (!length(curve_ids)) return(stats::setNames(integer(0), character(0)))
   ids <- paste(as.integer(curve_ids), collapse = ",")
-  out <- vapply(CALIB_CURVE_TABLES, function(tb) {
+  out <- vapply(.present_tables(pool, CALIB_CURVE_TABLES), function(tb) {
     df <- .calib_q(pool, sprintf("SELECT count(*) n FROM %s WHERE curve_id IN (%s)",
                                  .tbl(tb), ids))
     if (nrow(df)) as.integer(df$n[1]) else 0L
@@ -1381,7 +1393,7 @@ apply_mask <- function(pool, std_ids, blk_ids, group_curve_ids, reason,
       grplist <- paste(grp, collapse = ",")
       deleted <- stats::setNames(integer(length(CALIB_CURVE_TABLES)), CALIB_CURVE_TABLES)
       if (isTRUE(delete_fits)) {
-        for (tb in CALIB_CURVE_TABLES) {
+        for (tb in .present_tables(co, CALIB_CURVE_TABLES)) {
           deleted[[tb]] <- DBI::dbExecute(co, sprintf(
             "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
         }
@@ -1460,7 +1472,7 @@ apply_unmask <- function(pool, std_ids, blk_ids, group_curve_ids, delete_fits = 
       grplist <- paste(grp, collapse = ",")
       deleted <- stats::setNames(integer(length(CALIB_CURVE_TABLES)), CALIB_CURVE_TABLES)
       if (isTRUE(delete_fits)) {
-        for (tb in CALIB_CURVE_TABLES) {
+        for (tb in .present_tables(co, CALIB_CURVE_TABLES)) {
           deleted[[tb]] <- DBI::dbExecute(co, sprintf(
             "DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), grplist))
         }
@@ -1602,72 +1614,11 @@ standards_support_verdict <- function(support_df, min_levels = 5, min_reps = 2) 
 # -----------------------------------------------------------------------------
 # Cross-plate CV% + back-calculated recovery per concentration level, classified
 # against FDA 2018 LBA calibration-curve criteria. Independent of the stored
-# model-selection fits' method split: accuracy is back-calculated through the
-# FREQUENTIST fit only, so the verdict is identical whichever method tab is
-# shown. See REFACTOR_settings_cascade.md 11.3.
-#
-# Analytic inverses copied VERBATIM from curveRcore inverses.R (bodies unchanged;
-# names prefixed .fda_inv_* so this in-app copy never masks the package's inv_*,
-# mirroring how std_curve_compare_module.R inlines the forwards as .cmp_predict).
-# Each solves for x on the SAME scale the forward model took x: log10(conc) for
-# every model EXCEPT loglogistic4 (Hill form on RAW concentration).
-
-.fda_inv_logistic4 <- function(y, a, b, c, d, tol = 1e-6) {
-  lo <- min(a, d) + tol; hi <- max(a, d) - tol
-  result <- rep(NA_real_, length(y))
-  ok <- !is.na(y) & y > lo & y < hi
-  if (any(ok)) result[ok] <- c + b * log((y[ok] - a) / (d - y[ok]))
-  result
-}
-.fda_inv_logistic5 <- function(y, a, b, c, d, g, tol = 1e-6) {
-  lo <- min(a, d) + tol; hi <- max(a, d) - tol
-  result <- rep(NA_real_, length(y))
-  ok <- !is.na(y) & y > lo & y < hi
-  if (any(ok)) result[ok] <- c - b * log(((d - a) / (y[ok] - a))^(1 / g) - 1)
-  result
-}
-.fda_inv_loglogistic4 <- function(y, a, b, c, d) {
-  c / ((d - y) / (y - a))^(1 / b)
-}
-.fda_inv_loglogistic5 <- function(y, a, b, c, d, g) {
-  c - (1 / b) * (log(((y - a) / (d - a))^(-g) - 1) - log(g))
-}
-.fda_inv_gompertz4 <- function(y, a, b, c, d) {
-  c - (1 / b) * log(-log((y - a) / (d - a)))
-}
-
-# Response (model/fit scale) -> back-calculated NATURAL concentration, or NA if
-# the response is off the curve / params are unusable. loglogistic4's inverse
-# already returns concentration (raw x); the other four return log10(conc), so
-# 10^ them. Any non-finite (incl. the NaN the unguarded inverses emit off-range)
-# -> NA, i.e. an off-curve standard is uniformly "not invertible".
-.fda_backcalc_conc <- function(model, y, a, b, c, d, g = NA_real_) {
-  if (!is.finite(y) || !is.finite(a) || !is.finite(b) ||
-      !is.finite(c) || !is.finite(d)) return(NA_real_)
-  if (model %in% c("logistic5", "loglogistic5") && (!is.finite(g) || g <= 0))
-    return(NA_real_)
-  x <- suppressWarnings(tryCatch(switch(model,
-    logistic4    = .fda_inv_logistic4(y, a, b, c, d),
-    logistic5    = .fda_inv_logistic5(y, a, b, c, d, g),
-    loglogistic4 = .fda_inv_loglogistic4(y, a, b, c, d),
-    loglogistic5 = .fda_inv_loglogistic5(y, a, b, c, d, g),
-    gompertz4    = .fda_inv_gompertz4(y, a, b, c, d),
-    NA_real_), error = function(e) NA_real_))[1]
-  if (!is.finite(x)) return(NA_real_)
-  conc <- if (identical(model, "loglogistic4")) x else 10^x
-  if (!is.finite(conc) || conc <= 0) NA_real_ else conc
-}
-
-# Point estimates (a,b,c,d,g) from a fetch_calib_params() frame; frequentist uses
-# `estimate`; g absent on 4-param fits -> NA. Mirrors .cmp_get_params.
-.fda_params <- function(pr) {
-  if (is.null(pr) || !nrow(pr)) return(NULL)
-  g1 <- function(t) {
-    v <- suppressWarnings(as.numeric(pr$estimate[tolower(pr$term) == t]))
-    if (length(v) && is.finite(v[1])) v[1] else NA_real_
-  }
-  list(a = g1("a"), b = g1("b"), c = g1("c"), d = g1("d"), g = g1("g"))
-}
+# model-selection fits' method split: accuracy uses the recovery the compute job
+# stored for each standard through the FREQUENTIST fit only, so the verdict is
+# identical whichever method tab is shown. See REFACTOR_settings_cascade.md 11.3.
+# Since I-SPI 1.1.0 nothing is inverted here (the in-app copies of the curveRcore
+# inverses were removed); recovery_pct comes from calib_standards.
 
 # FDA 2018 LBA thresholds. Interior levels: CV <= 20%, recovery in [80,120].
 # The two EXTREME concentration levels (LLOQ & ULOQ ends): CV <= 25%, recovery in
@@ -1679,10 +1630,14 @@ FDA2018_ACC_EXTREME  <- c(75, 125)
 
 #' Classify each standard concentration level of a curve's multiplate group.
 #' Precision = cross-plate CV% of raw response (SD/mean) at each level; accuracy
-#' = median per-plate recovery, each plate back-calculated through ITS OWN
-#' frequentist fit. A level fails accuracy if its response cannot be inverted
-#' (off-curve) -- never NA for that reason. NA is reserved for levels with no
-#' measured response at all. Returns list(levels, summary).
+#' = median per-plate recovery. A plate's recovery at a level is the median of the
+#' recovery_pct the compute job stored for its included wells there (calib_standards,
+#' i-spi-compute 1.1 / migration 011): each well back-calculated through that
+#' plate's OWN frequentist fit, by the worker, not here. A level fails accuracy if
+#' no well has a recovery (off-curve) -- never NA for that reason. NA is reserved
+#' for levels with no measured response at all. A group whose standards carry no
+#' stored estimates yet (fitted before 1.1, not backfilled) returns status
+#' NO_STORED_ESTIMATES. Returns list(levels, summary).
 fda2018_classify_group <- function(pool, curve_id,
                                    cv_interior  = FDA2018_CV_INTERIOR,
                                    cv_extreme   = FDA2018_CV_EXTREME,
@@ -1713,30 +1668,27 @@ fda2018_classify_group <- function(pool, curve_id,
       WHERE curve_id IN (%s) AND method = 'frequentist' AND is_best",
     .tbl("calib_fit"), idlist))
   if (!nrow(bm_all)) return(fail("NO_FREQ_FIT"))
-  pr_all <- .calib_q(pool, sprintf(
-    "SELECT p.curve_id, p.term, p.estimate
-       FROM %s p JOIN %s f USING (curve_id, method, model_name)
-      WHERE p.method = 'frequentist' AND f.is_best AND p.curve_id IN (%s)",
-    .tbl("calib_param"), .tbl("calib_fit"), idlist))
   sp_all <- .calib_q(pool, sprintf(
     "SELECT curve_id, log10_concentration, concentration,
-            response_model, assay_response_raw, included
+            response_model, assay_response_raw, included,
+            recovery_pct::float8 AS recovery_pct, pcov::float8 AS pcov,
+            predicted_log10_concentration::float8 AS predicted_log10_concentration, censor_class
        FROM %s WHERE curve_id IN (%s) AND method = 'frequentist'",
     .tbl("calib_standards"), idlist))
-  if (!nrow(sp_all)) return(fail("NO_DATA"))
+  if (is.null(sp_all) || !nrow(sp_all)) return(fail("NO_DATA"))
+  if (all(is.na(sp_all$recovery_pct) & is.na(sp_all$pcov) &
+          is.na(sp_all$predicted_log10_concentration) & is.na(sp_all$censor_class)))
+    return(fail("NO_STORED_ESTIMATES"))
 
   key <- function(v) as.character(v)                 # robust int64/int/num match
   bm_all$k <- key(bm_all$curve_id)
-  if (nrow(pr_all)) pr_all$k <- key(pr_all$curve_id)
   sp_all$k <- key(sp_all$curve_id)
 
-  # Per plate (= per curve_id): back-calc each level through THAT plate's own
-  # frequentist fit; collect a long table of (plate, level, nominal, raw, recovery).
+  # Per plate (= per curve_id): each level's stored recoveries (the worker back-
+  # calculated every well through THAT plate's own frequentist fit); collect a
+  # long table of (plate, level, nominal, raw, recovery).
   rows <- list()
   for (kk in unique(bm_all$k)) {
-    model <- bm_all$model_name[bm_all$k == kk][1]
-    prc   <- if (nrow(pr_all)) pr_all[pr_all$k == kk, , drop = FALSE] else pr_all
-    p     <- .fda_params(prc)
     sp    <- sp_all[sp_all$k == kk, , drop = FALSE]
     if (!nrow(sp)) next
     inc <- sp[is.na(sp$included) | as.logical(sp$included), , drop = FALSE]
@@ -1745,12 +1697,9 @@ fda2018_classify_group <- function(pool, curve_id,
     for (lv in unique(inc$level[is.finite(inc$level)])) {
       gg   <- inc[inc$level == lv, , drop = FALSE]
       raw  <- mean(num(gg$assay_response_raw), na.rm = TRUE)   # cross-plate CV uses raw
-      rmod <- mean(num(gg$response_model),     na.rm = TRUE)   # back-calc uses model scale
       conc <- stats::median(num(gg$concentration), na.rm = TRUE)
-      rec  <- if (is.null(p)) NA_real_ else {
-        bc <- .fda_backcalc_conc(model, rmod, p$a, p$b, p$c, p$d, p$g)
-        if (is.finite(bc) && is.finite(conc) && conc > 0) 100 * bc / conc else NA_real_
-      }
+      wr   <- num(gg$recovery_pct); wr <- wr[is.finite(wr)]
+      rec  <- if (length(wr)) stats::median(wr) else NA_real_  # stored per-well recovery
       rows[[length(rows) + 1]] <- data.frame(plate = kk, level = lv,
         conc = conc, raw = raw, recovery = rec, stringsAsFactors = FALSE)
     }
@@ -1817,10 +1766,16 @@ fda2018_classify_group <- function(pool, curve_id,
 fetch_scoped_table_counts <- function(pool, project, study, experiment, tables) {
   tables <- tables[!is.na(tables) & nzchar(tables)]
   if (!length(tables)) return(integer(0))
+  asked <- tables
+  tables <- .present_tables(pool, tables)   # a missing optional table would fail the whole UNION
+  if (!length(tables)) return(setNames(rep(NA_integer_, length(asked)), asked))
   cl <- .tbl("curve_lookup")
   scope <- "c.project_id = $1 AND c.study_accession = $2 AND c.experiment_accession = $3"
   sub <- vapply(tables, function(tb) {
-    if (identical(tb, "calib_run"))
+    if (identical(tb, "control_reference"))
+      sprintf("SELECT '%s'::text AS tbl, count(*) AS n FROM %s t WHERE t.project_id = $1 AND t.study_accession IN ($2, '__none__') AND $3::text IS NOT NULL",
+              tb, .tbl(tb))
+    else if (identical(tb, "calib_run"))
       sprintf("SELECT '%s'::text AS tbl, count(*) AS n FROM %s r JOIN %s f ON f.job_id = r.job_id JOIN %s c ON c.curve_id = f.curve_id WHERE %s",
               tb, .tbl("calib_run"), .tbl("calib_fit"), cl, scope)
     else if (identical(tb, "calib_weights_fit"))
@@ -1832,7 +1787,7 @@ fetch_scoped_table_counts <- function(pool, project, study, experiment, tables) 
   }, character(1))
   df <- .calib_q(pool, paste(sub, collapse = " UNION ALL "),
                  params = list(project, study, experiment))
-  out <- setNames(rep(NA_integer_, length(tables)), tables)
-  if (nrow(df)) out[df$tbl] <- as.integer(df$n)
+  out <- setNames(rep(NA_integer_, length(asked)), asked)
+  if (is.data.frame(df) && nrow(df)) out[df$tbl] <- as.integer(df$n)
   out
 }

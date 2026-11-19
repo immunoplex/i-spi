@@ -32,7 +32,11 @@
 .CLONE_TABLES <- c("curve_lookup", unname(CALIB_RAW_TABLES),
                    "xmap_dilution_analysis", "xmap_antigen_family",
                    "xmap_dilution_parameters", "xmap_study_config",
-                   "annotation_analyte", "annotation_level", "annotation_order")
+                   "annotation_analyte", "annotation_level", "annotation_order",
+                   # expected control values set for this study (migration 011). Its
+                   # IDENTITY reference_id is reassigned; project-wide rows (study
+                   # '__none__') stay with their project and are not copied.
+                   "control_reference")
 # curve_lookup additionally drops its trigger-managed group id
 .clone_exclude <- function(tbl) if (identical(tbl, "curve_lookup")) "multiplate_group_id" else character(0)
 

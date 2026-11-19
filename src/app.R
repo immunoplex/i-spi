@@ -55,7 +55,8 @@ sidebar <- dashboardSidebar(
     id = "main_tabs",
     menuItem("Home", tabName = "home_page", icon = icon("home")),
     menuItem("Create, Add, and Load Projects", tabName = "manage_project_tab", icon = icon("chart-line")),
-    menuItem("Glossary", tabName = "glossary_page", icon = icon("book"))
+    menuItem("Glossary", tabName = "glossary_page", icon = icon("book")),
+    menuItem("About", tabName = "about_page", icon = icon("info-circle"))
   ),
 
   # Study selector and dynamic study menu
@@ -1110,6 +1111,7 @@ server <- function(input, output, session) {
       source("user_management.R", local = TRUE)
       # [moved to dead/ 2026-08-11] source("helpers.R", local = TRUE)
       source("ui_handler.R", local = TRUE)
+      source("about_page.R", local = TRUE)        # sidebar About: I-SPI version, calib schema, compute releases
       source("study_configuration.R", local = TRUE)
       source("study_configuration_ui.R", local = TRUE)
 
@@ -1234,7 +1236,7 @@ server <- function(input, output, session) {
       source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
       source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
       source("linearity_report.R",   local = TRUE)   # QC: Replicate Linearity (sets, pairs, regression, report)
-      source("linearity_backcalc.R", local = TRUE)   # ... concentrations for controls and standards (back-calculated here)
+      source("linearity_stored.R", local = TRUE)     # ... stored estimates for controls and standards
       source("linearity_module.R",   local = TRUE)
       source("assay_response.R",     local = TRUE)
       source("data_dictionary.R",    local = TRUE)

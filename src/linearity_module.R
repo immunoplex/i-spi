@@ -131,7 +131,7 @@ linearityUI <- function(id) {
 #' @param scope  reactive -> list(study, experiment, project_id)
 #' @param fetch  function(pool, project, study, experiment) -> raw frame (injectable)
 #' @param fetch_extra function(pool, project, study, experiment, kinds, samples) -> list(control, standard,
-#'   check, scales_inferred): back-calculated controls and standards (injectable)
+#'   coverage, control_stages, stored): stored control and standard estimates (injectable)
 linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty = NULL, fetch = lin_fetch,
                             fetch_extra = lin_fetch_extra) {
   shiny::moduleServer(id, function(input, output, session) {
@@ -145,7 +145,7 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
       shiny::showModal(shiny::modalDialog(title = help_modal_title(hid), body, easyClose = TRUE, size = "l", footer = shiny::modalButton("Close")))
     })
     pts_all <- shiny::reactiveVal(NULL)       # everything loaded, all sample types
-    chk_txt <- shiny::reactiveVal("")         # how closely controls/standards match the worker
+    chk_txt <- shiny::reactiveVal("")         # how many curves carry stored control/standard estimates
 
     # The points of one sample type at a time: estimates of a control and of a test
     # sample are never compared with each other. With one type loaded there is no choice.
@@ -176,7 +176,7 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
           parts <- list(lin_prepare(raw, "sample")); ex <- NULL
           extra <- intersect(kinds, c("control", "standard"))
           if (length(extra)) {
-            shiny::incProgress(0.3, message = "Back-calculating controls and standards from the stored curves...")
+            shiny::incProgress(0.3, message = "Reading the stored control and standard estimates...")
             ex <- fetch_extra(pool, s$project_id, s$study, s$experiment, kinds = extra, samples = raw)
             parts <- c(parts, list(lin_prepare(ex$control, "control"), lin_prepare(ex$standard, "standard")))
           }
@@ -188,12 +188,13 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
         return()
       }
       pts_all(res$pts)
-      chk_txt(if (is.null(res$ex)) "" else lin_backcalc_check_text(res$ex$check))
+      chk_txt(if (is.null(res$ex)) "" else lin_coverage_text(res$ex$coverage))
       if (!is.null(res$ex)) {
         n <- table(factor(res$pts$kind, levels = names(LIN_KINDS)))
         msg <- paste(sprintf("%s: %s estimates", tolower(LIN_KINDS[kinds]), format(as.integer(n[kinds]), big.mark = ",")), collapse = "; ")
-        if (isTRUE(res$ex$scales_inferred > 0L))
-          msg <- paste0(msg, sprintf(". The response scale could not be measured for %d curve(s); the experiment's usual scale was used.", res$ex$scales_inferred))
+        if (isFALSE(res$ex$stored))
+          msg <- paste0(msg, ". This database has no stored control or standard estimates yet: they need i-spi-compute 1.1 (migration 011).")
+        else if (nzchar(chk_txt())) msg <- paste0(msg, ". ", chk_txt())
         st <- res$ex$control_stages
         if ("control" %in% kinds && !is.null(st)) {
           msg <- paste(msg, lin_control_stages_text(st), sep = "\n")
@@ -224,7 +225,7 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
       if (!nrow(p))
         return(shiny::div(class = "alert alert-info", style = "margin-top:10px;",
           "No back-calculated estimates were found for the types chosen. Compute fits first",
-          if (any(c("control", "standard") %in% (input$kinds %||% character()))) " (controls and standards need a stored best model for the curve)",
+          if (any(c("control", "standard") %in% (input$kinds %||% character()))) " (controls and standards need estimates stored by i-spi-compute 1.1 or later, or by its backfill)",
           "."))
       st <- sets()
       sm <- lin_set_summary(st)
