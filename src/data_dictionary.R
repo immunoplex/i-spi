@@ -88,6 +88,18 @@ CALIB_TABLE_DOCS <- list(
     grain = "one row per curve / method",
     keys  = c("method", "lloq_conc", "uloq_conc", "lloq_log10", "uloq_log10",
               "lower_lod_conc", "upper_lod_conc", "inflect_x", "pcov_threshold")),
+  calib_standards = list(
+    group = "Results", label = "Back-calculated standards",
+    what  = "The standard points each fit used (included = false for masked points), with each point's concentration read back off the fitted curve exactly as for test samples (predicted, final = x dilution, pcov, gate and censoring class, 95% interval) and its recovery against the nominal value. The estimate columns need i-spi-compute 1.1.",
+    grain = "one row per curve / method / standard well / dilution",
+    keys  = c("well", "dilution", "concentration", "response_model", "assay_response_raw", "included",
+              "predicted_concentration", "final_concentration", "recovery_pct", "pcov",
+              "pcov_gate_class", "censor_class")),
+  calib_blanks = list(
+    group = "Results", label = "Blanks",
+    what  = "The blank (buffer) wells each fit used, with the response on the fitted scale and as measured; included = false for masked wells.",
+    grain = "one row per curve / method / blank well",
+    keys  = c("well", "response_model", "assay_response_raw", "included", "exclusion_reason", "mask_reason")),
   calib_controls = list(
     group = "Results", label = "Back-calculated controls",
     what  = "Each control well's concentration read off the fitted curve, exactly as for test samples (predicted, final = x dilution, pcov, gate and censoring class, 95% interval). One row per standard source of the plate; masked wells are included with included = false. Needs i-spi-compute 1.1.",
@@ -137,7 +149,8 @@ CALIB_TABLE_ORDER <- list(
   `Raw inputs` = c("xmap_header", "xmap_standard", "xmap_control", "xmap_buffer", "xmap_sample"),
   Registry     = c("curve_lookup"),
   Results      = c("calib_run", "calib_fit", "calib_param", "calib_gate",
-                   "calib_grid", "calib_samples", "calib_controls", "calib_diagnostics", "calib_loo",
+                   "calib_grid", "calib_samples", "calib_standards", "calib_controls", "calib_blanks",
+                   "calib_diagnostics", "calib_loo",
                    "calib_weights", "calib_weights_fit", "control_reference")
 )
 

@@ -683,6 +683,11 @@ fetch_calib_diagnostics_scoped <- function(pool, project, study, experiment) .fe
 fetch_calib_loo_scoped         <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_loo")
 # calib_controls (i-spi-compute migration 011): stored estimates for control wells.
 fetch_calib_controls_scoped    <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_controls")
+# The standard points and blank wells each fit used (the last fit's snapshot,
+# incl. its included/mask_reason); calib_standards carries the stored estimates
+# and recovery_pct from migration 011 on.
+fetch_calib_standards_scoped   <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_standards")
+fetch_calib_blanks_scoped      <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_blanks")
 # control_reference has no curve_id and no experiment: the rows for this study and
 # the project-wide rows (study_accession '__none__'). `experiment` is not used.
 fetch_control_reference_scoped <- function(pool, project, study, experiment = NULL)

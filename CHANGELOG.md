@@ -29,6 +29,9 @@ say why they are empty.
 - **Data tab: Back-calculated controls and Control reference values** tabs, also in
   the RData, JSON and Excel bundles and the per-table CSVs. Control reference values
   show the study's rows and the project-wide rows.
+- **Data tab: Back-calculated standards and Blanks** tabs (`calib_standards`,
+  `calib_blanks`): the standard points and blank wells each fit used, the standards
+  with their stored estimates and `recovery_pct`. Also in the bundles and CSVs.
 - **About** (sidebar): the I-SPI version and commit, the database's calib schema
   version, and the compute releases (worker version, curveR packages, CmdStan) behind
   the stored results, overall and for the selected study, read from

@@ -1,0 +1,17 @@
+# Source: curveRcore R/calib_schema.sql (CREATE TABLE madi_results.calib_blanks).
+columns:
+  - {name: curve_id, type: "bigint", description: "Primary key; NOT NULL. Curve the blank was used for.", fk: "curve_lookup.curve_id"}
+  - {name: method, type: "varchar(20)", description: "Primary key; NOT NULL. Calibration engine: bayesian or frequentist.", fk: ""}
+  - {name: well, type: "varchar(16)", description: "Primary key; NOT NULL. Plate well of the blank.", fk: ""}
+  - {name: response_model, type: "numeric", description: "Response on the scale the curve was fitted (after any log transform).", fk: ""}
+  - {name: assay_response_raw, type: "numeric", description: "Response as measured.", fk: ""}
+  - {name: included, type: "boolean", description: "NOT NULL. FALSE if the well is masked.", fk: ""}
+  - {name: exclusion_reason, type: "varchar(20)", description: "NOT NULL. none or masked.", fk: ""}
+  - {name: job_id, type: "text", description: "Compute job that wrote the row.", fk: ""}
+  - {name: created_at, type: "timestamptz", description: "NOT NULL. Time the row was written.", fk: ""}
+  - {name: mask_reason, type: "varchar", description: "Why the well was masked, as recorded at import or in the app.", fk: ""}
+indexes:
+  - {name: calib_blanks_pkey, column: curve_id, type: btree}
+  - {name: calib_blanks_pkey, column: method, type: btree}
+  - {name: calib_blanks_pkey, column: well, type: btree}
+referenced_by: []
