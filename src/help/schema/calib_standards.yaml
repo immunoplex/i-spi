@@ -1,0 +1,43 @@
+# Source: curveRcore 0.7.0 point_estimates_contract('standards') (calib schema 0.7.0;
+# estimate columns added by i-spi-compute migration 011). Regenerate from the contract if it changes.
+columns:
+  - {name: curve_id, type: "bigint", description: "Primary key; NOT NULL. Curve the standard belongs to.", fk: "curve_lookup.curve_id"}
+  - {name: method, type: "varchar(20)", description: "Primary key; NOT NULL. Calibration engine: bayesian or frequentist.", fk: ""}
+  - {name: well, type: "varchar(16)", description: "Primary key; NOT NULL. Plate well of the standard.", fk: ""}
+  - {name: dilution, type: "numeric", description: "Primary key; NOT NULL. Dilution factor of the standard point.", fk: ""}
+  - {name: concentration, type: "numeric", description: "Nominal concentration at that dilution, natural scale.", fk: ""}
+  - {name: log10_concentration, type: "numeric", description: "Nominal concentration, log10 (the x the fit used when is_log_independent).", fk: ""}
+  - {name: response_model, type: "numeric", description: "Response on the scale the curve was fitted.", fk: ""}
+  - {name: assay_response_raw, type: "numeric", description: "Response as measured.", fk: ""}
+  - {name: included, type: "boolean", description: "NOT NULL. TRUE if the point entered the fit. Recovery of included points is optimistic (the curve was fitted to them).", fk: ""}
+  - {name: exclusion_reason, type: "varchar(20)", description: "NOT NULL. none or masked.", fk: ""}
+  - {name: job_id, type: "text", description: "Compute job that wrote the row.", fk: ""}
+  - {name: created_at, type: "timestamptz", description: "NOT NULL. Time the row was written.", fk: ""}
+  - {name: mask_reason, type: "varchar", description: "Why the point was masked.", fk: ""}
+  - {name: predicted_concentration, type: "numeric", description: "Back-calculated concentration at the dilution the well was run at, on the scale the fit used for x (log10 when is_log_independent). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: predicted_log10_concentration, type: "numeric", description: "Back-calculated concentration, log10, at the dilution the well was run at. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: final_concentration, type: "numeric", description: "Back-calculated concentration multiplied by the dilution (natural scale). For a standard: that point's estimate of the stock concentration. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: se_concentration, type: "numeric", description: "Standard error of the back-calculated concentration (log10 scale when is_log_independent). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: pcov, type: "numeric", description: "Precision CV (%) of the back-calculated concentration, capped at cv_x_max. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: pcov_rmse, type: "numeric", description: "CV (%) of the root-mean-square error. Standards: includes the bias against the nominal value. Samples and controls: equal to pcov (bias unknown). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: pcov_pass, type: "boolean", description: "TRUE if the point lies in the curve's dynamic range [LLOQ, ULOQ] (or passes the pcov threshold when LOQs are undefined). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: pcov_gate_class, type: "text", description: "belowLLOQ, inDynamicRange or aboveULOQ. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: censor_class, type: "text", description: "quantified, lod_to_lloq, below_lod, below_lloq, above_uloq, saturated or no_response. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: censor_type, type: "text", description: "none, left, interval or right. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: censor_lower, type: "double precision", description: "Lower censoring bound, natural scale x dilution; NULL if unbounded. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: censor_upper, type: "double precision", description: "Upper censoring bound, natural scale x dilution; NULL if unbounded. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: conc_q_lo, type: "double precision", description: "Lower quantile of the concentration draws (x dilution). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: conc_q_med, type: "double precision", description: "Median of the concentration draws (x dilution). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: conc_q_hi, type: "double precision", description: "Upper quantile of the concentration draws (x dilution). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: p_below_lloq, type: "double precision", description: "Share of draws below the LLOQ. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: p_above_uloq, type: "double precision", description: "Share of draws above the ULOQ. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: p_below_cutoff, type: "double precision", description: "Share of draws below the decision cutoff. (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: frac_draws_below_a, type: "double precision", description: "Share of draws whose response lies below the lower asymptote (not invertible). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: frac_draws_above_d, type: "double precision", description: "Share of draws whose response lies above the upper asymptote (not invertible). (Added in calib schema 0.7.0.)", fk: ""}
+  - {name: recovery_pct, type: "double precision", description: "100 x estimated / nominal concentration at the point's dilution. (Added in calib schema 0.7.0.)", fk: ""}
+indexes:
+  - {name: calib_standards_pkey, column: curve_id, type: btree}
+  - {name: calib_standards_pkey, column: method, type: btree}
+  - {name: calib_standards_pkey, column: well, type: btree}
+  - {name: calib_standards_pkey, column: dilution, type: btree}
+referenced_by: []
