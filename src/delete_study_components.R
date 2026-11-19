@@ -26,6 +26,8 @@
 #     calib_settings (experiment rows)                 -> project/study/experiment
 #   study-level only (whole-study delete):
 #     xmap_dilution_parameters, xmap_study_config      -> study/project
+#     control_reference (study-specific rows; project-wide rows, study
+#         '__none__', belong to the project and are kept)  -> study/project
 #     all remaining calib_settings for the study
 #   NEVER touched (global/shared): calib_settings_meta,
 #     calib_settings_migration_log, calib_settings_studycfg_log.
@@ -55,7 +57,7 @@
 .DC_EXP_TABLES   <- c(unname(CALIB_RAW_TABLES), "xmap_dilution_analysis", "xmap_antigen_family",
                       "annotation_analyte", "annotation_level", "annotation_order")
 # Study-level-only tables (no experiment_accession).
-.DC_STUDY_TABLES <- c("xmap_dilution_parameters", "xmap_study_config")
+.DC_STUDY_TABLES <- c("xmap_dilution_parameters", "xmap_study_config", "control_reference")
 
 # ---- dry-run: rows that WOULD be deleted, per table (read-only) --------------
 count_study_components <- function(conn, project, study, experiment = NULL) {
@@ -73,7 +75,7 @@ count_study_components <- function(conn, project, study, experiment = NULL) {
   idlist <- if (length(cids)) paste(cids, collapse = ",") else NULL
 
   if (!is.null(idlist)) {
-    for (tb in CALIB_CURVE_TABLES)
+    for (tb in .present_tables(conn, CALIB_CURVE_TABLES))
       out[[tb]] <- cnt(sprintf("SELECT count(*) FROM %s WHERE curve_id IN (%s)", .tbl(tb), idlist))
     # runs whose fits are entirely within this scope (would be fully orphaned)
     out[["calib_run"]] <- cnt(sprintf(
@@ -121,7 +123,7 @@ delete_study_components <- function(conn, project, study, experiment = NULL) {
     if (!is.null(idlist)) {
       jobs <- DBI::dbGetQuery(co, sprintf("SELECT DISTINCT job_id FROM %s WHERE curve_id IN (%s)",
                                           .tbl("calib_fit"), idlist))$job_id
-      for (tb in CALIB_CURVE_TABLES)
+      for (tb in .present_tables(co, CALIB_CURVE_TABLES))
         deleted[[tb]] <- ex(sprintf("DELETE FROM %s WHERE curve_id IN (%s)", .tbl(tb), idlist))
     }
     # calib_run: only rows whose fits are now entirely gone (guard shared jobs)

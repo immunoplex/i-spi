@@ -39,9 +39,10 @@
 #   rep  <- lin_report_build(list(scope = ..., pairs = pr, reg = reg, ...))
 #   lin_report_text(rep) / lin_report_json(rep)
 #
-# Test samples come from calib_samples (kind = "sample"). Controls and standards
-# have no stored concentration / pcov / gate class; linearity_backcalc.R computes
-# them from the stored curves and adds rows with kind = "control" | "standard".
+# Test samples come from calib_samples (kind = "sample"). Controls come from
+# calib_controls and standards from calib_standards' estimate columns, stored by the
+# compute job with the same calculation (linearity_stored.R reads them and adds rows
+# with kind = "control" | "standard").
 # Blanks have no concentration and are not covered.
 # =============================================================================
 
@@ -930,8 +931,8 @@ lin_report_text <- function(rep) {
   if (!is.null(rep$kind) && length(rep$kind) == 1L && !is.na(rep$kind))
     w("- sample type: %s", .lin_or(unname(LIN_KINDS[rep$kind]), rep$kind))
   if (!is.null(rep$kind) && !identical(rep$kind, "sample")) {
-    w("- concentrations: computed in the app, not stored by the worker. Each is the stored best model inverted at the well's response (Bayesian: posterior-median parameters); pcov is the stored grid's pcov read at that concentration; gate class is from the curve's LLOQ/ULOQ.")
-    if (nzchar(.lin_or(rep$backcalc, ""))) w("- check against the worker: %s", rep$backcalc)
+    w("- concentrations: stored by the compute job (calib_controls / calib_standards), the same calculation as for test samples; standards are estimated at their own level, controls are multiplied by their dilution.")
+    if (nzchar(.lin_or(rep$backcalc, ""))) w("- stored estimates: %s", rep$backcalc)
   }
   w("- antigen: %s; feature: %s", .lin_or(f$antigen, "all"), .lin_or(f$feature, "all"))
   w("- timeperiod: %s; patient filter: %s", if (length(f$timeperiod)) paste(f$timeperiod, collapse = ", ") else "all",
@@ -1060,7 +1061,7 @@ lin_report_json <- function(rep) {
   reg <- rep$reg
   slim <- function(f) if (is.null(f)) NULL else f[setdiff(names(f), c("model", "draws"))]
   obj <- list(generated = rep$generated, scope = rep$scope, comparison = rep$preset,
-              sample_type = rep$kind, backcalculation_check = if (!identical(rep$kind, "sample")) rep$backcalc else NULL,
+              sample_type = rep$kind, stored_estimates = if (!identical(rep$kind, "sample")) rep$backcalc else NULL,
               filters = rep$filters, x = rep$x, y = rep$y, match = rep$match, differ = rep$differ,
               n_sets = rep$n_sets, n_pairs = rep$n_pairs, pair_types = rep$pair_types,
               gate_combos = rep$gate_combos,

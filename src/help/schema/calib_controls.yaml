@@ -1,0 +1,45 @@
+# Source: curveRcore 0.7.0 point_estimates_contract('controls') (calib schema 0.7.0;
+# i-spi-compute migration 011). Regenerate from the contract if it changes.
+columns:
+  - {name: curve_id, type: "bigint", description: "Primary key; NOT NULL. Curve the control was read on (FK to curve_lookup).", fk: "curve_lookup.curve_id"}
+  - {name: method, type: "varchar(20)", description: "Primary key; NOT NULL. Calibration engine: bayesian or frequentist.", fk: ""}
+  - {name: well, type: "varchar(20)", description: "Primary key; NOT NULL. Plate well of the control.", fk: ""}
+  - {name: sampleid, type: "varchar(128)", description: "Control sample identifier as imported (often only the well).", fk: ""}
+  - {name: source, type: "varchar(64)", description: "Control name, e.g. 'QC1 (Low)'; identifies one control across plates and studies.", fk: ""}
+  - {name: dilution, type: "numeric", description: "Dilution factor the control was run at.", fk: ""}
+  - {name: included, type: "boolean", description: "NOT NULL. FALSE if the well is masked. Masked controls are still estimated.", fk: ""}
+  - {name: exclusion_reason, type: "varchar(20)", description: "NOT NULL. none or masked.", fk: ""}
+  - {name: mask_reason, type: "varchar", description: "Why the well was masked, as recorded at import or in the app.", fk: ""}
+  - {name: concentration, type: "numeric", description: "Expected (nominal) concentration on the fit's x scale. NULL until reference values exist; see calib_points_SPEC.md.", fk: ""}
+  - {name: log10_concentration, type: "numeric", description: "Expected concentration, log10. NULL until reference values exist.", fk: ""}
+  - {name: response_model, type: "numeric", description: "Response on the scale the curve was fitted (after any log transform and blank handling).", fk: ""}
+  - {name: assay_response_raw, type: "numeric", description: "Response as measured.", fk: ""}
+  - {name: predicted_concentration, type: "numeric", description: "Back-calculated concentration at the dilution the well was run at, on the scale the fit used for x (log10 when is_log_independent).", fk: ""}
+  - {name: predicted_log10_concentration, type: "numeric", description: "Back-calculated concentration, log10, at the dilution the well was run at.", fk: ""}
+  - {name: final_concentration, type: "numeric", description: "Back-calculated concentration multiplied by the dilution (natural scale). For a standard: that point's estimate of the stock concentration.", fk: ""}
+  - {name: se_concentration, type: "numeric", description: "Standard error of the back-calculated concentration (log10 scale when is_log_independent).", fk: ""}
+  - {name: pcov, type: "numeric", description: "Precision CV (%) of the back-calculated concentration, capped at cv_x_max.", fk: ""}
+  - {name: pcov_rmse, type: "numeric", description: "CV (%) of the root-mean-square error. Standards: includes the bias against the nominal value. Samples and controls: equal to pcov (bias unknown).", fk: ""}
+  - {name: pcov_pass, type: "boolean", description: "TRUE if the point lies in the curve's dynamic range [LLOQ, ULOQ] (or passes the pcov threshold when LOQs are undefined).", fk: ""}
+  - {name: pcov_gate_class, type: "text", description: "belowLLOQ, inDynamicRange or aboveULOQ.", fk: ""}
+  - {name: censor_class, type: "text", description: "quantified, lod_to_lloq, below_lod, below_lloq, above_uloq, saturated or no_response.", fk: ""}
+  - {name: censor_type, type: "text", description: "none, left, interval or right.", fk: ""}
+  - {name: censor_lower, type: "double precision", description: "Lower censoring bound, natural scale x dilution; NULL if unbounded.", fk: ""}
+  - {name: censor_upper, type: "double precision", description: "Upper censoring bound, natural scale x dilution; NULL if unbounded.", fk: ""}
+  - {name: conc_q_lo, type: "double precision", description: "Lower quantile of the concentration draws (x dilution).", fk: ""}
+  - {name: conc_q_med, type: "double precision", description: "Median of the concentration draws (x dilution).", fk: ""}
+  - {name: conc_q_hi, type: "double precision", description: "Upper quantile of the concentration draws (x dilution).", fk: ""}
+  - {name: p_below_lloq, type: "double precision", description: "Share of draws below the LLOQ.", fk: ""}
+  - {name: p_above_uloq, type: "double precision", description: "Share of draws above the ULOQ.", fk: ""}
+  - {name: p_below_cutoff, type: "double precision", description: "Share of draws below the decision cutoff.", fk: ""}
+  - {name: frac_draws_below_a, type: "double precision", description: "Share of draws whose response lies below the lower asymptote (not invertible).", fk: ""}
+  - {name: frac_draws_above_d, type: "double precision", description: "Share of draws whose response lies above the upper asymptote (not invertible).", fk: ""}
+  - {name: job_id, type: "varchar(64)", description: "Compute job that wrote the row.", fk: ""}
+  - {name: created_at, type: "timestamptz", description: "Time the row was written.", fk: ""}
+indexes:
+  - {name: calib_controls_pkey, column: curve_id, type: btree}
+  - {name: calib_controls_pkey, column: method, type: btree}
+  - {name: calib_controls_pkey, column: well, type: btree}
+  - {name: idx_calib_controls_source, column: curve_id, type: btree}
+  - {name: idx_calib_controls_source, column: source, type: btree}
+referenced_by: []

@@ -13,29 +13,21 @@ with each other.
 | Type | One set is | Where the concentration comes from |
 |---|---|---|
 | Test samples | One patient and timeperiod on one antigen and feature | Stored by the compute job |
-| Controls | One control (its name) on one antigen and feature | Computed here (below) |
-| Standards | One standard level on one antigen and feature | Computed here (below) |
+| Controls | One control (its name) on one antigen and feature | Stored by the compute job |
+| Standards | One standard level on one antigen and feature | Stored by the compute job |
 
-**Controls and standards are not stored with a concentration**, so the app works
-it out from the curve that was stored for each plate, antigen and method:
+**All three are estimated the same way, by the compute job, when the curve is
+fitted.** The app only reads what was stored. For each curve and method the job
+stores, per control well and per standard point, the concentration, its pcov, the
+gate class (below LLOQ, in range, above ULOQ) and the censoring class, exactly as
+for test samples.
 
-1. The well's response is put on the scale the curve was fitted on.
-2. The stored best model is inverted at that response to give the concentration.
-   A Bayesian curve uses the posterior median of each parameter.
-3. A control's concentration is multiplied by its dilution, as for samples. A
-   standard's is not: its dilution is already part of its nominal concentration.
-4. **pcov** is read from the curve's stored precision profile at that
-   concentration. A response beyond the curve's asymptotes cannot be inverted: it
-   has no concentration and pcov 150.
-5. The **gate class** (below LLOQ, in range, above ULOQ) comes from the curve's
-   LLOQ and ULOQ.
-
-**How close is this to the compute job?** The app tests itself when the points
-load. It re-inverts the stored curve and compares with the stored grid, and it
-compares the pcov it reads with the pcov stored for test samples. The result is
-shown in the report. The inverse is exact for frequentist fits. For Bayesian fits
-it can differ a little, because the job takes the median of the concentration over
-every posterior draw, and the app uses the median parameters.
+- A control's concentration is multiplied by its dilution, as for samples. A
+  standard's is not: its dilution is already part of its nominal concentration.
+- A response beyond the curve's asymptotes has no concentration.
+- Curves fitted before i-spi-compute 1.1 got these values from a one-off backfill
+  that uses the same calculation. If a curve has none yet, the message after
+  *Find replicate sets* says how many curves are missing; a refit adds them.
 
 **Standards.** A standard level is the same position in the dilution series (for
 example "std 9"). Wells of one level on different plates are replicates. Masked or
