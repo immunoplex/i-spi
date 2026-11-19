@@ -33,5 +33,8 @@ db_pwd_x=REPLACE_ME
 db_sslmode=
 
 # ---- Dev toggles -------------------------------------------------------------
-# LOCAL_DEV=1 disables Dex OIDC auth for local runs.
+# LOCAL_DEV=1 disables Dex OIDC auth for local runs; the app then acts as
+# LOCAL_DEV_EMAIL (the account whose projects you want to see). Never set
+# LOCAL_DEV=1 in a deployment.
 LOCAL_DEV=0
+LOCAL_DEV_EMAIL=

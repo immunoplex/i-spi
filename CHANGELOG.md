@@ -5,6 +5,23 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## v1.1.1 — Safe project queries; local sign-in bypass by environment
+
+### Fixed
+- **Manage Project: user input no longer becomes SQL.** Creating, joining and
+  loading a project built its queries by pasting the project name, project
+  number and user email into the SQL text. A name or email with an apostrophe
+  failed, and the same gap allowed SQL injection. Every value is now passed as a
+  bound parameter, project numbers must be whole numbers, and creating a project
+  reads the new id with `RETURNING` instead of `currval()`. The same applies to
+  loading a project from the project tables (`ui_handler.R`).
+- **Local development without sign-in** (`LOCAL_DEV=1`) works from the
+  environment alone: the app acts as `LOCAL_DEV_EMAIL` (default
+  `local-dev@example.org`). Previously it needed an edit to `app.R`, and the
+  sign-in and sign-out buttons switched to a different hard-coded account.
+  `Renviron.example` documents both variables. The commented personal email
+  address in `app.R` is removed.
+
 ## v1.1.0 — Stored estimates for controls and standards; About page
 
 Needs i-spi-compute 1.1 (migration 011, curveRcore 0.7.0). On a database without

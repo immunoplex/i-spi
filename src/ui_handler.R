@@ -974,21 +974,33 @@ load_project <- function(conn, project_id, current_user){
       # rollbacks become stop()s mapped back to notifications in the handler.
       tryCatch({
         pool::poolWithTransaction(conn, function(conn) {
-          result <- dbGetQuery(conn, glue::glue("SELECT COUNT(*) as user_count FROM madi_lumi_users.project_users WHERE project_id = {project_id} AND user_id = '{current_user}'"))
+          # user input travels as bound parameters, never as SQL text
+          result <- dbGetQuery(conn,
+            "SELECT COUNT(*) AS user_count FROM madi_lumi_users.project_users
+              WHERE project_id = $1 AND user_id = $2",
+            params = list(as.integer(project_id), current_user))
           if (result$user_count <= 0) stop("no_access")
-          project_name_query <- glue::glue("SELECT project_name FROM madi_lumi_users.projects WHERE project_id = {project_id}")
-          project_name_result <- dbGetQuery(conn, project_name_query)
+          project_name_result <- dbGetQuery(conn,
+            "SELECT project_name FROM madi_lumi_users.projects WHERE project_id = $1",
+            params = list(as.integer(project_id)))
           if (nrow(project_name_result) == 0) stop("not_found")
           project_name <- project_name_result$project_name[1]
 
-          query_check <- sprintf("SELECT 1 FROM madi_results.xmap_users WHERE auth0_user = %s", dbQuoteLiteral(conn, current_user))
-          exists <- dbGetQuery(conn, query_check)
+          exists <- dbGetQuery(conn,
+            "SELECT 1 FROM madi_results.xmap_users WHERE auth0_user = $1",
+            params = list(current_user))
           if (nrow(exists) == 0) {
-            query_insert <- glue::glue("INSERT INTO madi_results.xmap_users (auth0_user, project_name, workspace_id) VALUES ({dbQuoteLiteral(conn, current_user)}, {dbQuoteLiteral(conn, project_name)}, {project_id})")
-            dbExecute(conn, query_insert); message("New user inserted in xmap.")
+            dbExecute(conn,
+              "INSERT INTO madi_results.xmap_users (auth0_user, project_name, workspace_id)
+               VALUES ($1, $2, $3)",
+              params = list(current_user, project_name, as.integer(project_id)))
+            message("New user inserted in xmap.")
           } else {
-            query_update <- glue::glue("UPDATE madi_results.xmap_users SET project_name = {dbQuoteLiteral(conn, project_name)}, workspace_id = {project_id} WHERE auth0_user = {dbQuoteLiteral(conn, current_user)}")
-            dbExecute(conn, query_update); message("User updated in xmap.")
+            dbExecute(conn,
+              "UPDATE madi_results.xmap_users SET project_name = $1, workspace_id = $2
+                WHERE auth0_user = $3",
+              params = list(project_name, as.integer(project_id), current_user))
+            message("User updated in xmap.")
           }
         })
         showNotification(glue::glue("Project {project_id} loaded successfully!"), type = "message")

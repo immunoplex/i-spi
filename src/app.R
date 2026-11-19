@@ -3,9 +3,15 @@
 # ==============================================================
 source("global.R", local = TRUE)
 
-# Set to 1 for local and do not push in prod
-# Sys.setenv(LOCAL_DEV = "1")
-# local_email_user <- "mscotzens@gmail.com"
+# Local development without sign-in: set LOCAL_DEV=1 and LOCAL_DEV_EMAIL=<the
+# account to act as> in the environment (e.g. a git-ignored .Renviron); see
+# Renviron.example. Never set LOCAL_DEV in a deployment: it skips sign-in.
+local_dev_user <- function() list(
+  is_authenticated = TRUE,
+  email    = if (nzchar(Sys.getenv("LOCAL_DEV_EMAIL"))) Sys.getenv("LOCAL_DEV_EMAIL") else "local-dev@example.org",
+  name     = "Local Dev User",
+  id_token = "FAKE_ID_TOKEN_FOR_DEV"
+)
 
 # Source authentication configuration (Step 1)
 # Defines DEX_*, APP_REDIRECT_URI, OIDC_SCOPES, endpoints, get_jwks(), `%||%`, dex_client
@@ -503,12 +509,7 @@ server <- function(input, output, session) {
   # --- Authentication Reactive Values from HEAD ---
   user_data <- reactiveVal(
     if (is_local_dev()) {
-      list(
-        is_authenticated = TRUE,
-        email = local_email_user,   # Or any test user
-        name = "Local Dev User",
-        id_token = "FAKE_ID_TOKEN_FOR_DEV"
-      )
+      local_dev_user()
     } else {
       list(is_authenticated = FALSE)
     }
@@ -746,12 +747,7 @@ server <- function(input, output, session) {
   observeEvent(input$logout_button, {
 
     if (is_local_dev()) {
-      user_data(list(
-        is_authenticated = TRUE,
-        email = "dev_user@dartmouth.edu",
-        name = "Local Dev User",
-        id_token = "FAKE_ID_TOKEN_FOR_DEV"
-      ))
+      user_data(local_dev_user())
       showNotification("DEV mode: Simulated logout (still logged in as dev user).", type = "message")
       return()
     }
@@ -823,12 +819,7 @@ server <- function(input, output, session) {
 
     if (is_local_dev()) {
       showNotification("DEV mode: Bypassing login.", type = "message")
-      user_data(list(
-        is_authenticated = TRUE,
-        email = "dev_user@dartmouth.edu",
-        name = "Local Dev User",
-        id_token = "FAKE_ID_TOKEN_FOR_DEV"
-      ))
+      user_data(local_dev_user())
       return()
     }
 
