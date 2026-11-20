@@ -772,6 +772,33 @@ fetch_weights_status_scoped <- function(pool, project, study, experiment, extend
     params = list(project, study, experiment))
 }
 
+# Weights already stored for a scope and method, one row per model: model, n
+# (sample rows), last_computed. Feeds the "Check the data" step (what a new run
+# would replace). Additive-only installs read `model`; a database without the
+# column (before migration 010) has multiplicative weights only.
+fetch_weights_stored_scoped <- function(pool, project, study, experiment, method,
+                                        feature = NULL, antigen = NULL) {
+  where <- "cl.project_id = $1 AND cl.study_accession = $2
+            AND cl.experiment_accession = $3 AND cw.method = $4"
+  params <- list(project, study, experiment, method)
+  if (!is.null(feature)) { params <- c(params, list(feature))
+    where <- paste0(where, sprintf(" AND cl.feature = $%d", length(params))) }
+  if (!is.null(antigen)) { params <- c(params, list(antigen))
+    where <- paste0(where, sprintf(" AND cl.antigen = $%d", length(params))) }
+  sql <- function(model_expr) sprintf(
+    "SELECT %s AS model, count(*) AS n, max(cw.created_at) AS last_computed
+       FROM %s cw
+       JOIN %s cl ON cl.curve_id = cw.curve_id
+      WHERE %s
+      GROUP BY 1 ORDER BY 1",
+    model_expr, .tbl("calib_weights"), .tbl("curve_lookup"), where)
+  out <- .calib_q(pool, sql("COALESCE(cw.model, 'multiplicative')"), params = params)
+  # .calib_q() returns a 0-column data frame when the query fails (no `model`
+  # column before migration 010); a real empty result has the three columns
+  if (!ncol(out)) out <- .calib_q(pool, sql("'multiplicative'::text"), params = params)
+  out
+}
+
 # Full calib_samples rows for a study/experiment/method, optionally scoped
 # further to one antigen/feature, joined to curve_lookup for antigen/feature/
 # plateid context columns. Feeds the "Compute weights" Excel download (the

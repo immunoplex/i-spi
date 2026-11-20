@@ -26,11 +26,18 @@ plain-language label for this combination; `n_fit`/`n_eff` and
 actually vary.
 
 When the **additive** model was used (`model` = additive), the row instead
-reports **tau** (true between-sample SD, log10), **kappa** (measurement-error
-scale; 1 means the curve's own `se` is the true measurement SD), the group's
-mean [[glossary.reliability|reliability]], the number of censored samples, and
-an `identifiability` note. `tau` and `kappa` can be separated only because the
-samples' `se` values differ; when they barely do, treat both as provisional.
+reports [[glossary.tau|tau]] (SD of the real variation the design cell does not
+explain, log10; within a person when the person term was used),
+[[glossary.kappa|kappa]] (measurement-error scale; 1 means the curve's own `se`
+is the true measurement SD), the group's mean
+[[glossary.reliability|reliability]], the number of censored samples, an
+`identifiability` note, and `fit_options` (the options the fit used). The
+**check** column flags groups to read with care: kappa fixed at 1, kappa
+[[glossary.identifiability|weakly identified]] (tau and reliability
+provisional), or kappa outside 0.5 to 2 (the curve's `se` is then not a
+calibrated measurement SD and the reliabilities rest on kappa). tau, kappa and
+reliability are specific to the calibration method: do not compare Bayesian
+with frequentist values.
 
 ::: more
 `phi`/`beta1` are estimated jointly with a saturated cell-means location

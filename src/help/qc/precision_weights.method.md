@@ -3,7 +3,7 @@ id: qc.precision_weights.method
 title: Precision weighting method & scope
 audience: user
 category: compute-decision
-see_also: [glossary.reliability, glossary.precision_weight, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, glossary.pcov, data.analysis.downstream_censoring]
+see_also: [qc.precision_weights.model_choice, qc.precision_weights.data_check, qc.precision_weights.additive_options, glossary.reliability, glossary.precision_weight, data.results.precision_weights, data.results.precision_weights_fit, glossary.se_concentration, glossary.pcov, data.analysis.downstream_censoring]
 references:
   - text: "curveRweights vignette \"Measurement error in assay data: what the weights mean\" (start here if measurement-error models are new to you)"
     url: "https://immunoplex.github.io/curveRweights/articles/measurement-error.html"
@@ -36,14 +36,16 @@ columns** (timeperiod, agroup) define the experimental cells the weighting
 model estimates within — at least one must actually vary for a given
 scope, or the model has nothing to estimate against.
 
-**Variance model** (shown when the additive model is enabled). *Multiplicative*
-is the original model and stays the default. *Additive measurement-error* writes a
-sample's variance as real between-sample variation plus the measurement error the
-curve reports, so no weight can exceed `1/tau²`, every sample gets a
-[[glossary.reliability|reliability]], and out-of-range samples enter as censored
-rather than weighted. Running either model replaces the stored weights for that
-method and experiment: the most recent run is the one kept, and the `model`
-column records which it was.
+**Model** (shown when the additive model is enabled). *Multiplicative* is the
+original model and stays preselected; *Additive measurement-error* adds real
+variation to the measurement error, caps the weights and gives each sample a
+[[glossary.reliability|reliability]]. How to choose:
+[[qc.precision_weights.model_choice|Which model?]]; what the data check lists:
+[[qc.precision_weights.data_check|Check the data]]; the options of the additive
+model: [[qc.precision_weights.additive_options|Additive options]]. Running either
+model replaces the stored weights for that method and selection: the most recent
+run is the one kept, and the `model` column records which it was. The rest of
+this page describes the multiplicative model.
 
 ::: more
 The scale model is a power law relating a sample's precision index

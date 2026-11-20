@@ -121,6 +121,7 @@ stdCurveWeightsComputeUI <- function(id) {
         ),
 
         shiny::hr(),
+        weights_review_ui(ns),
         shiny::uiOutput(ns("submit_ui")),
         shiny::actionButton(ns("refresh_status"), "Check now",
                             class = "btn-default btn-sm", style = "margin-left:6px;"),
@@ -578,6 +579,67 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       }
     })
 
+    # --- model choice: data check, option defaults, review (additive only) ---
+    # Only built when the additive model is enabled; with the flag off none of
+    # these outputs exist in the UI and nothing below runs.
+    data_check <- shiny::reactive({
+      shiny::req(additive_weights_enabled())
+      design_dirty()
+      s <- cur(); shiny::req(s$study, s$experiment, input$weight_method)
+      tgt <- cur_target()
+      stored <- tryCatch(
+        fetch_weights_stored_scoped(pool, project = s$project_id, study = s$study,
+                                    experiment = s$experiment, method = input$weight_method,
+                                    feature = tgt$feature, antigen = tgt$antigen),
+        error = function(e) NULL)
+      weights_data_check(scope_samples(), stored)
+    })
+
+    output$data_check <- shiny::renderUI(weights_data_check_ui(data_check()))
+
+    # Defaults follow the data each time the selection changes; options the
+    # data cannot support are switched off and greyed out.
+    shiny::observeEvent(data_check(), {
+      ck <- data_check()
+      for (id in c("use_censoring", "patient_effect")) {
+        shiny::updateCheckboxInput(session, id, value = isTRUE(ck$defaults[[id]]))
+        shinyjs::toggleState(id, condition = isTRUE(ck$available[[id]]))
+      }
+      shiny::updateRadioButtons(session, "kappa_mode",
+                                selected = if (isTRUE(ck$defaults$fix_kappa)) "fix" else "estimate")
+      shinyjs::toggleState("estimate_beta1",
+                           condition = is.finite(ck$se_spread) && ck$se_spread >= WEIGHTS_SE_SPREAD_NARROW)
+      if (!(is.finite(ck$se_spread) && ck$se_spread >= WEIGHTS_SE_SPREAD_NARROW))
+        shiny::updateCheckboxInput(session, "estimate_beta1", value = FALSE)
+    })
+
+    output$additive_option_notes <- shiny::renderUI({
+      ck <- data_check()
+      why <- unlist(ck$why_unavailable)
+      why <- why[nzchar(why)]
+      lab <- c(use_censoring = "Censoring", patient_effect = "Person term")
+      if (!length(why)) return(NULL)
+      shiny::tags$small(style = "color:#787878;display:block;margin-bottom:4px;",
+        paste0(lab[names(why)], " not available: ", why, ".", collapse = " "))
+    })
+
+    additive_opts <- shiny::reactive(list(
+      use_censoring  = isTRUE(input$use_censoring),
+      patient_effect = isTRUE(input$patient_effect),
+      fix_kappa      = identical(input$kappa_mode, "fix"),
+      estimate_beta1 = isTRUE(input$estimate_beta1)))
+
+    output$submit_review <- shiny::renderUI({
+      ck <- data_check()
+      model <- if (identical(input$weights_model, "additive")) "additive" else "multiplicative"
+      opts <- additive_opts()
+      if (!isTRUE(ck$available$use_censoring)) opts$use_censoring <- FALSE
+      if (!isTRUE(ck$available$patient_effect)) opts$patient_effect <- FALSE
+      shiny::tags$p(style = "font-size:90%;color:#333;",
+        weights_review_text(model, input$weight_method, opts,
+                            n_groups = ck$n_groups, stored_models = ck$stored_models))
+    })
+
     # --- approval gate + submit ---------------------------------------------
     output$design_approval_ui <- shiny::renderUI({
       if (!has_samples() || !length(varying_cols())) return(NULL)
@@ -622,6 +684,10 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
         params$model <- "additive"
         params$scale_predictor <- "se"
         params$fix_beta1 <- if (isTRUE(input$estimate_beta1)) "false" else "true"
+        # only options that differ from the worker's defaults are sent
+        ck <- tryCatch(data_check(), error = function(e) NULL)
+        if (!is.null(ck))
+          params <- c(params, weights_additive_params(additive_opts(), ck$available))
       }
       if (!is.null(input$seed) && !is.na(input$seed)) params$seed <- as.character(input$seed)
 

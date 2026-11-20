@@ -37,6 +37,7 @@ columns:
   - {name: fix_beta1, type: boolean, description: "TRUE when the exponent beta1 was fixed at 1", fk: ""}
   - {name: n_censored, type: integer, description: "Number of censored samples in the fit", fk: ""}
   - {name: identifiability, type: text, description: "Whether tau and kappa could be separated for this group", fk: ""}
+  - {name: fit_options, type: text, description: "JSON of the options the additive fit used (use_censoring, patient_col, sample_col, plate_col, fix_beta1, fix_kappa); NULL for multiplicative rows and rows written before calib schema 0.7.1", fk: ""}
 indexes:
   - {name: calib_weights_fit_pkey, column: multiplate_group_id, type: btree}
   - {name: calib_weights_fit_pkey, column: method, type: btree}

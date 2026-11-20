@@ -10,6 +10,10 @@
 library(testthat)
 if (!exists("weights_fit_table")) source("precision_weight_panel.R")
 
+# The flag can also come from the environment; clear it so a developer or CI
+# environment that sets it cannot change what "flag off" means in these tests.
+Sys.unsetenv("ISPI_ENABLE_ADDITIVE_WEIGHTS")
+
 old_fit_cols <- c("multiplate_group_id", "method", "antigen", "feature",
                   "design_cols", "scale_predictor", "phi", "beta1",
                   "interpretation", "n_fit", "n_eff", "weight_ratio")
@@ -41,11 +45,31 @@ add_fit <- function() {
 
 test_that("feature flag defaults off and is read from the option", {
   op <- options(ispi.enable_additive_weights = NULL); on.exit(options(op))
+  withr::local_envvar(ISPI_ENABLE_ADDITIVE_WEIGHTS = NA)
   expect_false(additive_weights_enabled())
   options(ispi.enable_additive_weights = TRUE)
   expect_true(additive_weights_enabled())
   options(ispi.enable_additive_weights = "yes")   # only a real TRUE counts
   expect_false(additive_weights_enabled())
+})
+
+test_that("environment variable switches the flag when the option is unset", {
+  op <- options(ispi.enable_additive_weights = NULL); on.exit(options(op))
+  for (v in c("true", "TRUE", "1", "yes", " Yes ")) {
+    withr::local_envvar(ISPI_ENABLE_ADDITIVE_WEIGHTS = v)
+    expect_true(additive_weights_enabled(), info = v)
+  }
+  for (v in c("", "false", "0", "no", "on")) {
+    withr::local_envvar(ISPI_ENABLE_ADDITIVE_WEIGHTS = v)
+    expect_false(additive_weights_enabled(), info = v)
+  }
+  # an explicit option overrides the environment, in both directions
+  withr::local_envvar(ISPI_ENABLE_ADDITIVE_WEIGHTS = "true")
+  options(ispi.enable_additive_weights = FALSE)
+  expect_false(additive_weights_enabled())
+  withr::local_envvar(ISPI_ENABLE_ADDITIVE_WEIGHTS = "false")
+  options(ispi.enable_additive_weights = TRUE)
+  expect_true(additive_weights_enabled())
 })
 
 test_that("flag off: no model selector, no links, predictor always visible", {
@@ -188,4 +212,73 @@ test_that("bundle metadata separates methods and models, counts censoring and ve
   expect_equal(a$first_computed, "2026-11-12 10:00:00"); expect_equal(a$last_computed, "2026-11-12 11:00:00")
   expect_match(a$description, "tau^2", fixed = TRUE)
   expect_equal(m$weights_pkg_version[m$model == "multiplicative"], "0.2.2")
+})
+
+# ---- model-choice interface (data check, options, review) --------------------
+
+test_that("flag on: the three steps and the additive options are present", {
+  op <- options(ispi.enable_additive_weights = TRUE); on.exit(options(op))
+  html <- as.character(weights_model_selector_ui(shiny::NS("w")))
+  for (id in c("w-data_check", "w-use_censoring", "w-patient_effect",
+               "w-kappa_mode", "w-estimate_beta1", "w-additive_option_notes"))
+    expect_match(html, id, fixed = TRUE)
+  expect_match(html, "Check the data"); expect_match(html, "Choose the model")
+  expect_match(html, "Multiplicative (reproduces earlier analyses)", fixed = TRUE)
+  rv <- as.character(weights_review_ui(shiny::NS("w")))
+  expect_match(rv, "Review and submit"); expect_match(rv, "w-submit_review", fixed = TRUE)
+})
+
+test_that("flag off: no review step either", {
+  op <- options(ispi.enable_additive_weights = FALSE); on.exit(options(op))
+  expect_null(weights_review_ui(shiny::NS("w")))
+})
+
+test_that("data-check facts render with their status marks and the recommendation", {
+  if (!exists("weights_data_check")) source("weights_data_check.R")
+  d <- data.frame(antigen = "PT", feature = "IgG1", patientid = rep(paste0("P", 1:20), 3),
+                  timeperiod = rep(c("T1", "T2", "T3"), each = 20),
+                  se_concentration = exp(seq(-4, -1, length.out = 60)),
+                  censor_type = NA_character_, stringsAsFactors = FALSE)
+  html <- as.character(weights_data_check_ui(weights_data_check(d)))
+  expect_match(html, "Out of range: not recorded", fixed = TRUE)
+  expect_match(html, "Recalibrate this experiment to use censoring", fixed = TRUE)
+  expect_match(html, "Additive model recommended", fixed = TRUE)
+  expect_null(weights_data_check_ui(NULL))
+})
+
+test_that("fit check flags kappa fixed, weakly identified, or far from 1", {
+  d <- rbind(add_fit(), add_fit(), add_fit(), add_fit(), mult_fit(TRUE))
+  d$kappa[1:4] <- c(1, 3.2, 1.4, 1)
+  d$identifiability[1:4] <- c("kappa fixed at 1 (the curve's se is taken as the measurement SD)",
+                              "kappa identified from the data",
+                              "kappa is weakly identified (posterior SD ...)",
+                              "kappa identified from the data")
+  ck <- weights_fit_check(d)
+  expect_equal(ck[1], "kappa fixed at 1")
+  expect_match(ck[2], "^kappa 3.2: the curve's SE is not a calibrated")
+  expect_match(ck[3], "^kappa weakly identified")
+  expect_equal(ck[4], ""); expect_equal(ck[5], "")
+  tab <- weights_fit_table(d)
+  expect_true("check" %in% names(tab))
+  # multiplicative-only views stay exactly as before
+  expect_false("check" %in% names(weights_fit_table(mult_fit(TRUE))))
+})
+
+test_that("additive caption says what tau is and that reliability is method-specific", {
+  cap <- weights_model_caption("additive")
+  expect_match(cap, "within a person when the person term is used", fixed = TRUE)
+  expect_match(cap, "do not compare Bayesian with frequentist", fixed = TRUE)
+})
+
+test_that("bundle metadata carries the fit options of additive weights", {
+  if (!exists("weights_bundle_meta")) source("data_dictionary.R")
+  w <- data.frame(method = "bayesian", model = "additive", weights_pkg_version = "0.3.1",
+                  censor_type = c("none", "left"), created_at = "2026-11-20 10:00:00",
+                  stringsAsFactors = FALSE)
+  f <- data.frame(multiplate_group_id = "g1", method = "bayesian", model = "additive",
+                  fit_options = '{"use_censoring":true,"fix_kappa":false}', stringsAsFactors = FALSE)
+  m <- weights_bundle_meta(w, f)
+  expect_equal(m$fit_options, '{"use_censoring":true,"fix_kappa":false}')
+  expect_true(is.na(weights_bundle_meta(w, f[, -4])$fit_options))
+  expect_true("fit_options" %in% names(weights_bundle_meta(NULL)))
 })

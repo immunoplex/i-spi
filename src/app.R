@@ -1222,6 +1222,7 @@ server <- function(input, output, session) {
       source("std_curve_view_module.R", local = TRUE)
       source("std_curve_calc_module.R", local = TRUE)
       source("precision_weight_panel.R", local = TRUE)      # Summary-tab figure (ported from std-curver)
+      source("weights_data_check.R", local = TRUE)          # Precision Weights: "Check the data" step (additive model)
       source("std_curve_weights_module.R", local = TRUE)  # Precision Weights tab (sibling to Standard Curve)
       source("std_curve_compare_module.R", local = TRUE)
       source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
