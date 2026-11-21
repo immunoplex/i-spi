@@ -44,8 +44,11 @@ experiment.
 weights per sample. Running either model replaces the stored set for that
 method and selection; the `model` column of the results records which model
 made it, and the download bundles say so too. To go back, run the other model
-again: the multiplicative model with the same settings reproduces its earlier
-weights exactly.
+again: the multiplicative model with the same settings **and the same scope**
+reproduces its earlier weights exactly. A different scope (one antigen instead
+of the whole experiment) gives the same answer up to sampling noise (about 0.1%
+in phi and beta1), not identical numbers, because the sampler takes a
+different path.
 
 **Why the additive model is preferred for group comparisons.** If real
 person-to-person variation exists, a perfectly measured sample still tells you
