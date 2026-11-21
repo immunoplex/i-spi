@@ -108,44 +108,94 @@ weights_model_caption <- function(models) {
 # Columns (and rounding) for the per-group fit summary table.
 weights_fit_table <- function(df) {
   if (is.null(df) || !nrow(df)) return(df)
-  rd <- function(col, k) if (col %in% names(df)) df[[col]] <<- round(df[[col]], k)
-  for (col in c("phi", "beta1", "tau", "kappa")) rd(col, 3L)
-  rd("reliability", 2L)
+  rd <- function(col, k) if (col %in% names(df))
+    df[[col]] <<- round(suppressWarnings(as.numeric(df[[col]])), k)
+  for (col in c("phi", "beta1", "tau", "kappa", "rhat_max")) rd(col, 3L)
+  for (col in c("reliability", "ident_sd_ratio", "resid_sd", "resid_sd_ratio")) rd(col, 2L)
+  rd("ess_min", 0L)
   models <- weights_models_present(df)
+  # The diagnostics (calib schema 0.7.1) are stored for both models; once the
+  # table has them, every row gets the check column, multiplicative included.
+  has_diag <- any(WEIGHTS_DIAG_COLS %in% names(df))
+  show_check <- any(models == "additive") || has_diag
+  if (show_check) df$check <- weights_fit_check(df)
   base <- c("multiplate_group_id", "method")
   # `model` is shown only once an additive fit exists, so views of
   # multiplicative-only data stay exactly as they were before 0.6.0.
   if (any(models == "additive")) base <- c(base, "model")
-  base <- c(base, "antigen", "feature", "design_cols", "scale_predictor")
+  base <- c(base, "antigen", "feature", "design_cols", "scale_predictor",
+            if (show_check) "check")
   mult <- c("phi", "beta1")
-  add  <- c("tau", "kappa", "check", "reliability", "n_censored", "fix_beta1", "identifiability")
-  if (any(models == "additive")) df$check <- weights_fit_check(df)
+  add  <- c("tau", "kappa", "reliability", "n_censored", "fix_beta1", "identifiability")
   tail <- c("interpretation", "n_fit", "n_eff", "weight_ratio")
   keep <- c(base, if (any(models == "multiplicative")) mult,
-            if (any(models == "additive")) add, tail)
+            if (any(models == "additive")) add,
+            if (has_diag) WEIGHTS_DIAG_COLS, tail)
   df[, intersect(keep, names(df)), drop = FALSE]
 }
 
-# One short reading per additive fit row, for the fit table: is kappa fixed,
-# weakly identified, or far from 1 (the curve's se then is not a calibrated
-# measurement SD and the reliabilities lean on kappa). Empty for
-# multiplicative rows and for additive rows with nothing to flag.
+# One short reading per fit row, for the fit table, in order of severity:
+#   1. sampling: R-hat, divergent transitions, low ESS (both models) -- the
+#      fit's numbers cannot be relied on;
+#   2. prior dominance: the key scale parameter (additive: kappa; multiplicative:
+#      beta1) barely moved from its prior, or its posterior is wider than the
+#      prior (a sampling problem);
+#   3. additive: kappa fixed, or far from 1 (the curve's se is then not a
+#      calibrated measurement SD and the reliabilities lean on kappa);
+#   4. residual check (both): the variance model does not describe the scatter,
+#      overall or across the se range (some samples get too much weight).
+# Empty when there is nothing to flag. Rows written before the diagnostics were
+# stored say so, once the table has the columns.
 WEIGHTS_KAPPA_RANGE <- c(0.5, 2)
+WEIGHTS_DIAG_COLS <- c("rhat_max", "n_divergent", "ess_min", "ident_sd_ratio",
+                       "resid_sd", "resid_sd_ratio")
+WEIGHTS_RHAT_MAX <- 1.05            # above: chains did not converge
+WEIGHTS_ESS_MIN <- 400              # below: intervals unreliable
+WEIGHTS_IDENT_WEAK <- 0.8           # posterior SD / prior SD above: set by the prior
+WEIGHTS_RESID_SD_RANGE <- c(0.75, 1.33)
+WEIGHTS_RESID_RATIO_RANGE <- c(0.67, 1.5)
 weights_fit_check <- function(df) {
   if (is.null(df) || !nrow(df)) return(character(0))
-  m <- if ("model" %in% names(df)) as.character(df$model) else rep("multiplicative", nrow(df))
+  n <- nrow(df)
+  num <- function(k) if (k %in% names(df)) suppressWarnings(as.numeric(df[[k]])) else rep(NA_real_, n)
+  m <- if ("model" %in% names(df)) as.character(df$model) else rep("multiplicative", n)
   m[is.na(m)] <- "multiplicative"
-  ident <- if ("identifiability" %in% names(df)) as.character(df$identifiability) else rep(NA_character_, nrow(df))
-  kap <- if ("kappa" %in% names(df)) suppressWarnings(as.numeric(df$kappa)) else rep(NA_real_, nrow(df))
-  out <- character(nrow(df))
-  for (i in seq_len(nrow(df))) {
-    if (m[i] != "additive") next
+  ident <- if ("identifiability" %in% names(df)) as.character(df$identifiability) else rep(NA_character_, n)
+  kap <- num("kappa"); rh <- num("rhat_max"); dv <- num("n_divergent"); es <- num("ess_min")
+  ir <- num("ident_sd_ratio"); rs <- num("resid_sd"); rr <- num("resid_sd_ratio")
+  has_diag <- any(WEIGHTS_DIAG_COLS %in% names(df))
+  fin <- function(x) !is.na(x) & is.finite(x)
+  out <- character(n)
+  for (i in seq_len(n)) {
+    is_add <- m[i] == "additive"
+    fixed  <- is_add && !is.na(ident[i]) && grepl("fixed", ident[i])
+    par    <- if (is_add) "kappa" else "beta1"
+    samp <- c(if (fin(rh[i]) && rh[i] > WEIGHTS_RHAT_MAX) sprintf("R-hat %.2f", rh[i]),
+              if (fin(dv[i]) && dv[i] > 0) sprintf("%d divergent", as.integer(dv[i])),
+              if (fin(es[i]) && es[i] < WEIGHTS_ESS_MIN) sprintf("ESS %d", as.integer(round(es[i]))))
     notes <- c(
-      if (!is.na(ident[i]) && grepl("fixed", ident[i])) "kappa fixed at 1"
-      else if (!is.na(ident[i]) && grepl("weakly", ident[i])) "kappa weakly identified: tau and reliability provisional",
-      if (is.finite(kap[i]) && !(!is.na(ident[i]) && grepl("fixed", ident[i])) &&
+      if (length(samp))
+        paste0("sampling did not converge (", paste(samp, collapse = ", "),
+               "): do not rely on these weights; rerun with more iterations",
+               if (is_add && !fixed) " or with kappa fixed at 1"),
+      if (fin(ir[i]) && ir[i] > 1)
+        sprintf("%s posterior wider than its prior (ratio %.2f): sampling problem likely", par, ir[i])
+      else if (fixed) "kappa fixed at 1"
+      else if (is_add && !is.na(ident[i]) && grepl("weakly", ident[i]))
+        "kappa weakly identified: tau and reliability provisional"
+      else if (!is_add && fin(ir[i]) && ir[i] > WEIGHTS_IDENT_WEAK)
+        "beta1 weakly identified: set largely by its prior",
+      if (is_add && fin(kap[i]) && !fixed &&
           (kap[i] < WEIGHTS_KAPPA_RANGE[1] || kap[i] > WEIGHTS_KAPPA_RANGE[2]))
-        sprintf("kappa %.2g: the curve's SE is not a calibrated measurement SD", kap[i]))
+        sprintf("kappa %.2g: the curve's SE is not a calibrated measurement SD", kap[i]),
+      if (fin(rr[i]) && rr[i] > WEIGHTS_RESID_RATIO_RANGE[2])
+        sprintf("low-SE samples scatter %.1fx more than the model allows, relative to high-SE ones: they get too much weight", rr[i])
+      else if (fin(rr[i]) && rr[i] < WEIGHTS_RESID_RATIO_RANGE[1])
+        sprintf("high-SE samples scatter %.1fx more than the model allows, relative to low-SE ones: they get too much weight", 1 / rr[i]),
+      if (fin(rs[i]) && (rs[i] < WEIGHTS_RESID_SD_RANGE[1] || rs[i] > WEIGHTS_RESID_SD_RANGE[2]))
+        sprintf("residual scatter %.2f times what the model expects", rs[i]),
+      if (has_diag && !any(fin(c(rh[i], dv[i], es[i], ir[i], rs[i], rr[i]))))
+        "no diagnostics stored (fitted before they were recorded)")
     out[i] <- paste(notes, collapse = "; ")
   }
   out

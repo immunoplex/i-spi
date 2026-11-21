@@ -3,7 +3,7 @@ id: qc.precision_weights.additive_options
 title: Additive model options
 audience: user
 category: compute-decision
-see_also: [qc.precision_weights.data_check, qc.precision_weights.model_choice, glossary.tau, glossary.kappa, glossary.identifiability, glossary.censoring, glossary.reliability]
+see_also: [qc.precision_weights.data_check, qc.precision_weights.model_choice, glossary.weights_fit_diagnostics, glossary.tau, glossary.kappa, glossary.identifiability, glossary.censoring, glossary.reliability]
 references:
   - text: "curveRweights vignette \"Measurement error in assay data\", sections on censoring, repeated measures and identifiability"
     url: "https://immunoplex.github.io/curveRweights/articles/measurement-error.html#repeated"
@@ -31,6 +31,13 @@ The defaults come from **Check the data**; change them only for a reason.
 * **Advanced: estimate beta1** (off): beta1 = 1 is the theoretical value.
   Estimating it as well needs many samples over a wide range of `se`, and is
   disabled when the spread is narrow.
+* **Iterations** (Advanced MCMC settings, both models): 4000 per chain
+  including 1000 of warm-up, as every weights job has used so far. The run-time
+  estimate above Submit follows the setting: run time grows in proportion to
+  iterations x chains, and censoring makes each additive fit about three times
+  slower. Raise the iterations when a fit's check reports a sampling problem
+  (see [[glossary.weights_fit_diagnostics|fit diagnostics]]); fixing kappa at 1
+  is the other remedy, but it moves any extra measurement error into tau.
 
 The options used are stored with each fit (`fit_options`) and included in the
 download bundles.

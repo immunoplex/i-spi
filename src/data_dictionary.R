@@ -125,7 +125,8 @@ CALIB_TABLE_DOCS <- list(
     grain = "one row per multiplate_group_id / method",
     keys  = c("method", "design_cols", "scale_predictor", "phi", "beta1",
               "interpretation", "n_fit", "n_eff", "weight_ratio", "model", "tau", "kappa",
-              "reliability", "n_censored", "fit_options")),
+              "reliability", "n_censored", "fit_options", "rhat_max", "n_divergent",
+              "ess_min", "ident_sd_ratio", "resid_sd", "resid_sd_ratio")),
   control_reference = list(
     group = "Results", label = "Control reference values",
     what  = "Expected values for controls (assigned or established), with limits and the period they apply to. Rows for this study and project-wide rows (study_accession = '__none__') are shown; compare them with Back-calculated controls. Needs i-spi-compute 1.1.",

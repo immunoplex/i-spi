@@ -3,7 +3,7 @@ id: qc.precision_weights.model_choice
 title: Which precision-weights model?
 audience: user
 category: compute-decision
-see_also: [qc.precision_weights.data_check, qc.precision_weights.additive_options, qc.precision_weights.method, glossary.tau, glossary.reliability, glossary.precision_weight]
+see_also: [qc.precision_weights.data_check, qc.precision_weights.additive_options, glossary.weights_fit_diagnostics, qc.precision_weights.method, glossary.tau, glossary.reliability, glossary.precision_weight]
 references:
   - text: "curveRweights vignette \"Measurement error in assay data\", section \"Additive versus multiplicative\""
     url: "https://immunoplex.github.io/curveRweights/articles/measurement-error.html#vs"
@@ -32,6 +32,12 @@ up a sample's variance.
 
 The **Check the data** step above the choice lists the facts that matter and
 gives a one-line recommendation. It never switches the model for you.
+
+**After a run**, both models are judged the same way: the fit table's check
+column reports [[glossary.weights_fit_diagnostics|sampling problems and a
+residual check]] for every group. If the multiplicative fit says *low-SE
+samples get too much weight*, the additive model is the better choice for that
+experiment.
 
 ::: more
 **What a run does.** Each method (Bayesian, frequentist) keeps one set of

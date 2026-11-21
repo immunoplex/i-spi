@@ -15,8 +15,10 @@ facts that decide which model and options make sense. A tick means the data
 support the corresponding option; `!` means something limits it.
 
 * **Samples**: how many calibrated samples, in how many curve groups. Each curve
-  group is fitted separately: about 45 seconds each, about 2.5 minutes when
-  out-of-range samples are censored.
+  group is fitted separately. The run-time estimate above Submit uses this
+  count: at the default 4000 iterations x 4 chains, about 40 seconds per group
+  for the multiplicative model, 50 seconds for the additive model, and 2.5
+  minutes when out-of-range samples are censored.
 * **People**: how many people, and how many time points each has. Several
   samples per person turn on the person term (see
   [[qc.precision_weights.additive_options|additive options]]).

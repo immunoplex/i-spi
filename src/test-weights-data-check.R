@@ -123,12 +123,35 @@ test_that("review line describes the job in words", {
                            list(use_censoring = TRUE, patient_effect = TRUE, fix_kappa = FALSE),
                            n_groups = 22, stored_models = "multiplicative")
   expect_match(r, "^Additive model \\(out-of-range samples censored, repeated samples per person accounted for, kappa estimated\\)")
-  expect_match(r, "Bayesian calibration, 22 curve groups, about 55 min")   # censoring: ~150 s per group
-  r2 <- weights_review_text("additive", "bayesian", list(use_censoring = FALSE), n_groups = 22)
-  expect_match(r2, "about 16 min")
+  expect_match(r, "Bayesian calibration, 22 curve groups\\. ")   # run time is its own line now
   expect_match(r, "Replaces: multiplicative weights for this method\\.$")
   expect_match(weights_review_text("multiplicative", "frequentist", n_groups = 1),
-               "^Multiplicative model, frequentist calibration, 1 curve group, about 1 min\\. Replaces: nothing\\.$")
+               "^Multiplicative model, frequentist calibration, 1 curve group\\. Replaces: nothing\\.$")
+})
+
+test_that("run-time estimate: both models, tied to iterations x chains", {
+  # calibrated at 4000 x 4 on the 2026-11 sim runs
+  expect_equal(weights_runtime_minutes("multiplicative", 22), 15L)            # 22 x 40 s
+  expect_equal(weights_runtime_minutes("additive", 22), 18L)                  # 22 x 48 s
+  expect_equal(weights_runtime_minutes("additive", 23, use_censoring = TRUE), 56L)  # 23 x 145 s
+  # proportional to iterations and to chains
+  expect_equal(weights_runtime_minutes("additive", 23, iter = 8000, use_censoring = TRUE), 111L)
+  expect_equal(weights_runtime_minutes("additive", 23, iter = 2000, use_censoring = TRUE), 28L)
+  expect_equal(weights_runtime_minutes("multiplicative", 22, chains = 2), 7L)
+  # censoring is an additive-only cost
+  expect_equal(weights_runtime_minutes("multiplicative", 22, use_censoring = TRUE), 15L)
+  # bad or missing inputs fall back to the defaults; no groups -> NA
+  expect_equal(weights_runtime_minutes("multiplicative", 22, iter = NA, chains = ""), 15L)
+  expect_true(is.na(weights_runtime_minutes("additive", 0)))
+  expect_true(is.na(weights_runtime_minutes("additive", NA)))
+  expect_equal(weights_runtime_minutes("multiplicative", 1), 1L)              # never 0
+  t <- weights_runtime_text("additive", 23, iter = 8000, use_censoring = TRUE)
+  expect_match(t, "^Estimated run time: about 1\\.8 h \\(23 curve groups")
+  expect_match(t, "about 4\\.8 min each at 8,000 iterations")
+  expect_match(t, "with censoring")
+  expect_match(weights_runtime_text("multiplicative", 22),
+               "about 15 min \\(22 curve groups .* about 40 s each at 4,000 iterations .* 4 chains\\)")
+  expect_match(weights_runtime_text("multiplicative", 0), "select curves")
 })
 
 test_that("job params: defaults send nothing; changes send only what differs", {

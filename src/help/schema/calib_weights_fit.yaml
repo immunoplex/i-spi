@@ -37,7 +37,13 @@ columns:
   - {name: fix_beta1, type: boolean, description: "TRUE when the exponent beta1 was fixed at 1", fk: ""}
   - {name: n_censored, type: integer, description: "Number of censored samples in the fit", fk: ""}
   - {name: identifiability, type: text, description: "Whether tau and kappa could be separated for this group", fk: ""}
-  - {name: fit_options, type: text, description: "JSON of the options the additive fit used (use_censoring, patient_col, sample_col, plate_col, fix_beta1, fix_kappa); NULL for multiplicative rows and rows written before calib schema 0.7.1", fk: ""}
+  - {name: fit_options, type: text, description: "JSON of the options the additive fit used (use_censoring, patient_col, plate_col, fix_beta1, fix_kappa); NULL for multiplicative rows and rows written before calib schema 0.7.1", fk: ""}
+  - {name: rhat_max, type: "double precision", description: "Both models: largest R-hat over the sampled parameters; above 1.05 the chains did not converge", fk: ""}
+  - {name: n_divergent, type: integer, description: "Both models: divergent transitions after warm-up; any is a warning sign", fk: ""}
+  - {name: ess_min, type: "double precision", description: "Both models: lowest effective sample size (bulk or tail); below about 400 the intervals are unreliable", fk: ""}
+  - {name: ident_sd_ratio, type: "double precision", description: "Both models: posterior SD / prior SD of the key scale parameter (additive: log kappa; multiplicative: beta1). Near 1 the prior set it; above 1 suggests a sampling problem. NULL when fixed", fk: ""}
+  - {name: resid_sd, type: "double precision", description: "Both models: robust SD of the scaled residuals over quantified samples; about 1 when the variance model fits", fk: ""}
+  - {name: resid_sd_ratio, type: "double precision", description: "Both models: scaled-residual SD in the lowest-se fifth / highest-se fifth. Above 1 the low-se samples get too much weight; below 1 the high-se samples do", fk: ""}
 indexes:
   - {name: calib_weights_fit_pkey, column: multiplate_group_id, type: btree}
   - {name: calib_weights_fit_pkey, column: method, type: btree}

@@ -264,6 +264,39 @@ test_that("fit check flags kappa fixed, weakly identified, or far from 1", {
   expect_false("check" %in% names(weights_fit_table(mult_fit(TRUE))))
 })
 
+test_that("with stored diagnostics, every model gets the check column and the same diagnostics", {
+  diag <- function(d, rh = 1.003, dv = 0L, es = 1800, ir = 0.2, rs = 1.0, rr = 1.05) {
+    d$rhat_max <- rh; d$n_divergent <- dv; d$ess_min <- es
+    d$ident_sd_ratio <- ir; d$resid_sd <- rs; d$resid_sd_ratio <- rr; d
+  }
+  m <- mult_fit(TRUE)
+  tab <- weights_fit_table(diag(m))
+  expect_true("check" %in% names(tab))
+  expect_true(all(WEIGHTS_DIAG_COLS %in% names(tab)))
+  expect_false("model" %in% names(tab))           # still multiplicative-only data
+  expect_equal(tab$check, "")                     # clean fit: nothing to flag
+  # multiplicative flags
+  d <- rbind(diag(m, rh = 1.08, dv = 12L, es = 150), diag(m, ir = 0.9),
+             diag(m, rr = 2.1), diag(m, rr = 0.5), diag(m, rs = 1.6), diag(m, ir = 1.1))
+  ck <- weights_fit_check(d)
+  expect_match(ck[1], "^sampling did not converge \\(R-hat 1\\.08, 12 divergent, ESS 150\\): do not rely on these weights; rerun with more iterations$")
+  expect_match(ck[2], "^beta1 weakly identified")
+  expect_match(ck[3], "^low-SE samples scatter 2\\.1x more .*: they get too much weight$")
+  expect_match(ck[4], "^high-SE samples scatter 2\\.0x more")
+  expect_match(ck[5], "^residual scatter 1\\.60 times what the model expects$")
+  expect_match(ck[6], "^beta1 posterior wider than its prior \\(ratio 1\\.10\\): sampling problem likely$")
+  # additive: same sampling flags, and the kappa remedy is offered
+  a <- diag(add_fit(), rh = 1.2, ir = 1.15)
+  ca <- weights_fit_check(a)
+  expect_match(ca, "rerun with more iterations or with kappa fixed at 1")
+  expect_match(ca, "kappa posterior wider than its prior \\(ratio 1\\.15\\)")
+  # rows written before the diagnostics were stored say so
+  old <- diag(m, rh = NA, dv = NA, es = NA, ir = NA, rs = NA, rr = NA)
+  expect_equal(weights_fit_check(old), "no diagnostics stored (fitted before they were recorded)")
+  # rounding
+  expect_equal(weights_fit_table(diag(m, rh = 1.00312, es = 1834.6))$ess_min, 1835)
+})
+
 test_that("additive caption says what tau is and that reliability is method-specific", {
   cap <- weights_model_caption("additive")
   expect_match(cap, "within a person when the person term is used", fixed = TRUE)

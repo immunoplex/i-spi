@@ -107,8 +107,11 @@ stdCurveWeightsComputeUI <- function(id) {
           shiny::tags$summary("Advanced MCMC settings"),
           shiny::tags$div(style = "margin-top:6px;",
             shiny::numericInput(ns("chains"), "Chains", DEFAULT_WEIGHTS_CHAINS, min = 1, max = 16),
-            shiny::numericInput(ns("warmup"), "Warmup iterations", DEFAULT_WEIGHTS_WARMUP, min = 50),
-            shiny::numericInput(ns("iter"), "Total iterations", DEFAULT_WEIGHTS_ITER, min = 100),
+            # ranges as the compute API accepts them (iter 1000-20000, warm-up >= 100)
+            shiny::numericInput(ns("warmup"), "Warmup iterations", DEFAULT_WEIGHTS_WARMUP,
+                                min = 100, max = 20000, step = 500),
+            shiny::numericInput(ns("iter"), "Total iterations (including warm-up)", DEFAULT_WEIGHTS_ITER,
+                                min = 1000, max = 20000, step = 1000),
             shiny::numericInput(ns("adapt_delta"), "Adapt delta", DEFAULT_WEIGHTS_ADAPT_DELTA,
                                 min = 0.5, max = 0.999999, step = 0.01),
             shiny::numericInput(ns("seed"), "Seed (blank = server default)",
@@ -116,12 +119,16 @@ stdCurveWeightsComputeUI <- function(id) {
             shiny::tags$small(style = "color:#787878;",
               "Apply to BOTH Bayesian and Frequentist weighting equally -- the ",
               "weights fit is always its own Stan run, regardless of which ",
-              "calib_samples method is being read.")
+              "calib_samples method is being read. They apply to both models. ",
+              "Run time grows in proportion to iterations \u00d7 chains (estimate ",
+              "above Submit). If a fit's check reports a sampling problem, rerun ",
+              "with more iterations (e.g. 8000).")
           )
         ),
 
         shiny::hr(),
         weights_review_ui(ns),
+        shiny::uiOutput(ns("run_estimate")),
         shiny::uiOutput(ns("submit_ui")),
         shiny::actionButton(ns("refresh_status"), "Check now",
                             class = "btn-default btn-sm", style = "margin-left:6px;"),
@@ -638,6 +645,30 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       shiny::tags$p(style = "font-size:90%;color:#333;",
         weights_review_text(model, input$weight_method, opts,
                             n_groups = ck$n_groups, stored_models = ck$stored_models))
+    })
+
+    # --- run-time estimate (both models, flag on or off) ---------------------
+    # Number of curve groups the job would fit: one weights fit per group.
+    scope_n_groups <- shiny::reactive({
+      design_dirty()
+      s <- cur(); shiny::req(s$study, s$experiment)
+      tgt <- cur_target()
+      b <- tryCatch(fetch_curve_batch(pool, s$study, s$experiment, s$project_id,
+                                      tgt$feature, tgt$antigen),
+                    error = function(e) NULL)
+      if (is.null(b) || !nrow(b)) 0L else length(unique(b$multiplate_group_id))
+    })
+
+    output$run_estimate <- shiny::renderUI({
+      additive <- additive_weights_enabled() && identical(input$weights_model, "additive")
+      cens <- FALSE
+      if (additive) {
+        ck <- tryCatch(data_check(), error = function(e) NULL)
+        cens <- isTRUE(input$use_censoring) && isTRUE(ck$available$use_censoring)
+      }
+      shiny::tags$p(style = "font-size:90%;color:#333;",
+        weights_runtime_text(if (additive) "additive" else "multiplicative",
+                             scope_n_groups(), input$iter, input$chains, cens))
     })
 
     # --- approval gate + submit ---------------------------------------------

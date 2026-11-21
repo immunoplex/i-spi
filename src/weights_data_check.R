@@ -22,11 +22,17 @@ WEIGHTS_SE_SPREAD_NARROW <- 2
 WEIGHTS_MIN_QUANTIFIED <- 100
 
 # Approximate run time of one weights fit (one curve group, one method) on the
-# compute worker, from the 2026-11 runs: about 45 s without censored samples
-# (MADI_P3_GAPS IgG1: 22 groups in 14-18 min) and about 150 s with them
-# (MADI_01 IgG1, 35% censored: 23 groups in 57 min).
-WEIGHTS_SECONDS_PER_GROUP <- 45
-WEIGHTS_SECONDS_PER_GROUP_CENSORED <- 150
+# compute worker at the default 4000 iterations x 4 chains, from the 2026-11
+# sim runs (wall time / groups, so the worker's parallelism is included):
+#   multiplicative, MADI_P3_GAPS IgG1: 22 groups in 13.8-14.9 min  -> ~40 s
+#   additive, no censoring, same data: 22 groups in 16.9-18.0 min  -> ~48 s
+#   additive, 35% censored, MADI_01 IgG1: 23 groups in 53-57 min   -> ~145 s
+# Run time is taken as proportional to iterations x chains (warm-up included);
+# that scaling is an assumption, not yet measured.
+WEIGHTS_SECONDS_PER_GROUP_MULT <- 40
+WEIGHTS_SECONDS_PER_GROUP <- 48
+WEIGHTS_SECONDS_PER_GROUP_CENSORED <- 145
+WEIGHTS_RUNTIME_REF_DRAWS <- 4000 * 4
 
 .wdc_missing_id <- function(x) {
   x <- as.character(x)
@@ -183,13 +189,43 @@ weights_data_check <- function(cs, stored = NULL) {
 }
 
 # Plain-language line shown above the Submit button.
+# Seconds per curve group for a model and MCMC length (see the constants above).
+weights_seconds_per_group <- function(model, iter = 4000, chains = 4, use_censoring = FALSE) {
+  base <- if (!identical(model, "additive")) WEIGHTS_SECONDS_PER_GROUP_MULT
+          else if (isTRUE(use_censoring)) WEIGHTS_SECONDS_PER_GROUP_CENSORED
+          else WEIGHTS_SECONDS_PER_GROUP
+  iter <- suppressWarnings(as.numeric(iter)); chains <- suppressWarnings(as.numeric(chains))
+  if (!is.finite(iter) || iter <= 0) iter <- 4000
+  if (!is.finite(chains) || chains <= 0) chains <- 4
+  base * iter * chains / WEIGHTS_RUNTIME_REF_DRAWS
+}
+
+# Whole minutes for n_groups, at least 1; NA when the group count is unknown.
+weights_runtime_minutes <- function(model, n_groups, iter = 4000, chains = 4,
+                                    use_censoring = FALSE) {
+  if (length(n_groups) != 1 || !is.finite(n_groups) || n_groups <= 0) return(NA_integer_)
+  max(1L, as.integer(round(n_groups * weights_seconds_per_group(model, iter, chains, use_censoring) / 60)))
+}
+
+# The run-time line shown above Submit, for both models.
+weights_runtime_text <- function(model, n_groups, iter = 4000, chains = 4,
+                                 use_censoring = FALSE) {
+  mins <- weights_runtime_minutes(model, n_groups, iter, chains, use_censoring)
+  if (is.na(mins)) return("Estimated run time: select curves to see it.")
+  s <- weights_seconds_per_group(model, iter, chains, use_censoring)
+  per <- if (s < 90) sprintf("%d s", as.integer(round(s))) else sprintf("%.1f min", s / 60)
+  fmt_min <- function(m) if (m < 90) sprintf("%d min", m) else sprintf("%.1f h", m / 60)
+  paste0("Estimated run time: about ", fmt_min(mins), " (",
+         n_groups, " curve group", if (n_groups == 1) "" else "s", " \u00d7 about ", per,
+         " each at ", format(as.integer(iter), big.mark = ","), " iterations \u00d7 ",
+         as.integer(chains), " chains",
+         if (identical(model, "additive") && isTRUE(use_censoring)) ", with censoring" else "",
+         "). It grows in proportion to iterations \u00d7 chains.")
+}
+
 weights_review_text <- function(model, method, opts = list(), n_groups = NA_integer_,
                                 stored_models = character(0)) {
   meth <- if (identical(method, "bayesian")) "Bayesian" else "frequentist"
-  per_group <- if (identical(model, "additive") && isTRUE(opts$use_censoring))
-    WEIGHTS_SECONDS_PER_GROUP_CENSORED else WEIGHTS_SECONDS_PER_GROUP
-  mins <- if (is.finite(n_groups) && n_groups > 0)
-    max(1L, as.integer(round(n_groups * per_group / 60))) else NA_integer_
   what <- if (identical(model, "additive")) {
     parts <- c(
       if (isTRUE(opts$use_censoring)) "out-of-range samples censored" else "no censoring",
@@ -200,7 +236,6 @@ weights_review_text <- function(model, method, opts = list(), n_groups = NA_inte
   } else "Multiplicative model"
   paste0(what, ", ", meth, " calibration",
          if (is.finite(n_groups)) sprintf(", %d curve group%s", n_groups, if (n_groups == 1) "" else "s") else "",
-         if (!is.na(mins)) sprintf(", about %d min", mins) else "",
          ". Replaces: ",
          if (length(stored_models)) paste(stored_models, "weights for this method") else "nothing",
          ".")

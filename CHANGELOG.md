@@ -27,14 +27,26 @@ default) nothing changes.
      fixed at 1, and under Advanced beta1) take their
      defaults from the data check; options the data cannot support are greyed
      out with the reason.
-  3. *Review and submit*: the job described in words, with the expected run
-     time and what it replaces.
+  3. *Review and submit*: the job described in words and what it replaces.
 - **Help**: new pages *Which precision-weights model?*, *Check the data* and
   *Additive model options*; glossary entries *tau*, *kappa* and
   *identifiability*. Each links to the section of the curveRweights guide that
   goes deeper.
-- **Results**: the weights-fit table has a *check* column for additive fits
-  (kappa fixed, weakly identified, or outside 0.5 to 2). The download bundles'
+- **Run-time estimate above Submit, for both models** (also with the additive
+  model switched off): curve groups x seconds per group, scaled by the
+  iterations x chains of the Advanced MCMC settings and by censoring. Calibrated
+  on the 2026-11 sim runs at 4000 x 4 (about 40 s per group multiplicative,
+  48 s additive, 145 s additive with censoring). The iteration inputs now accept
+  what the compute API accepts (1000 to 20000; warm-up at least 100).
+- **Results: the same diagnostics for both models.** With calib schema 0.7.1
+  the weights-fit table shows `rhat_max`, `n_divergent`, `ess_min`,
+  `ident_sd_ratio`, `resid_sd` and `resid_sd_ratio` for every fit, and the
+  *check* column covers multiplicative rows too: sampling did not converge,
+  kappa or beta1 weakly identified or wider than its prior, kappa fixed or
+  outside 0.5 to 2, a variance model that gives low-SE (or high-SE) samples too
+  much weight, and fits made before the diagnostics were stored. A
+  multiplicative-only table without these columns (older schema) is unchanged.
+  New glossary entry *Precision-weights fit diagnostics*. The download bundles'
   `weights_meta` carries the fit options.
 
 ### Changed
