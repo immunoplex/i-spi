@@ -15,7 +15,8 @@ facts that decide which model and options make sense. A tick means the data
 support the corresponding option; `!` means something limits it.
 
 * **Samples**: how many calibrated samples, in how many curve groups. Each curve
-  group is fitted separately, about 45 seconds each.
+  group is fitted separately: about 45 seconds each, about 2.5 minutes when
+  out-of-range samples are censored.
 * **People**: how many people, and how many time points each has. Several
   samples per person turn on the person term (see
   [[qc.precision_weights.additive_options|additive options]]).
@@ -28,11 +29,17 @@ support the corresponding option; `!` means something limits it.
   point) was read at several dilutions or on several plates. Those readings
   are counted as separate samples, which overstates the information they carry
   (see [[qc.precision_weights.additive_options|additive options]]).
-* **SE spread**: the ratio of the 90th to the 10th percentile of the samples'
-  `se`. The additive model can tell real variation from measurement error only
-  because the `se` differs between samples; below about 2 the two are hard to
-  separate (see [[glossary.identifiability|identifiability]]) and fixing kappa
-  at 1 is proposed.
+* **SE spread**: for each curve group, the ratio of the 90th to the 10th
+  percentile of the quantified samples' `se`, with the number of quantified
+  samples. The additive model can tell real variation from measurement error
+  only because the `se` differs between samples (see
+  [[glossary.identifiability|identifiability]]). Narrow groups (below about 2)
+  and groups with few quantified samples (under about 100) are where kappa is
+  most often weakly identified; when most groups are narrow, fixing kappa at 1
+  is proposed. This is a rough guide: in one experiment kappa was weakly
+  identified in half the groups with a spread below 3 and in a quarter of
+  those above it. Each fit says whether kappa was identified, in the *check*
+  column of the fit table, and that is the test to trust.
 * **Stored weights**: what a new run would replace.
 
 ::: more

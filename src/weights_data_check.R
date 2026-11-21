@@ -10,13 +10,23 @@
 # (#identifiability, #censoring, #repeated).
 # =============================================================================
 
-# SE spread (P90 / P10 of se_concentration) below which tau and kappa are hard
-# to separate: kappa is then weakly identified and fixing it at 1 is offered.
+# SE spread (P90 / P10 of se_concentration over the quantified samples of one
+# curve group) below which tau and kappa are hard to separate. A rough guide:
+# in MADI_01 IgG1 (2026-11-20) kappa was weakly identified in 6 of 12 groups
+# with a spread below 3 and in 3 of 11 above it; groups with few quantified
+# samples were weak whatever their spread. Each fit's own identifiability note
+# is the real test (check column of the fit table).
 WEIGHTS_SE_SPREAD_NARROW <- 2
+# Fewer quantified samples than this in a curve group: tau and kappa rest on
+# little data.
+WEIGHTS_MIN_QUANTIFIED <- 100
 
 # Approximate run time of one weights fit (one curve group, one method) on the
-# compute worker, from the 2026-11 runs (22 groups in 14-18 minutes).
+# compute worker, from the 2026-11 runs: about 45 s without censored samples
+# (MADI_P3_GAPS IgG1: 22 groups in 14-18 min) and about 150 s with them
+# (MADI_01 IgG1, 35% censored: 23 groups in 57 min).
 WEIGHTS_SECONDS_PER_GROUP <- 45
+WEIGHTS_SECONDS_PER_GROUP_CENSORED <- 150
 
 .wdc_missing_id <- function(x) {
   x <- as.character(x)
@@ -52,12 +62,25 @@ weights_data_check <- function(cs, stored = NULL) {
   n_left <- sum(ct %in% "left"); n_right <- sum(ct %in% "right"); n_int <- sum(ct %in% "interval")
   n_cens <- n_left + n_right + n_int
 
-  # ---- spread of the measurement SE -----------------------------------------
-  se <- if (!empty && "se_concentration" %in% names(cs)) suppressWarnings(as.numeric(cs$se_concentration)) else numeric(0)
-  se <- se[is.finite(se) & se > 0]
-  se_spread <- if (length(se) >= 10) {
-    q <- stats::quantile(se, c(0.1, 0.9), names = FALSE); q[2] / q[1]
-  } else NA_real_
+  # ---- spread of the measurement SE, per curve group ------------------------
+  # Each curve group is fitted on its own, so tau and kappa are separated (or
+  # not) group by group: a spread over the whole selection hides narrow groups.
+  # Quantified samples only (censored ones do not inform the split).
+  se_all <- if (!empty && "se_concentration" %in% names(cs)) suppressWarnings(as.numeric(cs$se_concentration)) else rep(NA_real_, n)
+  quant <- is.finite(se_all) & se_all > 0 & !(ct %in% c("left", "right", "interval"))
+  g_stats <- lapply(split(se_all[quant], grp[quant]), function(s) {
+    c(spread = if (length(s) >= 10) {
+        q <- stats::quantile(s, c(0.1, 0.9), names = FALSE); q[2] / q[1]
+      } else NA_real_,
+      n = length(s))
+  })
+  g_spread <- vapply(g_stats, `[[`, numeric(1), "spread")
+  g_n      <- vapply(g_stats, `[[`, numeric(1), "n")
+  se_spread <- if (any(is.finite(g_spread))) stats::median(g_spread, na.rm = TRUE) else NA_real_
+  se_spread_min <- if (any(is.finite(g_spread))) min(g_spread, na.rm = TRUE) else NA_real_
+  n_narrow <- sum(is.finite(g_spread) & g_spread < WEIGHTS_SE_SPREAD_NARROW)
+  min_quant <- if (length(g_n)) as.integer(min(g_n)) else 0L
+  n_few <- sum(g_n < WEIGHTS_MIN_QUANTIFIED)
   se_narrow <- is.finite(se_spread) && se_spread < WEIGHTS_SE_SPREAD_NARROW
 
   # ---- facts table (what the panel lists) -----------------------------------
@@ -65,7 +88,7 @@ weights_data_check <- function(cs, stored = NULL) {
   facts <- data.frame(
     item = c("samples", "people", "censoring", "dilutions", "se_spread", "stored"),
     label = c("Samples", "People", "Out of range", "Readings per sample",
-              "SE spread (P90/P10)", "Stored weights"),
+              "SE spread (P90/P10, per curve group)", "Stored weights"),
     value = c(
       sprintf("%s in %d curve group%s", format(n, big.mark = ","), n_groups,
               if (n_groups == 1) "" else "s"),
@@ -80,14 +103,18 @@ weights_data_check <- function(cs, stored = NULL) {
       if (!has_people) "unknown (needs patient IDs)"
       else if (per_sample > 1) sprintf("up to %d (several dilutions or plates)", per_sample)
       else "1",
-      if (is.finite(se_spread)) sprintf("%.1f", se_spread) else "too few samples",
+      if (!is.finite(se_spread)) "too few samples"
+      else if (length(g_spread) == 1) sprintf("%.1f (%d quantified samples)", se_spread, min_quant)
+      else sprintf("median %.1f, lowest %.1f; %d of %d groups below %g; fewest quantified samples in a group: %d",
+                   se_spread, se_spread_min, n_narrow, length(g_spread),
+                   WEIGHTS_SE_SPREAD_NARROW, min_quant),
       .wdc_stored_text(stored)),
     status = c(
       if (n) "ok" else "bad",
       if (has_people) "ok" else "info",
       if (!cens_recorded) "warn" else "ok",
       if (!has_people) "info" else if (per_sample > 1) "warn" else "ok",
-      if (!is.finite(se_spread)) "warn" else if (se_narrow) "warn" else "ok",
+      if (!is.finite(se_spread) || n_narrow > 0 || n_few > 0) "warn" else "ok",
       if (is.null(stored) || !nrow(stored)) "info" else "warn"),
     note = c(
       "",
@@ -97,8 +124,12 @@ weights_data_check <- function(cs, stored = NULL) {
       if (has_people && per_sample > 1)
         "Each reading counts as a separate sample, which overstates the information they carry; a sample term is not available yet."
       else "",
-      if (se_narrow) "The SE barely varies between samples, so tau and kappa are hard to separate. Consider fixing kappa at 1."
-      else if (!is.finite(se_spread)) "Not enough samples with an SE to judge." else "Wide enough to separate tau and kappa.",
+      if (!is.finite(se_spread)) "Not enough samples with an SE to judge."
+      else paste0(
+        if (se_narrow) "In most groups the SE barely varies, so tau and kappa are hard to separate: consider fixing kappa at 1. "
+        else if (n_narrow > 0 || n_few > 0) "Some groups have a narrow spread or few quantified samples; kappa may be weakly identified there. "
+        else "",
+        "A rough guide only: each fit reports whether kappa was identified (check column of the fit table)."),
       if (is.null(stored) || !nrow(stored)) "" else "A new run replaces these weights."),
     help = c("", "repeated", "censoring", "repeated", "identifiability", ""),
     stringsAsFactors = FALSE)
@@ -134,7 +165,9 @@ weights_data_check <- function(cs, stored = NULL) {
       "To reproduce an analysis made with the stored weights, keep the multiplicative model.")
 
   list(facts = facts, available = available, defaults = defaults,
-       readings_per_sample = per_sample,
+       readings_per_sample = per_sample, n_censored = n_cens,
+       se_spread_min = se_spread_min, n_groups_narrow = n_narrow,
+       min_quantified = min_quant,
        why_unavailable = why_unavailable, recommendation = recommendation,
        n_samples = n, n_groups = n_groups, se_spread = se_spread,
        stored_models = stored_models)
@@ -153,8 +186,10 @@ weights_data_check <- function(cs, stored = NULL) {
 weights_review_text <- function(model, method, opts = list(), n_groups = NA_integer_,
                                 stored_models = character(0)) {
   meth <- if (identical(method, "bayesian")) "Bayesian" else "frequentist"
+  per_group <- if (identical(model, "additive") && isTRUE(opts$use_censoring))
+    WEIGHTS_SECONDS_PER_GROUP_CENSORED else WEIGHTS_SECONDS_PER_GROUP
   mins <- if (is.finite(n_groups) && n_groups > 0)
-    max(1L, as.integer(round(n_groups * WEIGHTS_SECONDS_PER_GROUP / 60))) else NA_integer_
+    max(1L, as.integer(round(n_groups * per_group / 60))) else NA_integer_
   what <- if (identical(model, "additive")) {
     parts <- c(
       if (isTRUE(opts$use_censoring)) "out-of-range samples censored" else "no censoring",

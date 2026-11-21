@@ -95,6 +95,22 @@ test_that("stored weights are reported and change the recommendation", {
   expect_equal(weights_data_check(mk())$facts$value[6], "none")
 })
 
+test_that("SE spread is judged per curve group, on quantified samples", {
+  a <- mk(se_sd = 0.7, seed = 2)                       # wide
+  b <- mk(se_sd = 0.05, seed = 3); b$antigen <- "FHA"  # narrow
+  ck <- weights_data_check(rbind(a, b))
+  expect_equal(ck$n_groups, 2L)
+  expect_equal(ck$n_groups_narrow, 1L)
+  v <- ck$facts$value[ck$facts$item == "se_spread"]
+  expect_match(v, "^median .*, lowest 1\\.[0-9]; 1 of 2 groups below 2; fewest quantified samples in a group: 90$")
+  expect_equal(ck$facts$status[ck$facts$item == "se_spread"], "warn")
+  expect_match(ck$facts$note[ck$facts$item == "se_spread"], "Some groups have a narrow spread")
+  expect_match(ck$facts$note[ck$facts$item == "se_spread"], "rough guide")
+  # censored samples do not count toward the spread or the quantified count
+  cz <- mk(censor = c("none", "left", "left")); ckz <- weights_data_check(cz)
+  expect_equal(ckz$min_quantified, 30L)
+})
+
 test_that("empty selection does not error", {
   ck <- weights_data_check(mk()[0, ])
   expect_equal(ck$n_samples, 0L)
@@ -107,7 +123,9 @@ test_that("review line describes the job in words", {
                            list(use_censoring = TRUE, patient_effect = TRUE, fix_kappa = FALSE),
                            n_groups = 22, stored_models = "multiplicative")
   expect_match(r, "^Additive model \\(out-of-range samples censored, repeated samples per person accounted for, kappa estimated\\)")
-  expect_match(r, "Bayesian calibration, 22 curve groups, about 16 min")
+  expect_match(r, "Bayesian calibration, 22 curve groups, about 55 min")   # censoring: ~150 s per group
+  r2 <- weights_review_text("additive", "bayesian", list(use_censoring = FALSE), n_groups = 22)
+  expect_match(r2, "about 16 min")
   expect_match(r, "Replaces: multiplicative weights for this method\\.$")
   expect_match(weights_review_text("multiplicative", "frequentist", n_groups = 1),
                "^Multiplicative model, frequentist calibration, 1 curve group, about 1 min\\. Replaces: nothing\\.$")
