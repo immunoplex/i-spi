@@ -5,11 +5,14 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
-## Unreleased — Choosing the precision-weights model
+## v1.2.0 — Choosing the precision-weights model; the same diagnostics for both models
 
-Needs i-spi-compute with curveRcore 0.7.1 / curveRweights 0.3.1 and migration 012
-before the additive options are used. With the additive model switched off (the
-default) nothing changes.
+Needs i-spi-compute 1.2.0 (curveRcore 0.7.1, curveRweights 0.3.1) and migration
+012, both in place since 2026-11-22. With the additive model switched off (the
+default) the model choice stays hidden, but two things are visible to everyone:
+the run-time estimate above Submit, and the weights-fit table's diagnostics and
+*check* column. Fits computed before 1.2.0 show "no diagnostics stored" there
+until they are rerun.
 
 ### Added
 - **Switch per deployment.** The additive weights model can be enabled with the
