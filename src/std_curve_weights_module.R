@@ -107,8 +107,11 @@ stdCurveWeightsComputeUI <- function(id) {
           shiny::tags$summary("Advanced MCMC settings"),
           shiny::tags$div(style = "margin-top:6px;",
             shiny::numericInput(ns("chains"), "Chains", DEFAULT_WEIGHTS_CHAINS, min = 1, max = 16),
-            shiny::numericInput(ns("warmup"), "Warmup iterations", DEFAULT_WEIGHTS_WARMUP, min = 50),
-            shiny::numericInput(ns("iter"), "Total iterations", DEFAULT_WEIGHTS_ITER, min = 100),
+            # ranges as the compute API accepts them (iter 1000-20000, warm-up >= 100)
+            shiny::numericInput(ns("warmup"), "Warmup iterations", DEFAULT_WEIGHTS_WARMUP,
+                                min = 100, max = 20000, step = 500),
+            shiny::numericInput(ns("iter"), "Total iterations (including warm-up)", DEFAULT_WEIGHTS_ITER,
+                                min = 1000, max = 20000, step = 1000),
             shiny::numericInput(ns("adapt_delta"), "Adapt delta", DEFAULT_WEIGHTS_ADAPT_DELTA,
                                 min = 0.5, max = 0.999999, step = 0.01),
             shiny::numericInput(ns("seed"), "Seed (blank = server default)",
@@ -116,11 +119,16 @@ stdCurveWeightsComputeUI <- function(id) {
             shiny::tags$small(style = "color:#787878;",
               "Apply to BOTH Bayesian and Frequentist weighting equally -- the ",
               "weights fit is always its own Stan run, regardless of which ",
-              "calib_samples method is being read.")
+              "calib_samples method is being read. They apply to both models. ",
+              "Run time grows in proportion to iterations \u00d7 chains (estimate ",
+              "above Submit). If a fit's check reports a sampling problem, rerun ",
+              "with more iterations (e.g. 8000).")
           )
         ),
 
         shiny::hr(),
+        weights_review_ui(ns),
+        shiny::uiOutput(ns("run_estimate")),
         shiny::uiOutput(ns("submit_ui")),
         shiny::actionButton(ns("refresh_status"), "Check now",
                             class = "btn-default btn-sm", style = "margin-left:6px;"),
@@ -578,6 +586,91 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
       }
     })
 
+    # --- model choice: data check, option defaults, review (additive only) ---
+    # Only built when the additive model is enabled; with the flag off none of
+    # these outputs exist in the UI and nothing below runs.
+    data_check <- shiny::reactive({
+      shiny::req(additive_weights_enabled())
+      design_dirty()
+      s <- cur(); shiny::req(s$study, s$experiment, input$weight_method)
+      tgt <- cur_target()
+      stored <- tryCatch(
+        fetch_weights_stored_scoped(pool, project = s$project_id, study = s$study,
+                                    experiment = s$experiment, method = input$weight_method,
+                                    feature = tgt$feature, antigen = tgt$antigen),
+        error = function(e) NULL)
+      weights_data_check(scope_samples(), stored)
+    })
+
+    output$data_check <- shiny::renderUI(weights_data_check_ui(data_check()))
+
+    # Defaults follow the data each time the selection changes; options the
+    # data cannot support are switched off and greyed out.
+    shiny::observeEvent(data_check(), {
+      ck <- data_check()
+      for (id in c("use_censoring", "patient_effect")) {
+        shiny::updateCheckboxInput(session, id, value = isTRUE(ck$defaults[[id]]))
+        shinyjs::toggleState(id, condition = isTRUE(ck$available[[id]]))
+      }
+      shiny::updateRadioButtons(session, "kappa_mode",
+                                selected = if (isTRUE(ck$defaults$fix_kappa)) "fix" else "estimate")
+      shinyjs::toggleState("estimate_beta1",
+                           condition = is.finite(ck$se_spread) && ck$se_spread >= WEIGHTS_SE_SPREAD_NARROW)
+      if (!(is.finite(ck$se_spread) && ck$se_spread >= WEIGHTS_SE_SPREAD_NARROW))
+        shiny::updateCheckboxInput(session, "estimate_beta1", value = FALSE)
+    })
+
+    output$additive_option_notes <- shiny::renderUI({
+      ck <- data_check()
+      why <- unlist(ck$why_unavailable)
+      why <- why[nzchar(why)]
+      lab <- c(use_censoring = "Censoring", patient_effect = "Person term")
+      if (!length(why)) return(NULL)
+      shiny::tags$small(style = "color:#787878;display:block;margin-bottom:4px;",
+        paste0(lab[names(why)], " not available: ", why, ".", collapse = " "))
+    })
+
+    additive_opts <- shiny::reactive(list(
+      use_censoring  = isTRUE(input$use_censoring),
+      patient_effect = isTRUE(input$patient_effect),
+      fix_kappa      = identical(input$kappa_mode, "fix"),
+      estimate_beta1 = isTRUE(input$estimate_beta1)))
+
+    output$submit_review <- shiny::renderUI({
+      ck <- data_check()
+      model <- if (identical(input$weights_model, "additive")) "additive" else "multiplicative"
+      opts <- additive_opts()
+      if (!isTRUE(ck$available$use_censoring)) opts$use_censoring <- FALSE
+      if (!isTRUE(ck$available$patient_effect)) opts$patient_effect <- FALSE
+      shiny::tags$p(style = "font-size:90%;color:#333;",
+        weights_review_text(model, input$weight_method, opts,
+                            n_groups = ck$n_groups, stored_models = ck$stored_models))
+    })
+
+    # --- run-time estimate (both models, flag on or off) ---------------------
+    # Number of curve groups the job would fit: one weights fit per group.
+    scope_n_groups <- shiny::reactive({
+      design_dirty()
+      s <- cur(); shiny::req(s$study, s$experiment)
+      tgt <- cur_target()
+      b <- tryCatch(fetch_curve_batch(pool, s$study, s$experiment, s$project_id,
+                                      tgt$feature, tgt$antigen),
+                    error = function(e) NULL)
+      if (is.null(b) || !nrow(b)) 0L else length(unique(b$multiplate_group_id))
+    })
+
+    output$run_estimate <- shiny::renderUI({
+      additive <- additive_weights_enabled() && identical(input$weights_model, "additive")
+      cens <- FALSE
+      if (additive) {
+        ck <- tryCatch(data_check(), error = function(e) NULL)
+        cens <- isTRUE(input$use_censoring) && isTRUE(ck$available$use_censoring)
+      }
+      shiny::tags$p(style = "font-size:90%;color:#333;",
+        weights_runtime_text(if (additive) "additive" else "multiplicative",
+                             scope_n_groups(), input$iter, input$chains, cens))
+    })
+
     # --- approval gate + submit ---------------------------------------------
     output$design_approval_ui <- shiny::renderUI({
       if (!has_samples() || !length(varying_cols())) return(NULL)
@@ -622,6 +715,10 @@ stdCurveWeightsServer <- function(id, pool, api = function() compute_api_client(
         params$model <- "additive"
         params$scale_predictor <- "se"
         params$fix_beta1 <- if (isTRUE(input$estimate_beta1)) "false" else "true"
+        # only options that differ from the worker's defaults are sent
+        ck <- tryCatch(data_check(), error = function(e) NULL)
+        if (!is.null(ck))
+          params <- c(params, weights_additive_params(additive_opts(), ck$available))
       }
       if (!is.null(input$seed) && !is.na(input$seed)) params$seed <- as.character(input$seed)
 

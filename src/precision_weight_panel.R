@@ -39,8 +39,15 @@ WEIGHTS_DOCS <- list(
   site              = "https://immunoplex.github.io/curveRweights/"
 )
 
+# The R option wins when it is set (TRUE or FALSE), so a developer can force
+# either state locally. Otherwise the deployment decides through the
+# environment variable ISPI_ENABLE_ADDITIVE_WEIGHTS ("true", "1" or "yes";
+# anything else, or unset, is off), so the k8s manifest can switch the
+# feature on without a code change.
 additive_weights_enabled <- function() {
-  isTRUE(getOption("ispi.enable_additive_weights", FALSE))
+  opt <- getOption("ispi.enable_additive_weights")
+  if (!is.null(opt)) return(isTRUE(opt))
+  tolower(trimws(Sys.getenv("ISPI_ENABLE_ADDITIVE_WEIGHTS", ""))) %in% c("true", "1", "yes")
 }
 
 # Model(s) present in a weights / fit table. Missing column or NA => multiplicative.
@@ -85,9 +92,11 @@ weights_model_caption <- function(models) {
     "Model: additive measurement error, sigma_i^2 = tau^2 + kappa^2 * se_i^2 ",
     "(curveRweights); w_i = 1/sigma_i^2 can never exceed 1/tau^2, and is ",
     "normalised to mean = 1 over quantified samples (w_norm; dashed blue line). ",
-    "Annotation per panel: tau = true between-sample SD (log10); kappa = ",
+    "Annotation per panel: tau = SD of the real variation the design cell does not ",
+    "explain (log10; within a person when the person term is used); kappa = ",
     "measurement-error scale (1 = the curve's se is the true measurement SD); ",
-    "reliability = share of variance that is signal (0-1, mean over samples); ",
+    "reliability = share of variance that is signal (0-1, mean over samples; ",
+    "specific to the calibration method, so do not compare Bayesian with frequentist); ",
     "n_eff = effective sample size. Out-of-range samples are censored, not ",
     "weighted, so they carry no w_norm.")
   if (!length(models)) models <- "multiplicative"
@@ -99,21 +108,97 @@ weights_model_caption <- function(models) {
 # Columns (and rounding) for the per-group fit summary table.
 weights_fit_table <- function(df) {
   if (is.null(df) || !nrow(df)) return(df)
-  rd <- function(col, k) if (col %in% names(df)) df[[col]] <<- round(df[[col]], k)
-  for (col in c("phi", "beta1", "tau", "kappa")) rd(col, 3L)
-  rd("reliability", 2L)
+  rd <- function(col, k) if (col %in% names(df))
+    df[[col]] <<- round(suppressWarnings(as.numeric(df[[col]])), k)
+  for (col in c("phi", "beta1", "tau", "kappa", "rhat_max")) rd(col, 3L)
+  for (col in c("reliability", "ident_sd_ratio", "resid_sd", "resid_sd_ratio")) rd(col, 2L)
+  rd("ess_min", 0L)
   models <- weights_models_present(df)
+  # The diagnostics (calib schema 0.7.1) are stored for both models; once the
+  # table has them, every row gets the check column, multiplicative included.
+  has_diag <- any(WEIGHTS_DIAG_COLS %in% names(df))
+  show_check <- any(models == "additive") || has_diag
+  if (show_check) df$check <- weights_fit_check(df)
   base <- c("multiplate_group_id", "method")
   # `model` is shown only once an additive fit exists, so views of
   # multiplicative-only data stay exactly as they were before 0.6.0.
   if (any(models == "additive")) base <- c(base, "model")
-  base <- c(base, "antigen", "feature", "design_cols", "scale_predictor")
+  base <- c(base, "antigen", "feature", "design_cols", "scale_predictor",
+            if (show_check) "check")
   mult <- c("phi", "beta1")
   add  <- c("tau", "kappa", "reliability", "n_censored", "fix_beta1", "identifiability")
   tail <- c("interpretation", "n_fit", "n_eff", "weight_ratio")
   keep <- c(base, if (any(models == "multiplicative")) mult,
-            if (any(models == "additive")) add, tail)
+            if (any(models == "additive")) add,
+            if (has_diag) WEIGHTS_DIAG_COLS, tail)
   df[, intersect(keep, names(df)), drop = FALSE]
+}
+
+# One short reading per fit row, for the fit table, in order of severity:
+#   1. sampling: R-hat, divergent transitions, low ESS (both models) -- the
+#      fit's numbers cannot be relied on;
+#   2. prior dominance: the key scale parameter (additive: kappa; multiplicative:
+#      beta1) barely moved from its prior, or its posterior is wider than the
+#      prior (a sampling problem);
+#   3. additive: kappa fixed, or far from 1 (the curve's se is then not a
+#      calibrated measurement SD and the reliabilities lean on kappa);
+#   4. residual check (both): the variance model does not describe the scatter,
+#      overall or across the se range (some samples get too much weight).
+# Empty when there is nothing to flag. Rows written before the diagnostics were
+# stored say so, once the table has the columns.
+WEIGHTS_KAPPA_RANGE <- c(0.5, 2)
+WEIGHTS_DIAG_COLS <- c("rhat_max", "n_divergent", "ess_min", "ident_sd_ratio",
+                       "resid_sd", "resid_sd_ratio")
+WEIGHTS_RHAT_MAX <- 1.05            # above: chains did not converge
+WEIGHTS_ESS_MIN <- 400              # below: intervals unreliable
+WEIGHTS_IDENT_WEAK <- 0.8           # posterior SD / prior SD above: set by the prior
+WEIGHTS_RESID_SD_RANGE <- c(0.75, 1.33)
+WEIGHTS_RESID_RATIO_RANGE <- c(0.67, 1.5)
+weights_fit_check <- function(df) {
+  if (is.null(df) || !nrow(df)) return(character(0))
+  n <- nrow(df)
+  num <- function(k) if (k %in% names(df)) suppressWarnings(as.numeric(df[[k]])) else rep(NA_real_, n)
+  m <- if ("model" %in% names(df)) as.character(df$model) else rep("multiplicative", n)
+  m[is.na(m)] <- "multiplicative"
+  ident <- if ("identifiability" %in% names(df)) as.character(df$identifiability) else rep(NA_character_, n)
+  kap <- num("kappa"); rh <- num("rhat_max"); dv <- num("n_divergent"); es <- num("ess_min")
+  ir <- num("ident_sd_ratio"); rs <- num("resid_sd"); rr <- num("resid_sd_ratio")
+  has_diag <- any(WEIGHTS_DIAG_COLS %in% names(df))
+  fin <- function(x) !is.na(x) & is.finite(x)
+  out <- character(n)
+  for (i in seq_len(n)) {
+    is_add <- m[i] == "additive"
+    fixed  <- is_add && !is.na(ident[i]) && grepl("fixed", ident[i])
+    par    <- if (is_add) "kappa" else "beta1"
+    samp <- c(if (fin(rh[i]) && rh[i] > WEIGHTS_RHAT_MAX) sprintf("R-hat %.2f", rh[i]),
+              if (fin(dv[i]) && dv[i] > 0) sprintf("%d divergent", as.integer(dv[i])),
+              if (fin(es[i]) && es[i] < WEIGHTS_ESS_MIN) sprintf("ESS %d", as.integer(round(es[i]))))
+    notes <- c(
+      if (length(samp))
+        paste0("sampling did not converge (", paste(samp, collapse = ", "),
+               "): do not rely on these weights; rerun with more iterations",
+               if (is_add && !fixed) " or with kappa fixed at 1"),
+      if (fin(ir[i]) && ir[i] > 1)
+        sprintf("%s posterior wider than its prior (ratio %.2f): sampling problem likely", par, ir[i])
+      else if (fixed) "kappa fixed at 1"
+      else if (is_add && !is.na(ident[i]) && grepl("weakly", ident[i]))
+        "kappa weakly identified: tau and reliability provisional"
+      else if (!is_add && fin(ir[i]) && ir[i] > WEIGHTS_IDENT_WEAK)
+        "beta1 weakly identified: set largely by its prior",
+      if (is_add && fin(kap[i]) && !fixed &&
+          (kap[i] < WEIGHTS_KAPPA_RANGE[1] || kap[i] > WEIGHTS_KAPPA_RANGE[2]))
+        sprintf("kappa %.2g: the curve's SE is not a calibrated measurement SD", kap[i]),
+      if (fin(rr[i]) && rr[i] > WEIGHTS_RESID_RATIO_RANGE[2])
+        sprintf("low-SE samples scatter %.1fx more than the model allows, relative to high-SE ones: they get too much weight", rr[i])
+      else if (fin(rr[i]) && rr[i] < WEIGHTS_RESID_RATIO_RANGE[1])
+        sprintf("high-SE samples scatter %.1fx more than the model allows, relative to low-SE ones: they get too much weight", 1 / rr[i]),
+      if (fin(rs[i]) && (rs[i] < WEIGHTS_RESID_SD_RANGE[1] || rs[i] > WEIGHTS_RESID_SD_RANGE[2]))
+        sprintf("residual scatter %.2f times what the model expects", rs[i]),
+      if (has_diag && !any(fin(c(rh[i], dv[i], es[i], ir[i], rs[i], rr[i]))))
+        "no diagnostics stored (fitted before they were recorded)")
+    out[i] <- paste(notes, collapse = "; ")
+  }
+  out
 }
 
 # Columns for the per-sample weights table.
@@ -171,27 +256,77 @@ weights_docs_links <- function() {
                   href = "https://immunoplex.github.io/curveRbayes/", target = "_blank", rel = "noopener")))
 }
 
+# help icon when the help system is loaded (it is not in the unit tests)
+.wm_help <- function(id, ns) if (exists("help_icon", mode = "function")) help_icon(id, ns) else NULL
+
+.wm_step <- function(num, title, help_id, ns)
+  shiny::tags$p(style = "margin:10px 0 4px 0;",
+                shiny::tags$strong(paste0(num, " ", title)), .wm_help(help_id, ns))
+
+# The model choice, in three steps: (1) facts about the selected data (filled by
+# the server from weights_data_check()), (2) the model and, for the additive
+# model, its options (defaults set by the server from the data check), (3) the
+# review line above the Submit button (weights_review_ui()).
 weights_model_selector_ui <- function(ns) {
   if (!additive_weights_enabled()) return(NULL)
+  is_add <- sprintf("input['%s'] == 'additive'", ns("weights_model"))
   shiny::tagList(
-    shiny::radioButtons(ns("weights_model"), "Variance model",
-                        choices = c("Multiplicative (current default)" = "multiplicative",
-                                    "Additive measurement-error (new)"  = "additive"),
+    .wm_step("\u2460", "Check the data", "qc.precision_weights.data_check", ns),
+    shiny::uiOutput(ns("data_check")),
+    .wm_step("\u2461", "Choose the model", "qc.precision_weights.model_choice", ns),
+    shiny::radioButtons(ns("weights_model"), NULL,
+                        choices = c("Multiplicative (reproduces earlier analyses)" = "multiplicative",
+                                    "Additive measurement-error (for comparing groups or time points)" = "additive"),
                         selected = "multiplicative"),
     shiny::conditionalPanel(
-      condition = sprintf("input['%s'] == 'additive'", ns("weights_model")),
+      condition = is_add,
       shiny::tags$p(shiny::tags$small(style = "color:#555;",
-        "The additive model splits each sample's variance into real ",
-        "between-sample variation (tau²) plus the measurement error the ",
-        "calibration curve reports. Weights cannot exceed 1/tau²; each sample ",
-        "gets a reliability (0–1); out-of-range samples are treated as censored ",
-        "rather than weighted. ",
+        "The additive model splits each sample's variance into real variation ",
+        "(tau\u00b2) plus the measurement error the calibration curve reports. ",
+        "Weights cannot exceed 1/tau\u00b2 and each sample gets a reliability (0\u20131). ",
         shiny::tags$strong("Running it replaces the stored weights"),
-        " for this method and experiment (the most recent run is the one kept)."),
+        " for this method and experiment (the most recent run is the one kept).")),
+      shiny::tags$p(style = "margin:6px 0 2px 0;", shiny::tags$strong("Additive options"),
+                    .wm_help("qc.precision_weights.additive_options", ns)),
+      shiny::checkboxInput(ns("use_censoring"), "Treat out-of-range samples as censored", value = TRUE),
+      shiny::checkboxInput(ns("patient_effect"), "Account for repeated samples from the same person", value = TRUE),
+      shiny::radioButtons(ns("kappa_mode"), "Measurement-error scale (kappa)",
+                          choices = c("Estimate from the data" = "estimate",
+                                      "Fix at 1 (trust the curve's SE)" = "fix"),
+                          selected = "estimate", inline = TRUE),
+      shiny::uiOutput(ns("additive_option_notes")),
+      shiny::tags$details(
+        shiny::tags$summary(shiny::tags$small("Advanced (additive)")),
         shiny::checkboxInput(ns("estimate_beta1"),
-                             "Estimate the exponent beta1 (advanced; default: fixed at 1)",
+                             "Estimate the exponent beta1 (default: fixed at 1; needs a wide SE spread)",
                              value = FALSE))),
     weights_docs_links())
+}
+
+# Review line + step 3 heading, shown above the Submit button.
+weights_review_ui <- function(ns) {
+  if (!additive_weights_enabled()) return(NULL)
+  shiny::tagList(
+    .wm_step("\u2462", "Review and submit", "qc.precision_weights.model_choice", ns),
+    shiny::uiOutput(ns("submit_review")))
+}
+
+# Facts list for step 1 (weights_data_check() result).
+weights_data_check_ui <- function(ck) {
+  if (is.null(ck)) return(NULL)
+  mark <- c(ok = "\u2713", warn = "!", bad = "\u2717", info = "\u2013")
+  col  <- c(ok = "#2e7d32", warn = "#b26a00", bad = "#c62828", info = "#787878")
+  rows <- lapply(seq_len(nrow(ck$facts)), function(i) {
+    f <- ck$facts[i, ]
+    shiny::tags$li(style = "margin-bottom:2px;",
+      shiny::tags$span(style = sprintf("color:%s;font-weight:bold;display:inline-block;width:1.2em;", col[[f$status]]),
+                       mark[[f$status]]),
+      shiny::tags$span(paste0(f$label, ": ", f$value)),
+      if (nzchar(f$note)) shiny::tags$div(style = "margin-left:1.2em;color:#787878;", shiny::tags$small(f$note)))
+  })
+  shiny::tagList(
+    shiny::tags$ul(style = "list-style:none;padding-left:0;margin-bottom:4px;font-size:90%;", rows),
+    shiny::tags$p(style = "font-size:90%;margin-bottom:4px;", shiny::tags$em(ck$recommendation)))
 }
 
 .pwp_plate_palette <- function(plate_levels) {

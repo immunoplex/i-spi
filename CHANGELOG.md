@@ -5,6 +5,60 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## v1.2.0 — Choosing the precision-weights model; the same diagnostics for both models
+
+Needs i-spi-compute 1.2.0 (curveRcore 0.7.1, curveRweights 0.3.1) and migration
+012, both in place since 2026-11-22. With the additive model switched off (the
+default) the model choice stays hidden, but two things are visible to everyone:
+the run-time estimate above Submit, and the weights-fit table's diagnostics and
+*check* column. Fits computed before 1.2.0 show "no diagnostics stored" there
+until they are rerun.
+
+### Added
+- **Switch per deployment.** The additive weights model can be enabled with the
+  environment variable `ISPI_ENABLE_ADDITIVE_WEIGHTS=true` (e.g. in the k8s
+  manifest). The R option `ispi.enable_additive_weights` still works and wins
+  when set.
+- **Compute weights, in three steps** (additive model enabled):
+  1. *Check the data*: for the selected method and scope, the number of samples
+     and curve groups, people and time points, out-of-range samples (or that
+     censoring was not recorded), readings per sample, the spread of the
+     samples' SE, and the weights a run would replace, with a one-line
+     recommendation. Nothing is switched automatically.
+  2. *Choose the model*: Multiplicative stays preselected. The additive model's
+     options (censor out-of-range samples, person term, kappa estimated or
+     fixed at 1, and under Advanced beta1) take their
+     defaults from the data check; options the data cannot support are greyed
+     out with the reason.
+  3. *Review and submit*: the job described in words and what it replaces.
+- **Help**: new pages *Which precision-weights model?*, *Check the data* and
+  *Additive model options*; glossary entries *tau*, *kappa* and
+  *identifiability*. Each links to the section of the curveRweights guide that
+  goes deeper.
+- **Run-time estimate above Submit, for both models** (also with the additive
+  model switched off): curve groups x seconds per group, scaled by the
+  iterations x chains of the Advanced MCMC settings and by censoring. Calibrated
+  on the 2026-11 sim runs at 4000 x 4 (about 40 s per group multiplicative,
+  48 s additive, 145 s additive with censoring). The iteration inputs now accept
+  what the compute API accepts (1000 to 20000; warm-up at least 100).
+- **Results: the same diagnostics for both models.** With calib schema 0.7.1
+  the weights-fit table shows `rhat_max`, `n_divergent`, `ess_min`,
+  `ident_sd_ratio`, `resid_sd` and `resid_sd_ratio` for every fit, and the
+  *check* column covers multiplicative rows too: sampling did not converge,
+  kappa or beta1 weakly identified or wider than its prior, kappa fixed or
+  outside 0.5 to 2, a variance model that gives low-SE (or high-SE) samples too
+  much weight, and fits made before the diagnostics were stored. A
+  multiplicative-only table without these columns (older schema) is unchanged.
+  New glossary entry *Precision-weights fit diagnostics*. The download bundles'
+  `weights_meta` carries the fit options.
+
+### Changed
+- What **tau** and **reliability** mean is stated correctly: with the person term
+  (the default when people have several samples) tau is the variation *within*
+  a person and reliability is a within-person reliability. Both, and kappa, are
+  specific to the calibration method; the caption and help say not to compare
+  Bayesian with frequentist values.
+
 ## v1.1.1 — Safe project queries; local sign-in bypass by environment
 
 ### Fixed

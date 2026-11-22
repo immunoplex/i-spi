@@ -125,7 +125,8 @@ CALIB_TABLE_DOCS <- list(
     grain = "one row per multiplate_group_id / method",
     keys  = c("method", "design_cols", "scale_predictor", "phi", "beta1",
               "interpretation", "n_fit", "n_eff", "weight_ratio", "model", "tau", "kappa",
-              "reliability", "n_censored")),
+              "reliability", "n_censored", "fit_options", "rhat_max", "n_divergent",
+              "ess_min", "ident_sd_ratio", "resid_sd", "resid_sd_ratio")),
   control_reference = list(
     group = "Results", label = "Control reference values",
     what  = "Expected values for controls (assigned or established), with limits and the period they apply to. Rows for this study and project-wide rows (study_accession = '__none__') are shown; compare them with Back-calculated controls. Needs i-spi-compute 1.1.",
@@ -175,6 +176,7 @@ weights_bundle_meta <- function(weights_df, fit_df = NULL) {
                      n_curve_groups = 0L, n_censored_samples = 0L,
                      first_computed = NA_character_, last_computed = NA_character_,
                      description = "No precision weights have been computed for this experiment.",
+                     fit_options = NA_character_,
                      guide = guide, stringsAsFactors = FALSE)
   if (is.null(weights_df) || !nrow(weights_df)) return(none)
 
@@ -202,7 +204,12 @@ weights_bundle_meta <- function(weights_df, fit_df = NULL) {
                n_samples = sum(i), n_curve_groups = as.integer(ng),
                n_censored_samples = sum(w$censor_type[i] %in% c("left", "right", "interval")),
                first_computed = tstat(w$.ts[i], min), last_computed = tstat(w$.ts[i], max),
-               description = unname(docs[m]), guide = guide, stringsAsFactors = FALSE)
+               description = unname(docs[m]),
+               # options of the additive fit (calib_weights_fit.fit_options,
+               # curveRcore >= 0.7.1); NA when not recorded
+               fit_options = if (!is.null(f) && nrow(f) && "fit_options" %in% names(f))
+                 uniq(as.character(f$fit_options[f$method == me & f$model == m])) else NA_character_,
+               guide = guide, stringsAsFactors = FALSE)
   })
   do.call(rbind, out)
 }
