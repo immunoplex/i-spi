@@ -3,7 +3,7 @@ id: glossary.control_source
 title: Control source and curve source
 audience: user
 category: glossary
-topic: Quality control
+topic: Plate layout and wells
 see_also: [glossary.control_wells, import.plate_grid.confirm, qc.linearity.sets, qc.plate_dilution_series]
 ---
 
