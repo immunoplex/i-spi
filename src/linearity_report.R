@@ -66,26 +66,37 @@ LIN_THRESH <- list(
 )
 
 # The dimensions a pair can be selected on, or required to match.
-LIN_DIMS <- c("method", "source", "plate", "dilution", "wavelength")
+# `source` is the CURVE source (the standard curve's source, part of the curve key);
+# `control_source` is a control well's own Source (e.g. supplier_voltage), NA for
+# test samples and standards. Two different things: never confuse them.
+LIN_DIMS <- c("method", "source", "control_source", "plate", "dilution", "wavelength")
+LIN_DIM_LABEL <- c(method = "method", source = "curve source", control_source = "control source",
+                   plate = "plate", dilution = "dilution", wavelength = "wavelength")
 # "well" = same physical measurement (plate + well + dilution + specimen), used
 # for method / source comparisons.
 LIN_MATCH_CHOICES <- c(plate = "plate", dilution = "dilution", method = "method",
-                       source = "source", wavelength = "wavelength",
-                       well = "same well")
+                       `curve source` = "source", `control source` = "control_source",
+                       wavelength = "wavelength", well = "same well")
 
+# Every preset but "control_source" also requires the same control source, so a
+# control from one supplier is never paired with another supplier's as a plate or
+# dilution replicate. For test samples and standards it is NA on both sides: no effect.
 LIN_PRESETS <- list(
   duplicate = list(label = "Duplicates", detail = "Same plate, same dilution, different wells",
-                   match = c("plate", "dilution", "method", "source", "wavelength"), differ = "well", vary = NULL),
+                   match = c("plate", "dilution", "method", "source", "control_source", "wavelength"), differ = "well", vary = NULL),
   dilution  = list(label = "Dilution vs dilution", detail = "Same plate, two dilutions",
-                   match = c("plate", "method", "source", "wavelength"), differ = "dilution", vary = "dilution"),
+                   match = c("plate", "method", "source", "control_source", "wavelength"), differ = "dilution", vary = "dilution"),
   plate     = list(label = "Plate vs plate", detail = "Two plates, same dilution",
-                   match = c("dilution", "method", "source", "wavelength"), differ = "plate", vary = "plate"),
+                   match = c("dilution", "method", "source", "control_source", "wavelength"), differ = "plate", vary = "plate"),
   platedil  = list(label = "Dilution across plates", detail = "Two dilutions on different plates",
-                   match = c("method", "source", "wavelength"), differ = c("plate", "dilution"), vary = "dilution"),
+                   match = c("method", "source", "control_source", "wavelength"), differ = c("plate", "dilution"), vary = "dilution"),
   method    = list(label = "Frequentist vs Bayesian", detail = "Same wells, two fitting methods",
-                   match = c("well", "source", "wavelength"), differ = "method", vary = "method"),
-  source    = list(label = "Source vs source", detail = "Same wells, two standard-curve sources",
-                   match = c("well", "method", "wavelength"), differ = "source", vary = "source"),
+                   match = c("well", "source", "control_source", "wavelength"), differ = "method", vary = "method"),
+  source    = list(label = "Curve source vs curve source", detail = "Same wells, two standard-curve sources",
+                   match = c("well", "method", "control_source", "wavelength"), differ = "source", vary = "source"),
+  control_source = list(label = "Control source vs control source",
+                   detail = "The same control at the same dilution from two control sources (e.g. two suppliers or reader settings)",
+                   match = c("dilution", "method", "source", "wavelength"), differ = "control_source", vary = "control_source"),
   custom    = list(label = "Custom", detail = "Choose each axis, what must match and what must differ",
                    match = character(), differ = character(), vary = NULL)
 )
@@ -188,6 +199,7 @@ lin_prepare <- function(raw, kind = "sample") {
     curve_id = .lin_id(g("curve_id")),
     method = as.character(g("method")),
     source = .lin_none(g("source")),
+    control_source = .lin_none(g("control_source")),
     plate = plate, plateid = plateid,
     well = .lin_none(g("well")),
     patientid = patient, timeperiod = time, specimen_id = spec,
@@ -205,13 +217,16 @@ lin_prepare <- function(raw, kind = "sample") {
   p$set_id  <- paste(p$antigen, .lin_chr(p$feature), who, .lin_chr(p$timeperiod), sep = " | ")
   p$meas_id <- paste(p$plate, .lin_chr(p$well), .lin_chr(p$dilution), .lin_chr(p$specimen_id),
                      .lin_chr(p$wavelength), sep = "/")
+  # A control's source is part of what was measured (one well, one source).
+  cs <- !is.na(p$control_source)
+  p$meas_id[cs] <- paste(p$meas_id[cs], p$control_source[cs], sep = "/")
   p$pt_id   <- paste(p$meas_id, p$method, .lin_chr(p$source), p$curve_id, sep = "|")
   p
 }
 
 .lin_empty_points <- function() {
   data.frame(kind = character(), curve_id = character(), method = character(), source = character(),
-             plate = character(), plateid = character(), well = character(), patientid = character(),
+             control_source = character(), plate = character(), plateid = character(), well = character(), patientid = character(),
              timeperiod = character(), specimen_id = character(), dilution = character(),
              dilution_num = numeric(), wavelength = character(), antigen = character(),
              feature = character(), conc = numeric(), pcov = numeric(), gate_class = character(),
@@ -225,7 +240,8 @@ LIN_SET_TYPES <- c(duplicate = "Duplicates (same plate, same dilution)",
                    plate = "Plates at the same dilution",
                    platedil = "Plates and dilutions both differ",
                    method = "Frequentist and Bayesian estimates",
-                   source = "More than one curve source")
+                   source = "More than one curve source",
+                   control_source = "More than one control source")
 
 # One row per set with a TRUE/FALSE per type. A set can have several types.
 lin_sets <- function(pts) {
@@ -234,8 +250,12 @@ lin_sets <- function(pts) {
                       n_plates = integer(), n_dilutions = integer(),
                       duplicate = logical(), dilution = logical(), plate = logical(),
                       platedil = logical(), method = logical(), source = logical(),
-                      stringsAsFactors = FALSE)
+                      control_source = logical(), stringsAsFactors = FALSE)
   if (is.null(pts) || !nrow(pts)) return(empty)
+  # Replicates, dilutions and plates are counted within one control source:
+  # the same control from two suppliers is a control-source comparison, not a replicate.
+  if (!"control_source" %in% names(pts)) pts$control_source <- NA_character_
+  pts$set_cs <- paste(pts$set_id, .lin_chr(pts$control_source), sep = "\r")
   ids <- unique(pts$set_id)
   first <- !duplicated(pts$set_id)
   out <- data.frame(set_id = pts$set_id[first], kind = pts$kind[first], antigen = pts$antigen[first],
@@ -243,24 +263,53 @@ lin_sets <- function(pts) {
                     timeperiod = pts$timeperiod[first], stringsAsFactors = FALSE)
   out$n_points <- as.integer(table(pts$set_id)[out$set_id])
   flag <- function(sets) out$set_id %in% sets
-  m <- unique(pts[, c("set_id", "plate", "dilution", "meas_id")])
-  cnt_pd <- ave(seq_len(nrow(m)), paste(m$set_id, m$plate, m$dilution, sep = "\r"), FUN = length)
+  m <- unique(pts[, c("set_id", "set_cs", "plate", "dilution", "meas_id")])
+  cnt_pd <- ave(seq_len(nrow(m)), paste(m$set_cs, m$plate, m$dilution, sep = "\r"), FUN = length)
   out$duplicate <- flag(m$set_id[cnt_pd >= 2L])
-  u <- unique(m[, c("set_id", "plate", "dilution")])
-  nd_by_plate <- ave(seq_len(nrow(u)), paste(u$set_id, u$plate, sep = "\r"), FUN = length)
-  np_by_dil   <- ave(seq_len(nrow(u)), paste(u$set_id, u$dilution, sep = "\r"), FUN = length)
+  u <- unique(m[, c("set_id", "set_cs", "plate", "dilution")])
+  nd_by_plate <- ave(seq_len(nrow(u)), paste(u$set_cs, u$plate, sep = "\r"), FUN = length)
+  np_by_dil   <- ave(seq_len(nrow(u)), paste(u$set_cs, u$dilution, sep = "\r"), FUN = length)
   out$dilution <- flag(u$set_id[nd_by_plate >= 2L])
   out$plate    <- flag(u$set_id[np_by_dil >= 2L])
   np <- tapply(u$plate, u$set_id, function(v) length(unique(v)))
   nd <- tapply(u$dilution, u$set_id, function(v) length(unique(v)))
   out$n_plates    <- as.integer(np[out$set_id])
   out$n_dilutions <- as.integer(nd[out$set_id])
-  out$platedil <- out$n_plates >= 2L & out$n_dilutions >= 2L
+  pd_cs <- unique(u[, c("set_id", "set_cs")])
+  npc <- tapply(u$plate, u$set_cs, function(v) length(unique(v)))
+  ndc <- tapply(u$dilution, u$set_cs, function(v) length(unique(v)))
+  out$platedil <- flag(pd_cs$set_id[npc[pd_cs$set_cs] >= 2L & ndc[pd_cs$set_cs] >= 2L])
   nm <- tapply(pts$method, paste(pts$set_id, pts$meas_id, sep = "\r"), function(v) length(unique(v)))
   ns <- tapply(pts$source, paste(pts$set_id, pts$meas_id, sep = "\r"), function(v) length(unique(v)))
   key_set <- sub("\r.*$", "", names(nm))
   out$method <- flag(key_set[nm >= 2L]); out$source <- flag(key_set[ns >= 2L])
+  ncs <- tapply(pts$control_source, pts$set_id, function(v) length(unique(v[!is.na(v)])))
+  out$control_source <- as.integer(ncs[out$set_id]) >= 2L
   out
+}
+
+# ---- replicate CV ---------------------------------------------------------------
+# Replicates of a point: the other wells of the same set on the same plate at the
+# same dilution, with the same method, curve source, wavelength and control source.
+# rep_n counts them (the point included); rep_cv_pct is the arithmetic CV of their
+# concentrations, 100 * sd / mean on the natural scale (NA below 2 finite values).
+# This is the observed spread of replicate wells, not pcov (the curve's model CV).
+lin_cv_pct <- function(v) {
+  v <- v[is.finite(v)]
+  if (length(v) < 2L || mean(v) <= 0) return(NA_real_)
+  100 * stats::sd(v) / mean(v)
+}
+lin_replicate_cv <- function(pts) {
+  if (is.null(pts) || !nrow(pts)) { pts$rep_n <- integer(); pts$rep_cv_pct <- numeric(); return(pts) }
+  cs <- if ("control_source" %in% names(pts)) pts$control_source else NA_character_
+  key <- paste(pts$set_id, pts$plate, .lin_chr(pts$dilution), pts$method, .lin_chr(pts$source),
+               .lin_chr(pts$wavelength), .lin_chr(cs), sep = "\r")
+  # one value per measured well (a point is unique per meas_id within the key)
+  first <- !duplicated(paste(key, pts$meas_id, sep = "\r"))
+  n  <- tapply(pts$meas_id[first], key[first], length)
+  cv <- tapply(pts$conc[first], key[first], lin_cv_pct)
+  pts$rep_n <- as.integer(n[key]); pts$rep_cv_pct <- as.numeric(cv[key])
+  pts
 }
 
 # Count sets per type, overall and per antigen: the "what is there to compare"
@@ -307,9 +356,10 @@ lin_filter <- function(pts, sel = list()) {
   pts[keep, , drop = FALSE]
 }
 
-LIN_PAIR_COLS <- c("pt_id", "meas_id", "curve_id", "method", "source", "plate", "plateid", "well",
+LIN_PAIR_COLS <- c("pt_id", "meas_id", "curve_id", "method", "source", "control_source", "plate", "plateid", "well",
                    "specimen_id", "dilution", "dilution_num", "wavelength", "conc", "pcov",
-                   "gate_class", "censor_class")
+                   "gate_class", "censor_class", "rep_n", "rep_cv_pct")
+.LIN_PAIR_NUM <- c("conc", "pcov", "dilution_num", "rep_n", "rep_cv_pct")
 
 # One row per (x point, y point) within a set. `match` lists dimensions that
 # must be equal between the two, `differ` dimensions that must be unequal ("well"
@@ -322,10 +372,12 @@ lin_pairs <- function(pts, x = list(), y = list(), match = character(), differ =
   empty <- function() {
     e <- data.frame(set_id = character(), antigen = character(), feature = character(),
                     patientid = character(), timeperiod = character(), stringsAsFactors = FALSE)
-    for (s in c("x_", "y_")) for (cn in LIN_PAIR_COLS) e[[paste0(s, cn)]] <- if (cn %in% c("conc", "pcov", "dilution_num")) numeric() else character()
-    e$pair_type <- character(); attr(e, "truncated") <- FALSE; e
+    for (s in c("x_", "y_")) for (cn in LIN_PAIR_COLS) e[[paste0(s, cn)]] <- if (cn %in% .LIN_PAIR_NUM) numeric() else character()
+    e$pair_type <- character(); e$pair_cv_pct <- numeric(); attr(e, "truncated") <- FALSE; e
   }
   if (is.null(pts) || !nrow(pts)) return(empty())
+  if (!"control_source" %in% names(pts)) pts$control_source <- NA_character_
+  pts <- lin_replicate_cv(pts)
   X <- lin_filter(pts, x); Y <- lin_filter(pts, y)
   if (!nrow(X) || !nrow(Y)) return(empty())
   same_sel <- identical(lapply(x[sort(names(x))], sort), lapply(y[sort(names(y))], sort))
@@ -354,6 +406,9 @@ lin_pairs <- function(pts, x = list(), y = list(), match = character(), differ =
   if (!nrow(m)) return(empty())
   rownames(m) <- NULL
   m$pair_type <- lin_pair_type(m)
+  # CV of the two estimates of the pair: 100 * sd / mean, sd = |x - y| / sqrt(2).
+  mu <- (m$x_conc + m$y_conc) / 2
+  m$pair_cv_pct <- ifelse(is.finite(mu) & mu > 0, 100 * abs(m$x_conc - m$y_conc) / sqrt(2) / mu, NA_real_)
   attr(m, "truncated") <- truncated
   m
 }
@@ -370,6 +425,7 @@ lin_pair_type <- function(m) {
   out[!sp & !sd] <- "plate+dilution"
   out[same_meas & !eq(m$x_method, m$y_method)] <- "method"
   out[same_meas & eq(m$x_method, m$y_method) & !eq(m$x_source, m$y_source)] <- "source"
+  if (!is.null(m$x_control_source)) out[!eq(m$x_control_source, m$y_control_source)] <- "control source"
   out
 }
 
@@ -614,6 +670,17 @@ lin_consensus <- function(pr, reg) {
                     q = q, q_df = k - 1L, q_ratio = ifelse(k > 1L, q / (k - 1L), NA_real_),
                     stringsAsFactors = FALSE, row.names = NULL)
   out <- merge(meta, out, by = "set_id", sort = FALSE)
+  # Spread of the set's own (raw, not harmonized) estimates, and the median CV of
+  # its replicate wells: the observed scatter next to the model-based interval.
+  raw <- rbind(data.frame(set_id = pr$set_id, pt = pr$x_pt_id, conc = pr$x_conc,
+                          rcv = .lin_or(pr$x_rep_cv_pct, NA_real_), stringsAsFactors = FALSE),
+               data.frame(set_id = pr$set_id, pt = pr$y_pt_id, conc = pr$y_conc,
+                          rcv = .lin_or(pr$y_rep_cv_pct, NA_real_), stringsAsFactors = FALSE))
+  raw <- raw[!duplicated(raw$pt), , drop = FALSE]
+  cvp <- tapply(raw$conc, raw$set_id, lin_cv_pct)
+  rcm <- tapply(raw$rcv, raw$set_id, function(v) if (any(is.finite(v))) stats::median(v[is.finite(v)]) else NA_real_)
+  out$cv_pct <- as.numeric(cvp[out$set_id])
+  out$rep_cv_pct_median <- as.numeric(rcm[out$set_id])
   out[order(out$antigen, out$patientid, out$timeperiod), , drop = FALSE]
 }
 
@@ -911,7 +978,8 @@ lin_report_build <- function(ctx) {
 
 .lin_sel_text <- function(sel) {
   if (.lin_sel_empty(sel)) return("any")
-  paste(vapply(names(sel), function(n) if (length(sel[[n]])) sprintf("%s = %s", n, paste(sel[[n]], collapse = ", ")) else NA_character_, ""),
+  lab <- function(n) if (n %in% names(LIN_DIM_LABEL)) LIN_DIM_LABEL[[n]] else n
+  paste(vapply(names(sel), function(n) if (length(sel[[n]])) sprintf("%s = %s", lab(n), paste(sel[[n]], collapse = ", ")) else NA_character_, ""),
         collapse = "; ") |> (\(z) gsub("(; )?NA", "", z))()
 }
 

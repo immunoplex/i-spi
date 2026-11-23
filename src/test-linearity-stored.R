@@ -185,3 +185,81 @@ test_that("the help note for the sample types exists and is linked from the modu
   expect_match(md, "Stored by the compute job", fixed = TRUE)
   expect_false(grepl("Computed here", md, fixed = TRUE))
 })
+
+# ---- control sources (QC batches compared by supplier / reader setting) ----------------
+# QC1Orange from two control sources, each on its own plate, two dilutions, duplicate wells.
+mk_cs <- function() {
+  rows <- list()
+  for (cs in c("jackson_high", "southern_high")) for (dl in c(50, 500)) for (w in 1:2)
+    rows[[length(rows) + 1L]] <- data.frame(
+      curve_id = if (cs == "jackson_high") 201L else 202L, method = "frequentist",
+      well = paste0(if (dl == 50) "A" else "B", w), sampleid = "QC1Orange", control_source = cs,
+      dilution = dl, included = TRUE,
+      final_concentration = 1000 * (if (cs == "southern_high") 1.5 else 1) * (if (w == 2) 1.1 else 1) * (if (dl == 500) 1.3 else 1),
+      pcov = 10, pcov_pass = TRUE, pcov_gate_class = "inDynamicRange", censor_class = "quantified",
+      plateid = if (cs == "jackson_high") "P1" else "P2", plate = if (cs == "jackson_high") "P1" else "P2",
+      antigen = "PT", feature = "IgG", source = "Inhouse Ref", wavelength = NA_character_, stringsAsFactors = FALSE)
+  do.call(rbind, rows)
+}
+
+test_that("control source is kept, one set per control, flagged as a control-source set", {
+  p <- lin_prepare(lin_stored_controls(mk_cs()), "control")
+  expect_setequal(unique(p$control_source), c("jackson_high", "southern_high"))
+  s <- lin_sets(p)
+  expect_equal(nrow(s), 1L)
+  expect_true(s$control_source); expect_true(s$duplicate); expect_true(s$dilution)
+  # plates differ only because the sources differ: not a plate replicate set
+  expect_false(s$plate); expect_false(s$platedil)
+  expect_equal(lin_set_summary(s)$sets[lin_set_summary(s)$type == "control_source"], 1L)
+})
+
+test_that("the control-source preset pairs sources; other presets never cross sources", {
+  p <- lin_prepare(lin_stored_controls(mk_cs()), "control")
+  k <- lin_preset_sel(p, "control_source")
+  expect_equal(k$x$control_source, "jackson_high"); expect_equal(k$y$control_source, "southern_high")
+  pr <- lin_pairs(p, k$x, k$y, k$match, k$differ)
+  expect_equal(nrow(pr), 8L)                                   # 2 dilutions x 2 x 2 wells
+  expect_true(all(pr$pair_type == "control source"))
+  expect_true(all(pr$x_dilution == pr$y_dilution))
+  for (key in c("plate", "platedil", "duplicate", "dilution")) {
+    k2 <- lin_preset_sel(p, key); pr2 <- lin_pairs(p, k2$x, k2$y, k2$match, k2$differ)
+    expect_true(all(pr2$x_control_source == pr2$y_control_source), info = key)
+  }
+  k3 <- lin_preset_sel(p, "duplicate"); pr3 <- lin_pairs(p, k3$x, k3$y, k3$match, k3$differ)
+  expect_equal(nrow(pr3), 4L); expect_true(all(pr3$pair_type == "duplicate"))
+})
+
+test_that("replicate CV and pair CV are the arithmetic CV of the concentrations", {
+  p <- lin_prepare(lin_stored_controls(mk_cs()), "control")
+  k <- lin_preset_sel(p, "control_source"); pr <- lin_pairs(p, k$x, k$y, k$match, k$differ)
+  expect_true(all(pr$x_rep_n == 2L) && all(pr$y_rep_n == 2L))
+  cv2 <- 100 * stats::sd(c(1, 1.1)) / mean(c(1, 1.1))
+  expect_equal(unique(round(pr$x_rep_cv_pct, 8)), round(cv2, 8))
+  expect_equal(unique(round(pr$y_rep_cv_pct, 8)), round(cv2, 8))
+  i <- which(pr$x_conc == 1000 & pr$y_conc == 1500)[1]
+  expect_equal(pr$pair_cv_pct[i], 100 * stats::sd(c(1000, 1500)) / 1250)
+  expect_true(is.na(lin_cv_pct(5))); expect_true(is.na(lin_cv_pct(c(NA, 3))))
+  # a lone well has rep_n 1 and no CV
+  one <- lin_replicate_cv(p[p$well != "A2" | p$control_source != "jackson_high", ])
+  expect_equal(unique(one$rep_n[one$well == "A1" & one$control_source == "jackson_high"]), 1L)
+  expect_true(all(is.na(one$rep_cv_pct[one$well == "A1" & one$control_source == "jackson_high"])))
+})
+
+test_that("consensus carries the set's raw CV and median replicate CV", {
+  p <- lin_prepare(lin_stored_controls(mk_cs()), "control")
+  k <- lin_preset_sel(p, "control_source"); pr <- lin_pairs(p, k$x, k$y, k$match, k$differ)
+  reg <- lin_regress(pr, scale = "log10", error = "both", weighting = "full")
+  skip_if_not(isTRUE(reg$ok) && reg$fit$b > 0)
+  cs <- lin_consensus(pr, reg)
+  expect_true(all(c("cv_pct", "rep_cv_pct_median") %in% names(cs)))
+  expect_equal(cs$cv_pct, lin_cv_pct(p$conc))
+  expect_equal(cs$rep_cv_pct_median, 100 * stats::sd(c(1, 1.1)) / 1.05)
+})
+
+test_that("an old-style control (name stored in Source) has no control source", {
+  ctl <- mk_ctl(); ctl$sampleid <- ctl$well; ctl$control_source <- "QC1 (Low)"
+  raw <- lin_stored_controls(ctl)
+  expect_true(all(raw$control_source == "__none__")); expect_true(all(raw$sampleid == "QC1 (Low)"))
+  expect_true(all(is.na(lin_prepare(raw, "control")$control_source)))
+  expect_true(all(lin_stored_controls(mk_cs())$control_source %in% c("jackson_high", "southern_high")))
+})
