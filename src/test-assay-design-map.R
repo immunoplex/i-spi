@@ -209,7 +209,8 @@ test_that("resolved identity has ai_resolve_inventory()'s shape and the right va
   expect_equal(c(x$subject_id, x$timepoint_tissue_abbreviation, x$groupa, x$groupb,
                  x$specimen_dilution_factor), c("305", "S1", "NP", "G2", "10000"))
   s <- r[r$well == "B1", ]
-  expect_equal(c(s$specimen_source, s$specimen_dilution_factor, s$biosample_id_barcode), c("NIBSC", "200", "2"))
+  # sampleid comes from the well's description ("desc_B1"), letters and digits only
+  expect_equal(c(s$specimen_source, s$specimen_dilution_factor, s$biosample_id_barcode), c("NIBSC", "200", "descB1"))
   expect_equal(s$subject_id, "2")      # non-sample wells take their index, as the resolver does
   expect_type(r$specimen_dilution_factor, "integer")
   # and it overlays a rules-resolved table, design winning per well

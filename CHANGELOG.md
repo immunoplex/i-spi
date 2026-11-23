@@ -5,6 +5,43 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased — Plates without test samples; sample identifiers from descriptions
+
+### Added
+- **Description pattern in the plate editor.** "Apply to matching wells" with a
+  pattern such as `QC1*, QC2*` retypes every well whose description matches,
+  on every plate and at every dilution, without selecting wells; the number of
+  matching wells is shown first.
+- **Source in the plate editor**, typed in or taken from the plate (file)
+  names: the parts that differ between plates are proposed (e.g.
+  `jackson_ON_JHM_high`, `southern_low`), editable, with a per-plate preview. It
+  overrides the Source from the description rule (25 characters at most).
+- **Experiments without test samples** (reagent or standards bridging, assay
+  optimisation): *This experiment has no test samples* turns the per-plate
+  "no test samples" error into a warning, and such plates get
+  `nominal_sample_dilution` "1" instead of an empty value. No placeholder
+  samples are added.
+
+### Changed
+- **`sampleid` comes from the well's description**, for every specimen type:
+  the dilution ratio removed, letters and digits only, at most 15 characters
+  ("QC1 (Orange) 1:50" -> `QC1Orange`, "Inhouse Ref 1:2952450" -> `InhouseRef`).
+  It used to hold the number from the type code or a copy of the well. A well
+  with no description keeps the type-code number. Different descriptions that
+  end up with the same identifier are listed as a validation warning. Applies
+  to new uploads; stored data is unchanged. Grouping by `sampleid` (replicates,
+  linearity control sets) now follows the description.
+- **"Same wells on every plate"** leaves wells that have no type and no reading
+  alone, on every plate, instead of turning them into samples with no
+  description (batches whose plates use different columns).
+
+### Fixed
+- **Description groups after a re-type.** A specimen-type tab drawn before its
+  rule existed showed the separator "_" and, when the browser reported it,
+  replaced the separator proposed from the data (a space for "QC1 (Orange)
+  1:50"): every description became one element and the groups could not be
+  configured. The box now takes the rule's separator instead.
+
 ## v1.2.0 — Choosing the precision-weights model; the same diagnostics for both models
 
 Needs i-spi-compute 1.2.0 (curveRcore 0.7.1, curveRweights 0.3.1) and migration
