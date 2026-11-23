@@ -1226,6 +1226,7 @@ server <- function(input, output, session) {
       source("std_curve_weights_module.R", local = TRUE)  # Precision Weights tab (sibling to Standard Curve)
       source("std_curve_compare_module.R", local = TRUE)
       source("plate_gating_module.R", local = TRUE)            # Compare fits: Plates gating mode
+      source("plate_dilution_series_helpers.R", local = TRUE) # ... its pure helpers (series shaping)
       source("plate_dilution_series_module.R", local = TRUE)  # QC: Plate Dilution Series tab
       source("linearity_report.R",   local = TRUE)   # QC: Replicate Linearity (sets, pairs, regression, report)
       source("linearity_stored.R", local = TRUE)     # ... stored estimates for controls and standards

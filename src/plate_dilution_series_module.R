@@ -21,7 +21,12 @@
 #                   In addition, any TEST SAMPLE (patientid / timeperiod) that
 #                   was run at more than one dilution on a plate is overlaid as
 #                   its own dashed trace, labelled by patientid + timeperiod --
-#                   useful for reading optimization plates. Read-only: still
+#                   useful for reading optimization plates. CONTROLS are
+#                   overlaid as dotted traces keyed "<name> | <control source>"
+#                   (every control, even at one dilution). A "Show" checkbox
+#                   picks test samples and/or controls; a "Control source"
+#                   selector narrows the controls. Series shaping lives in
+#                   plate_dilution_series_helpers.R. Read-only: still
 #                   built with ggplot2 + plotly::ggplotly() (pds_facet_plot()),
 #                   unchanged. Masked points are shown identically to included
 #                   ones here (no mask/unmask support on this sub-tab).
@@ -119,10 +124,17 @@ plateDilutionSeriesUI <- function(id) {
               shiny::h4("Analyte"),
               shiny::helpText(
                 "Filter to a single antigen + feature. Each plate then shows ",
-                "one trace per standard-curve source, plus any test sample run ",
-                "at more than one dilution (dashed, labelled patient/timeperiod)."),
+                "one trace per standard-curve source (solid), plus any test ",
+                "sample run at more than one dilution (dashed, labelled ",
+                "patient | timeperiod) and every control (dotted, labelled ",
+                "name | control source)."),
               shiny::uiOutput(ns("sources_antigen_ui")),
-              shiny::uiOutput(ns("sources_feature_ui"))
+              shiny::uiOutput(ns("sources_feature_ui")),
+              shiny::checkboxGroupInput(
+                ns("sources_show"), "Show with the standards",
+                choices = c("Test samples" = "samples", "Controls" = "controls"),
+                selected = c("samples", "controls"), inline = TRUE),
+              shiny::uiOutput(ns("sources_ctrl_src_ui"))
             )
           ),
           shiny::column(
@@ -164,10 +176,7 @@ plateDilutionSeriesServer <- function(id, pool, scope,
       x <- as.character(x)
       ifelse(is.na(x) | x %in% c("__none__", ""), NONE_SRC, x)
     }
-    feat_label <- function(x) {
-      x <- as.character(x)
-      ifelse(is.na(x) | x %in% c("__none__", ""), NONE_FEAT, x)
-    }
+    feat_label <- pds_feat_label   # plate_dilution_series_helpers.R
 
     # plate facet order: sort by the first integer in the plate label, then
     # alphabetically, so "Plate 2" precedes "Plate 10".
@@ -184,28 +193,7 @@ plateDilutionSeriesServer <- function(id, pool, scope,
     # since this reads the BASE table (fetch_raw_standard = SELECT * FROM
     # xmap_standard), `masked`/`mask_reason` (if present in df) are passed
     # through untouched: they are the LIVE flag, not a fit-time snapshot.
-    prep_points <- function(df) {
-      if (is.null(df) || !nrow(df)) return(NULL)
-      if (!"feature"      %in% names(df)) df$feature <- NA_character_
-      if (!"antigen"      %in% names(df)) df$antigen <- NA_character_
-      if (!"source"       %in% names(df)) df$source  <- NA_character_
-      if (!"antibody_mfi" %in% names(df)) return(NULL)
-      if (!"dilution"     %in% names(df)) return(NULL)
-      plate_raw <- if ("plate" %in% names(df) && !all(is.na(df$plate)))
-                     as.character(df$plate)
-                   else if ("plateid" %in% names(df)) as.character(df$plateid)
-                   else "plate"
-      num <- function(x) suppressWarnings(as.numeric(as.character(x)))
-      df$dil_num     <- num(df$dilution)
-      df$mfi_num     <- num(df$antibody_mfi)
-      df$feature_lbl <- feat_label(df$feature)
-      df$antigen_lbl <- as.character(df$antigen)
-      df$plate_lbl   <- plate_raw
-      df <- df[is.finite(df$dil_num) & df$dil_num > 0 &
-               is.finite(df$mfi_num) & df$mfi_num > 0, , drop = FALSE]
-      if (!nrow(df)) return(NULL)
-      df
-    }
+    prep_points <- pds_prep_points   # plate_dilution_series_helpers.R
 
     # ---- raw standards for the current scope, prepped for plotting ---------
     # Depends on calib_dirty() too (not just reload_trigger()) so a mask/unmask
@@ -235,34 +223,39 @@ plateDilutionSeriesServer <- function(id, pool, scope,
     # ---- test samples for the selected analyte (Sources tab overlay) -------
     # Keep only patientid/timeperiod series measured at >1 distinct dilution on a
     # given plate -- the dilution series worth joining and labelling.
-    sources_samples <- shiny::reactive({
-      s <- scope()
-      shiny::req(s$study, s$experiment, s$project_id,
-                 input$sources_antigen, input$sources_feature)
+    raw_samples <- shiny::reactive({
+      s <- scope(); shiny::req(s$study, s$experiment, s$project_id)
       reload_trigger()
-
-      raw <- tryCatch(
+      tryCatch(
         fetch_raw_sample(pool, project = s$project_id,
                          study = s$study, experiment = s$experiment),
         error = function(e) { message("[plate-dilution] sample fetch failed: ",
                                        conditionMessage(e)); NULL })
-      smp <- prep_points(raw)
-      if (is.null(smp)) return(NULL)
-      if (!all(c("patientid", "timeperiod") %in% names(smp))) return(NULL)
+    })
+    raw_controls <- shiny::reactive({
+      s <- scope(); shiny::req(s$study, s$experiment, s$project_id)
+      reload_trigger()
+      tryCatch(
+        fetch_raw_control(pool, project = s$project_id,
+                          study = s$study, experiment = s$experiment),
+        error = function(e) { message("[plate-dilution] control fetch failed: ",
+                                       conditionMessage(e)); NULL })
+    })
+    show_of <- function(what) what %in% (input$sources_show %||% character())
 
-      smp <- smp[smp$antigen_lbl == input$sources_antigen &
-                 smp$feature_lbl == input$sources_feature, , drop = FALSE]
-      if (!nrow(smp)) return(NULL)
+    # Test samples: patientid/timeperiod series measured at >1 dilution on a plate.
+    sources_samples <- shiny::reactive({
+      shiny::req(input$sources_antigen, input$sources_feature)
+      if (!show_of("samples")) return(NULL)
+      pds_sample_series(raw_samples(), input$sources_antigen, input$sources_feature)
+    })
 
-      smp$sample_lbl <- paste0(as.character(smp$patientid), " | ",
-                               as.character(smp$timeperiod))
-      # >1 distinct dilution, evaluated per (patient/timeperiod, plate)
-      key  <- paste(smp$sample_lbl, smp$plate_lbl, sep = "\r")
-      ndil <- tapply(smp$dil_num, key, function(v) length(unique(v)))
-      keep <- names(ndil)[ndil >= 2]
-      smp  <- smp[key %in% keep, , drop = FALSE]
-      if (!nrow(smp)) return(NULL)
-      smp
+    # Controls: every control of the analyte, keyed "<name> | <control source>".
+    sources_controls <- shiny::reactive({
+      shiny::req(input$sources_antigen, input$sources_feature)
+      if (!show_of("controls")) return(NULL)
+      pds_control_series(raw_controls(), input$sources_antigen, input$sources_feature,
+                         sources = input$sources_ctrl_src %||% character())
     })
 
     # ---- shared facet-plot builder (SOURCES TAB ONLY -- read-only) --------
@@ -271,8 +264,10 @@ plateDilutionSeriesServer <- function(id, pool, scope,
     # group_lab : legend title
     # samples   : optional prepped test-sample frame (Sources tab); overlaid as
     #             dashed traces keyed on $sample_lbl.
+    # controls  : optional pds_control_series() frame; dotted traces keyed on
+    #             $series ("<name> | <control source>").
     pds_facet_plot <- function(df, group_col, group_lab,
-                               samples = NULL, n_cols = N_COLS) {
+                               samples = NULL, controls = NULL, n_cols = N_COLS) {
       fmt <- function(x) format(x, trim = TRUE, scientific = FALSE)
 
       base <- data.frame(
@@ -309,8 +304,30 @@ plateDilutionSeriesServer <- function(id, pool, scope,
           "<br>timeperiod: ", shown(pick("timeperiod")),
           "<br>dilution: ", fmt(samp$dil_num),
           "<br>MFI: ",      fmt(samp$mfi_num))
-        combined <- rbind(base, samp)
+        combined <- rbind(combined, samp)
       }
+      has_controls <- !is.null(controls) && nrow(controls) > 0
+      if (has_controls) {
+        ctl <- data.frame(
+          dil_num   = controls$dil_num,
+          mfi_num   = controls$mfi_num,
+          plate_lbl = as.character(controls$plate_lbl),
+          series    = as.character(controls$series),
+          type      = "Control",
+          stringsAsFactors = FALSE)
+        cpick <- function(nm) if (nm %in% names(controls)) as.character(controls[[nm]]) else rep(NA_character_, nrow(controls))
+        cshown <- function(v) ifelse(is.na(v) | v %in% c("", "__none__"), "-", v)
+        ctl$hover_txt <- paste0(
+          "Control: ", cshown(controls$control_name),
+          "<br>control source: ", cshown(controls$control_source),
+          "<br>plate: ",    ctl$plate_lbl,
+          "<br>well: ",     cshown(cpick("well")),
+          "<br>dilution: ", fmt(ctl$dil_num),
+          "<br>MFI: ",      fmt(ctl$mfi_num))
+        combined <- rbind(combined, ctl)
+      }
+      has_overlay <- has_samples || has_controls
+      legend_lab  <- if (has_overlay) "Series" else group_lab
 
       combined$plate_f <- order_plate_factor(combined$plate_lbl)
       combined <- combined[order(combined$plate_f, combined$type,
@@ -327,7 +344,7 @@ plateDilutionSeriesServer <- function(id, pool, scope,
       pal <- scales::hue_pal()(max(length(unique(combined$series)), 1L))
       names(pal) <- unique(combined$series)
 
-      mapping <- if (has_samples)
+      mapping <- if (has_overlay)
         ggplot2::aes(x = dil_num, y = mfi_num, colour = series,
                      group = interaction(series, type),
                      linetype = type, text = hover_txt)
@@ -341,7 +358,7 @@ plateDilutionSeriesServer <- function(id, pool, scope,
         ggplot2::scale_x_log10(breaks = x_breaks, labels = nat_lab,
                                expand = ggplot2::expansion(mult = 0.04)) +
         ggplot2::scale_y_log10() +
-        ggplot2::scale_colour_manual(values = pal, name = group_lab) +
+        ggplot2::scale_colour_manual(values = pal, name = legend_lab) +
         ggplot2::facet_wrap(~ plate_f, ncol = n_cols) +
         ggplot2::labs(x = "Dilution Fraction", y = "antibody_mfi",
                       title = "Dilution series by plate") +
@@ -353,9 +370,9 @@ plateDilutionSeriesServer <- function(id, pool, scope,
           axis.text.x      = ggplot2::element_text(angle = 60, hjust = 1),
           legend.title     = ggplot2::element_text(size = 10),
           plot.title       = ggplot2::element_text(size = 13, face = "bold"))
-      if (has_samples)
+      if (has_overlay)
         g <- g + ggplot2::scale_linetype_manual(
-          values = c("Standard" = "solid", "Test sample" = "dashed"),
+          values = c("Standard" = "solid", "Test sample" = "dashed", "Control" = "dotted"),
           name = NULL)
 
       p <- plotly::ggplotly(g, tooltip = "text")
@@ -364,8 +381,15 @@ plateDilutionSeriesServer <- function(id, pool, scope,
       ax <- grep("^xaxis", names(p$x$layout), value = TRUE)
       if (!length(ax)) ax <- "xaxis"
       for (nm in ax) p$x$layout[[nm]]$tickangle <- -60
+      # ggplotly names overlay traces "(series,type)"; the line style already
+      # says the type, so the legend shows just the series.
+      for (i in seq_along(p$x$data)) {
+        tn <- p$x$data[[i]]$name
+        if (is.character(tn) && length(tn) == 1L)
+          p$x$data[[i]]$name <- sub("^\\((.*),(Standard|Test sample|Control)\\)$", "\\1", tn)
+      }
       plotly::layout(p, margin = list(t = 50, b = 95),
-                     legend = list(title = list(text = group_lab)))
+                     legend = list(title = list(text = legend_lab)))
     }
 
     # facet grid -> pixel height (rows * per-row + padding for title/legend)
@@ -984,35 +1008,57 @@ plateDilutionSeriesServer <- function(id, pool, scope,
          df$feature_lbl == input$sources_feature, , drop = FALSE]
     })
 
+    # Control-source selector: only when the analyte's controls carry one.
+    output$sources_ctrl_src_ui <- shiny::renderUI({
+      shiny::req(input$sources_antigen, input$sources_feature)
+      if (!show_of("controls")) return(NULL)
+      srcs <- pds_control_sources(raw_controls(), input$sources_antigen, input$sources_feature)
+      if (!length(srcs) || identical(srcs, PDS_NONE_SRC)) return(NULL)
+      keep <- intersect(shiny::isolate(input$sources_ctrl_src), srcs)
+      shiny::selectizeInput(ns("sources_ctrl_src"),
+        shiny::tagList("Control source", help_icon("glossary.control_source", ns)),
+        choices = srcs, selected = keep, multiple = TRUE,
+        options = list(placeholder = "all", plugins = list("remove_button")))
+    })
+
     output$sources_status <- shiny::renderUI({
       df <- sources_data()
       if (is.null(df) || !nrow(df))
         return(shiny::div(class = "alert alert-warning",
                           "No usable standard points for this antigen + feature."))
       smp      <- sources_samples()
+      ctl      <- sources_controls()
       n_series <- if (is.null(smp)) 0L else length(unique(smp$sample_lbl))
-      samp_txt <- if (n_series > 0)
+      samp_txt <- if (!show_of("samples")) ""
+                  else if (n_series > 0)
                     sprintf(" \u00b7 %d multi-dilution test-sample series", n_series)
                   else " \u00b7 no multi-dilution test samples"
+      n_ctl    <- if (is.null(ctl)) 0L else length(unique(ctl$series))
+      ctl_txt  <- if (!show_of("controls")) ""
+                  else if (n_ctl > 0) sprintf(" \u00b7 %d control series", n_ctl)
+                  else " \u00b7 no controls"
       shiny::div(style = "margin-bottom:6px;color:#555;",
-        sprintf("%d plate(s) \u00b7 %d source trace(s)%s \u00b7 %s | %s",
+        sprintf("%d plate(s) \u00b7 %d curve-source trace(s)%s%s \u00b7 %s | %s",
                 length(unique(df$plate_f)),
                 length(unique(df$source_lbl)),
-                samp_txt, input$sources_antigen, input$sources_feature))
+                samp_txt, ctl_txt, input$sources_antigen, input$sources_feature))
     })
 
     output$sources_plot_ui <- shiny::renderUI({
       df <- sources_data(); shiny::req(df, nrow(df) > 0)
       smp    <- sources_samples()
+      ctl    <- sources_controls()
       plates <- unique(c(as.character(df$plate_lbl),
-                         if (!is.null(smp)) as.character(smp$plate_lbl)))
+                         if (!is.null(smp)) as.character(smp$plate_lbl),
+                         if (!is.null(ctl)) as.character(ctl$plate_lbl)))
       h <- grid_height_px(length(plates))
       plotly::plotlyOutput(ns("sources_plot"), height = paste0(h, "px"))
     })
 
     output$sources_plot <- plotly::renderPlotly({
       df <- sources_data(); shiny::req(df, nrow(df) > 0)
-      pds_facet_plot(df, "source_lbl", "Source", samples = sources_samples())
+      pds_facet_plot(df, "source_lbl", "Curve source",
+                     samples = sources_samples(), controls = sources_controls())
     })
 
     invisible(NULL)
