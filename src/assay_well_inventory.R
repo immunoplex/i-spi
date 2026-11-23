@@ -512,13 +512,29 @@ ai_type_suffix <- function(type_code) {
 #' @param type_code  new type code, or NULL to leave alone. "" clears the well
 #'                   to empty (specimen_type NA).
 #' @param description new description, or NULL to leave alone.
-#' @return the modified inventory; touched rows get origin "user".
+#' @param source     new specimen Source, or NULL to leave alone. Stored in
+#'                   `instrument_source`, which overrides whatever Source the
+#'                   description rule produces for that well ("" clears it).
+#'                   Cut to AI_SOURCE_MAX characters (the xmap_* column width).
+#' @param skip_empty_except plate key(s) on which empty wells may still be
+#'                   edited; on every OTHER plate, empty wells (no specimen type)
+#'                   are left alone. NULL (default) = edit empty wells anywhere.
+#'                   "Same wells on every plate" passes the current plate, so a
+#'                   batch whose plates use different columns does not turn the
+#'                   other plates' empty wells into samples with no description.
+#' @return the modified inventory; touched rows get origin "user". The number
+#'   of rows changed is attached as attr(, "n_set").
 ai_inventory_set <- function(inv, plate_key, wells,
-                             type_code = NULL, description = NULL) {
+                             type_code = NULL, description = NULL,
+                             source = NULL, skip_empty_except = NULL) {
+  attr(inv, "n_set") <- 0L
   if (!length(wells)) return(inv)
   sel <- inv$well %in% wells
   if (!is.null(plate_key)) sel <- sel & inv$plate_key %in% plate_key
+  if (!is.null(skip_empty_except))
+    sel <- sel & (!is.na(inv$specimen_type) | inv$plate_key %in% skip_empty_except)
   if (!any(sel)) return(inv)
+  attr(inv, "n_set") <- sum(sel)
 
   if (!is.null(type_code)) {
     tc <- trimws(as.character(type_code)[1])
@@ -531,7 +547,89 @@ ai_inventory_set <- function(inv, plate_key, wells,
     inv$description[sel] <- if (!is.na(dsc) && nzchar(trimws(dsc))) dsc else NA_character_
     inv$desc_origin[sel] <- "user"
   }
+  if (!is.null(source)) {
+    if (!"instrument_source" %in% names(inv)) inv$instrument_source <- NA_character_
+    src <- trimws(as.character(source)[1])
+    inv$instrument_source[sel] <- if (!is.na(src) && nzchar(src))
+      substr(src, 1L, AI_SOURCE_MAX) else NA_character_
+  }
   inv
+}
+
+# Width of the Source column in xmap_sample / xmap_standard / xmap_control /
+# xmap_buffer (varchar(25)).
+AI_SOURCE_MAX <- 25L
+
+#' Wells whose description matches one or more wildcard patterns.
+#'
+#' `patterns` is a character vector, or one string with comma-separated
+#' patterns: "QC1*, QC2*". `*` matches any run of characters and `?` one
+#' character; matching ignores case and surrounding spaces and covers the whole
+#' description. Wells with no description never match.
+#' @return data.frame(plate_key, well, type_code, description) of the matches.
+ai_inventory_match_pattern <- function(inv, patterns, plate_key = NULL) {
+  none <- inv[0, c("plate_key", "well", "type_code", "description"), drop = FALSE]
+  if (is.null(inv) || !nrow(inv)) return(none)
+  p <- trimws(unlist(strsplit(paste(patterns, collapse = ","), ",", fixed = TRUE)))
+  p <- p[nzchar(p)]
+  if (!length(p)) return(none)
+  rx <- vapply(p, utils::glob2rx, character(1))
+  d <- trimws(as.character(inv$description))
+  sel <- rep(FALSE, nrow(inv))
+  for (r in rx) sel <- sel | (!is.na(d) & grepl(r, d, ignore.case = TRUE))
+  if (!is.null(plate_key)) sel <- sel & inv$plate_key %in% plate_key
+  inv[sel, c("plate_key", "well", "type_code", "description"), drop = FALSE]
+}
+
+#' Propose a specimen Source per plate from the plate (file) names.
+#'
+#' Splits each name (extension dropped) on "_", space, "-" and "." and keeps the
+#' parts that DIFFER between the plates of the batch, in file order: for
+#' "2026_11_19_RPE_supplier_jackson_high" and
+#' "2026_11_20_RPE_supplie_southern ON JHM_low" that is jackson / southern,
+#' ON JHM, high / low. Parts that are pure numbers (dates, run numbers) are not
+#' proposed, and two parts that never occur on the same plate and differ by one
+#' character ("supplier" / "supplie") are treated as one spelling of the same
+#' constant part and dropped.
+#'
+#' @param names  plate or file names, one per plate.
+#' @param keep   optional character() of parts to use instead of the proposal
+#'               (the user's choice); compared case-sensitively.
+#' @return list(parts = data.frame(part, n_plates, proposed), source = named
+#'   character() of the joined Source per name (joined with "_", cut to
+#'   AI_SOURCE_MAX), keep = the parts used).
+ai_source_from_plate_names <- function(names, keep = NULL) {
+  nm <- sub("\\.[A-Za-z0-9]{1,5}$", "", as.character(names))
+  toks <- lapply(nm, function(x) {
+    t <- unlist(strsplit(x, "[_ .-]+"))
+    t[nzchar(t)]
+  })
+  all_t <- unique(unlist(toks))
+  n_pl  <- vapply(all_t, function(t) sum(vapply(toks, function(v) t %in% v, logical(1))),
+                  integer(1))
+  varies <- n_pl < length(nm)
+  numeric_part <- grepl("^[0-9]+$", all_t)
+  # one-character spelling variants of a part that is really constant
+  variant <- rep(FALSE, length(all_t))
+  cand <- which(varies & !numeric_part)
+  for (i in cand) for (j in cand) {
+    if (i >= j) next
+    co <- any(vapply(toks, function(v) all_t[i] %in% v && all_t[j] %in% v, logical(1)))
+    if (!co && utils::adist(tolower(all_t[i]), tolower(all_t[j])) <= 1 &&
+        n_pl[i] + n_pl[j] == length(nm)) {
+      variant[i] <- TRUE; variant[j] <- TRUE
+    }
+  }
+  proposed <- varies & !numeric_part & !variant & length(nm) > 1
+  use <- if (is.null(keep)) all_t[proposed] else intersect(all_t, keep)
+  src <- vapply(toks, function(v) {
+    s <- paste(v[v %in% use], collapse = "_")
+    substr(s, 1L, AI_SOURCE_MAX)
+  }, character(1))
+  names(src) <- names
+  list(parts = data.frame(part = all_t, n_plates = unname(n_pl), proposed = unname(proposed),
+                          stringsAsFactors = FALSE),
+       source = src, keep = use)
 }
 
 #' Wells (across the whole batch, or one plate) whose description matches a
@@ -565,7 +663,11 @@ ai_inventory_type_summary <- function(inv) {
 #' proceeding would land unusable standards.
 #'
 #' @return the standard issues frame: data.frame(sheet, severity, column, message).
-ai_inventory_requirements <- function(inv, require_blanks = TRUE) {
+#' @param allow_no_test_samples TRUE when the user has confirmed that the
+#'   experiment has no test samples (reagent or standards bridging, assay
+#'   optimisation): a plate without X is then a warning, not an error.
+ai_inventory_requirements <- function(inv, require_blanks = TRUE,
+                                      allow_no_test_samples = FALSE) {
   empty <- data.frame(sheet = character(), severity = character(),
                       column = character(), message = character(),
                       stringsAsFactors = FALSE)
@@ -581,8 +683,12 @@ ai_inventory_requirements <- function(inv, require_blanks = TRUE) {
   for (i in seq_len(nrow(s))) {
     pk <- s$plate_key[i]
     if (s$X[i] == 0)
-      add("error", "specimen_type",
-          sprintf("Plate '%s' has no test samples (type X).", pk))
+      if (isTRUE(allow_no_test_samples))
+        add("warning", "specimen_type",
+            sprintf("Plate '%s' has no test samples (type X); accepted: this experiment has none.", pk))
+      else
+        add("error", "specimen_type",
+            sprintf("Plate '%s' has no test samples (type X). If the experiment has none (e.g. reagent or standards bridging), tick \"This experiment has no test samples\".", pk))
     if (s$S[i] == 0)
       add("error", "specimen_type",
           sprintf("Plate '%s' has no standard-curve points (type S). Assign the standards before continuing.", pk))
@@ -614,9 +720,17 @@ ai_inventory_requirements <- function(inv, require_blanks = TRUE) {
 
 #' TRUE when no plate is "all X" -- i.e. somebody has distinguished the
 #' standards and blanks, either in the file or in the grid.
-ai_inventory_types_resolved <- function(inv) {
+ai_inventory_types_resolved <- function(inv, allow_no_test_samples = FALSE) {
   if (is.null(inv) || !nrow(inv)) return(FALSE)
-  !any(ai_inventory_requirements(inv)$severity == "error")
+  !any(ai_inventory_requirements(
+    inv, allow_no_test_samples = allow_no_test_samples)$severity == "error")
+}
+
+#' TRUE when at least one plate has no test samples (type X): the grid then
+#' offers the "This experiment has no test samples" confirmation.
+ai_inventory_lacks_test_samples <- function(inv) {
+  if (is.null(inv) || !nrow(inv)) return(FALSE)
+  any(ai_inventory_type_summary(inv)$X == 0)
 }
 
 

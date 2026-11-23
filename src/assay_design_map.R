@@ -409,7 +409,10 @@ ai_design_resolved <- function(inv, dn) {
              specimen_dilution_factor = as.integer(g$dilution),
              specimen_source = blank(g$source),
              groupa = blank(g$group1), groupb = blank(g$group2),
-             biosample_id_barcode = sfx, stringsAsFactors = FALSE)
+             # sampleid from the well's description, as on the rules path
+             # (ai_sampleid_from_description in assay_shape_rules.R)
+             biosample_id_barcode = ai_sampleid_from_description(d$description, sfx),
+             stringsAsFactors = FALSE)
 }
 
 #' Lay the design's rows over a rules-resolved table (design wins per well).

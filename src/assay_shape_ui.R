@@ -148,6 +148,7 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         easyClose = TRUE, size = "l", footer = modalButton("Close")))
     })
 
+    fresh_box   <- new.env()               # per type: delimiter box just drawn
     rules_rv    <- reactiveVal(list())
     approved_rv <- reactiveVal(list())     # key "T\rshape_key" -> TRUE
     sel_shape   <- reactiveValues()        # per type: selected shape_key
@@ -383,6 +384,9 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
       panels <- lapply(tp, function(t) {
         init_delim <- isolate(rule_of(t)$delimiters)
         init_by    <- isolate(rule_of(t)$shape_by)
+        # the box's first report after (re)drawing is its initial value, not a
+        # choice: see the delimiter observer
+        fresh_box[[t]] <- TRUE
         tabPanel(
           title = sprintf("%s (%s)", AI_SPECIMEN_LABELS[[t]], t), value = t,
           tags$div(style = "padding-top:12px;",
@@ -506,6 +510,18 @@ ai_shape_server <- function(id, inventory_rv, enabled = reactive(TRUE),
         rs <- rules_rv(); if (is.null(rs[[tt]])) return()
         dl <- input[[paste0("delim_", tt)]]
         if (is.null(dl) || !nzchar(dl)) return()
+        # A freshly drawn box reports the value it was drawn with. When the
+        # tabset was drawn before the rule existed, that is the "_" fallback,
+        # and applying it would replace the separator proposed from the data
+        # (e.g. a space for "QC1 (Orange) 1:50") -- every description then
+        # becomes one element. Show the rule's separator in the box instead.
+        if (isTRUE(fresh_box[[tt]])) {
+          fresh_box[[tt]] <- FALSE
+          if (!identical(dl, rs[[tt]]$delimiters)) {
+            updateTextInput(session, paste0("delim_", tt), value = rs[[tt]]$delimiters)
+            return()
+          }
+        }
         if (identical(dl, rs[[tt]]$delimiters)) return()   # no-op guard
         rs[[tt]]$delimiters <- dl
         rs[[tt]] <- tryCatch(ai_rule_refresh_shapes(rs[[tt]], desc_of(tt)),

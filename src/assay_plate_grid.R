@@ -205,14 +205,37 @@ ai_plate_grid_ui <- function(id) {
             column(5, textInput(ns("edit_desc"), "Description (optional)",
                                 placeholder = "leave blank to keep existing"))
           ),
+          fluidRow(
+            column(5, textInput(ns("edit_source"), "Source (optional)",
+                                placeholder = "e.g. jackson_high; overrides the description rule")),
+            column(7, tags$div(style = "margin-top:25px;",
+              checkboxInput(ns("edit_source_from_plate"),
+                            "Set Source from the plate name instead", FALSE)))
+          ),
+          conditionalPanel(
+            condition = sprintf("input['%s']", ns("edit_source_from_plate")),
+            uiOutput(ns("plate_source_ui"))),
           checkboxInput(ns("edit_all_plates"),
-                        "Apply to the same wells on every plate in the batch", FALSE),
+                        "Apply to the same wells on every plate in the batch (wells that are empty on another plate are left alone)",
+                        FALSE),
           checkboxInput(ns("edit_matching"),
                         "Apply to every well in the batch whose description matches the selected well",
                         FALSE),
           actionButton(ns("apply_edit"), "Apply to selection", class = "btn-primary"),
           actionButton(ns("clear_sel"), "Clear selection", class = "btn-sm"),
-          actionButton(ns("undo_edit"), "Undo last edit", class = "btn-sm")))
+          actionButton(ns("undo_edit"), "Undo last edit", class = "btn-sm"),
+          tags$hr(),
+          tags$p(tags$strong("Or apply to every well whose description matches a pattern"),
+                 tags$br(),
+                 tags$small(style = "color:#5f6368;",
+                   "Across all plates, no selection needed. * matches anything, ? one ",
+                   "character; separate patterns with commas; case is ignored. Example: ",
+                   tags$code("QC1*, QC2*"), " moves every QC1 and QC2 well, at every ",
+                   "dilution, with the type, description and Source chosen above.")),
+          fluidRow(
+            column(6, textInput(ns("edit_pattern"), NULL, placeholder = "QC1*, QC2*")),
+            column(6, textOutput(ns("pattern_count")))),
+          actionButton(ns("apply_pattern"), "Apply to matching wells", class = "btn-primary")))
     ),
 
     conditionalPanel(
@@ -250,6 +273,7 @@ ai_plate_grid_ui <- function(id) {
 
     wellPanel(
       tags$h4("Layout check"),
+      uiOutput(ns("no_x_ui")),
       uiOutput(ns("gate"))
     )
   )
@@ -495,21 +519,28 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
       }
       tsel <- input$edit_type %||% ""
       dsc  <- input$edit_desc %||% ""
-      if (!nzchar(tsel) && !nzchar(trimws(dsc))) {
-        showNotification("Choose a specimen type or enter a description.", type = "warning")
+      if (!nzchar(tsel) && !nzchar(trimws(dsc)) &&
+          !isTRUE(input$edit_source_from_plate) && !nzchar(trimws(input$edit_source %||% ""))) {
+        showNotification("Choose a specimen type, a description or a Source.", type = "warning")
         return()
       }
-
-      undo_rv(inv)
 
       new_type <- if (!nzchar(tsel)) NULL
                   else if (identical(tsel, "__empty__")) ""
                   else paste0(tsel, trimws(input$edit_suffix %||% ""))
       new_desc <- if (nzchar(trimws(dsc))) dsc else NULL
 
-      pk <- if (isTRUE(input$edit_all_plates)) NULL else current_plate()
-      inv <- ai_inventory_set(inv, pk, s, type_code = new_type, description = new_desc)
-
+      # every (plate, well) to change: the selection on this plate, the same
+      # wells on the other plates (occupied ones only), and/or every well whose
+      # description matches a selected well
+      tg <- data.frame(plate_key = current_plate(), well = s, stringsAsFactors = FALSE)
+      if (isTRUE(input$edit_all_plates)) {
+        oth <- inv[inv$well %in% s & inv$plate_key != current_plate() &
+                     !is.na(inv$specimen_type), c("plate_key", "well"), drop = FALSE]
+        n_skipped <- sum(inv$well %in% s & inv$plate_key != current_plate() &
+                           is.na(inv$specimen_type))
+        tg <- rbind(tg, oth)
+      } else n_skipped <- 0L
       # "same description anywhere in the batch" -- the fix for a file where
       # every blank says only "blank": retype all of them in one action.
       if (isTRUE(input$edit_matching)) {
@@ -517,20 +548,132 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
         descs <- unique(stats::na.omit(cur$description[cur$well %in% s]))
         for (dd in descs) {
           m <- ai_inventory_matching(inv, dd)
-          if (nrow(m))
-            for (p in unique(m$plate_key))
-              inv <- ai_inventory_set(inv, p, m$well[m$plate_key == p],
-                                      type_code = new_type, description = new_desc)
+          if (nrow(m)) tg <- rbind(tg, m[, c("plate_key", "well"), drop = FALSE])
         }
       }
+      res <- apply_to_targets(inv, unique(tg), new_type, new_desc)
+      if (is.null(res)) return()
+      undo_rv(inv)
 
-      inventory_rv(inv)
-      n_scope <- if (isTRUE(input$edit_all_plates)) "every plate" else
-                 sprintf("plate %s", current_plate())
-      showNotification(sprintf("Updated %d well(s) on %s.", length(s), n_scope),
-                       type = "message")
+      inventory_rv(res$inv)
+      n_left <- n_skipped + res$n_unused
+      showNotification(paste0(
+        sprintf("Updated %d well(s) on %d plate(s).", res$n, res$n_plates),
+        if (n_left > 0)
+          sprintf(" %d empty well(s) (no type, no reading) were left alone.", n_left)
+        else ""), type = "message")
       updateTextInput(session, "edit_desc", value = "")
       updateTextInput(session, "edit_suffix", value = "")
+    })
+
+    # Source for each plate the edit touches: the plate-name parts, or the one
+    # Source typed in, or NULL (leave Source alone).
+    plate_name_of <- function(inv, pk) {
+      f <- inv$source_file[match(pk, inv$plate_key)]
+      ifelse(is.na(f) | !nzchar(f), pk, f)
+    }
+    plate_sources <- reactive({
+      inv <- inv_or_null(); req(inv)
+      pks <- unique(inv$plate_key)
+      ai_source_from_plate_names(plate_name_of(inv, pks), keep = input$plate_source_parts)
+    })
+    source_for <- function(inv, pk) {
+      if (isTRUE(input$edit_source_from_plate)) {
+        ps <- plate_sources()
+        pks <- unique(inv$plate_key)
+        return(unname(ps$source[match(pk, pks)]))
+      }
+      src <- trimws(input$edit_source %||% "")
+      if (nzchar(src)) src else NULL
+    }
+
+    # Apply type / description / Source to a set of (plate, well) targets.
+    # Returns NULL (with a notification) when there is nothing to apply.
+    apply_to_targets <- function(inv, tg, new_type, new_desc) {
+      use_src <- isTRUE(input$edit_source_from_plate) ||
+                 nzchar(trimws(input$edit_source %||% ""))
+      if (is.null(new_type) && is.null(new_desc) && !use_src) {
+        showNotification("Choose a specimen type, a description or a Source.", type = "warning")
+        return(NULL)
+      }
+      # a well with no specimen type and no reading was not used on this plate
+      # (e.g. a whole column selected where only some rows were run): retyping
+      # it would only add a sample with no description and no data
+      key_t <- paste(tg$plate_key, tg$well, sep = "")
+      key_i <- paste(inv$plate_key, inv$well, sep = "")
+      j <- match(key_t, key_i)
+      unused <- !is.na(j) & is.na(inv$specimen_type[j]) &
+                (if ("response_hint" %in% names(inv)) is.na(inv$response_hint[j]) else TRUE)
+      if (!identical(new_type, "")) tg <- tg[!unused, , drop = FALSE] else unused[] <- FALSE
+      if (!nrow(tg)) {
+        showNotification("No wells to change (the selected wells were not used on the plate).",
+                         type = "warning"); return(NULL)
+      }
+      n <- 0L
+      for (p in unique(tg$plate_key)) {
+        src <- if (use_src) source_for(inv, p) else NULL
+        if (use_src && (is.null(src) || is.na(src) || !nzchar(src)) &&
+            isTRUE(input$edit_source_from_plate)) src <- ""
+        inv <- ai_inventory_set(inv, p, tg$well[tg$plate_key == p],
+                                type_code = new_type, description = new_desc,
+                                source = src)
+        n <- n + (attr(inv, "n_set") %||% 0L)
+      }
+      list(inv = inv, n = n, n_plates = length(unique(tg$plate_key)),
+           n_unused = sum(unused))
+    }
+
+    # ---- plate-name Source: which parts of the plate names to use
+    output$plate_source_ui <- renderUI({
+      inv <- inv_or_null(); req(inv)
+      pks <- unique(inv$plate_key)
+      prop <- ai_source_from_plate_names(plate_name_of(inv, pks))
+      parts <- prop$parts
+      sel <- isolate(input$plate_source_parts) %||% parts$part[parts$proposed]
+      tagList(
+        checkboxGroupInput(ns("plate_source_parts"),
+          "Parts of the plate name to use (proposed: the parts that differ between plates)",
+          choices = parts$part, selected = intersect(sel, parts$part), inline = TRUE),
+        tableOutput(ns("plate_source_preview")))
+    })
+    output$plate_source_preview <- renderTable({
+      inv <- inv_or_null(); req(inv)
+      pks <- unique(inv$plate_key)
+      ps <- plate_sources()
+      data.frame(Plate = plate_name_of(inv, pks), Source = unname(ps$source),
+                 check.names = FALSE)
+    }, striped = TRUE, spacing = "xs")
+
+    # ---- pattern: every well whose description matches, across all plates
+    output$pattern_count <- renderText({
+      inv <- inv_or_null(); p <- trimws(input$edit_pattern %||% "")
+      if (is.null(inv) || !nzchar(p)) return("")
+      m <- ai_inventory_match_pattern(inv, p)
+      sprintf("%d well(s) on %d plate(s) match.", nrow(m), length(unique(m$plate_key)))
+    })
+    observeEvent(input$apply_pattern, {
+      inv <- inv_or_null(); req(inv)
+      p <- trimws(input$edit_pattern %||% "")
+      if (!nzchar(p)) {
+        showNotification("Enter a description pattern, e.g. QC1*.", type = "warning"); return()
+      }
+      m <- ai_inventory_match_pattern(inv, p)
+      if (!nrow(m)) {
+        showNotification(sprintf("No well's description matches '%s'.", p), type = "warning")
+        return()
+      }
+      tsel <- input$edit_type %||% ""
+      new_type <- if (!nzchar(tsel)) NULL
+                  else if (identical(tsel, "__empty__")) ""
+                  else paste0(tsel, trimws(input$edit_suffix %||% ""))
+      dsc <- input$edit_desc %||% ""
+      new_desc <- if (nzchar(trimws(dsc))) dsc else NULL
+      res <- apply_to_targets(inv, m[, c("plate_key", "well"), drop = FALSE], new_type, new_desc)
+      if (is.null(res)) return()
+      undo_rv(inv)
+      inventory_rv(res$inv)
+      showNotification(sprintf("Updated %d well(s) on %d plate(s) matching '%s'.",
+                               res$n, res$n_plates, p), type = "message")
     })
 
     observeEvent(input$undo_edit, {
@@ -714,7 +857,20 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
     issues <- reactive({
       inv <- inv_or_null()
       if (is.null(inv)) return(NULL)
-      ai_inventory_requirements(inv)
+      ai_inventory_requirements(inv, allow_no_test_samples = isTRUE(input$no_x_ok))
+    })
+
+    # Offered only when a plate has no test samples: reagent or standards
+    # bridging and assay optimisation runs legitimately have none.
+    output$no_x_ui <- renderUI({
+      inv <- inv_or_null()
+      if (is.null(inv) || !ai_inventory_lacks_test_samples(inv)) return(NULL)
+      checkboxInput(ns("no_x_ok"),
+        tags$span("This experiment has no test samples",
+                  tags$small(style = "color:#5f6368;font-weight:normal;",
+                    " (e.g. reagent or standards bridging, assay optimisation). ",
+                    "The plates load with standards, blanks and controls only.")),
+        value = isTRUE(isolate(input$no_x_ok)))
     })
 
     unconfirmed <- reactive({
@@ -744,7 +900,10 @@ ai_plate_grid_server <- function(id, inventory_rv, n_wells = reactive(96),
       tagList(
         if (isTRUE(ready()))
           tags$div(style = "color:#2e7d32;font-weight:600;",
-                   "Every plate has samples, standards and blanks. Continue to the description step.")
+                   if (isTRUE(input$no_x_ok) && ai_inventory_lacks_test_samples(inv))
+                     "Every plate has standards and blanks (no test samples, as confirmed). Continue to the description step."
+                   else
+                     "Every plate has samples, standards and blanks. Continue to the description step.")
         else
           tags$div(style = "color:#b02a37;font-weight:600;",
                    sprintf("%d problem(s) to resolve before continuing.", nerr + unc)),

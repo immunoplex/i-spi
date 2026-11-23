@@ -228,6 +228,12 @@
     }, error = function(e)
       stop(sprintf("[nsd recompute] %s", conditionMessage(e)), call. = FALSE))
   }
+  # A plate with no test samples (reagent or standards bridging) has no sample
+  # dilution to report: the template leaves nominal_sample_dilution empty for
+  # it, and it is part of the curve_lookup key. Use "1", as the recompute above
+  # does when there are no sample rows at all.
+  plates_map     <- .bead_fill_nsd(plates_map)
+  plate_id_sheet <- .bead_fill_nsd(plate_id_sheet)
 
   # assay_response_long: prefer the sheet; else fall back to the raw preview
   arl <- sheets[["assay_response_long"]]
@@ -262,6 +268,15 @@
   sheets[["plate_id"]]            <- plate_id_sheet
   sheets[["assay_response_long"]] <- arl
   sheets
+}
+
+# empty nominal_sample_dilution (a plate without test samples) -> "1"
+.bead_fill_nsd <- function(df) {
+  if (is.null(df) || !nrow(df) || !"nominal_sample_dilution" %in% names(df)) return(df)
+  v <- as.character(df$nominal_sample_dilution)
+  empty <- is.na(v) | !nzchar(trimws(v)) | v == "NA"
+  if (any(empty)) { v[empty] <- "1"; df$nominal_sample_dilution <- v }
+  df
 }
 
 # join a computed nominal_sample_dilution onto a sheet by the available group cols

@@ -935,6 +935,50 @@ ai_shape_verdict <- function(type, shape_key, descriptions, rule,
        missing_components = unique(miss))
 }
 
+#' The sample identifier stored in xmap_*.sampleid, from the well's description.
+#'
+#' The description is what the person who ran the plate typed for the well, so
+#' it is the identifier: a barcode, "QC1 (Orange)", "Inhouse Ref". The dilution
+#' ratio ("1:50", "1/50") is removed because it is stored in its own column;
+#' then every character that is not a letter or digit is removed and the result
+#' is cut to AI_SAMPLEID_MAX characters (the column width):
+#'   "QC1 (Orange) 1:50"      -> "QC1Orange"
+#'   "Inhouse Ref 1:2952450"  -> "InhouseRef"
+#' An empty result (no description, or a description that was only a ratio)
+#' falls back to `fallback` -- the number in the type code, as before.
+AI_SAMPLEID_MAX <- 15L
+ai_sampleid_from_description <- function(description, fallback = "") {
+  d <- as.character(description)
+  d[is.na(d)] <- ""
+  d <- gsub("(^|[^0-9])1\\s*[:/]\\s*[0-9][0-9.,]*", "\\1", d)
+  d <- gsub("[^A-Za-z0-9]", "", d)
+  d <- substr(d, 1L, AI_SAMPLEID_MAX)
+  fb <- rep_len(as.character(fallback), length(d))
+  fb[is.na(fb)] <- ""
+  ifelse(nzchar(d), d, fb)
+}
+
+#' Descriptions that end up with the same sampleid although they differ (once
+#' the dilution ratio is set aside), within one specimen type: cutting to 15
+#' characters or dropping punctuation made them indistinguishable.
+#' @return data.frame(specimen_type, sampleid, descriptions) -- one row per clash.
+ai_sampleid_clashes <- function(specimen_type, description, sampleid) {
+  base <- trimws(gsub("(^|[^0-9])1\\s*[:/]\\s*[0-9][0-9.,]*", "\\1", as.character(description)))
+  ok <- !is.na(description) & nzchar(base) & !is.na(sampleid)
+  if (!any(ok)) return(data.frame(specimen_type = character(), sampleid = character(),
+                                  descriptions = character(), stringsAsFactors = FALSE))
+  u <- unique(data.frame(t = specimen_type[ok], s = sampleid[ok], b = base[ok],
+                         stringsAsFactors = FALSE))
+  key <- paste(u$t, u$s, sep = "\r")
+  dup <- key %in% key[duplicated(key)]
+  if (!any(dup)) return(data.frame(specimen_type = character(), sampleid = character(),
+                                   descriptions = character(), stringsAsFactors = FALSE))
+  u <- u[dup, , drop = FALSE]
+  agg <- stats::aggregate(b ~ t + s, data = u, FUN = function(x) paste(sort(unique(x)), collapse = " | "))
+  data.frame(specimen_type = agg$t, sampleid = agg$s, descriptions = agg$b,
+             stringsAsFactors = FALSE)
+}
+
 #' Resolve the whole inventory to the identity columns the template expects.
 #'
 #' Output column names match what build_plates_map() already writes, so nothing
@@ -1012,7 +1056,10 @@ ai_resolve_inventory <- function(inv, ruleset, reference = NULL) {
     # exactly as the existing parser reads it
     sfx <- if (exists("ai_type_suffix", mode = "function"))
       ai_type_suffix(d$type_code[i]) else substring(trimws(d$type_code[i]), 2L)
-    res$biosample_id_barcode[i] <- if (is.na(sfx)) "" else sfx
+    # sampleid: the well's own description (see ai_sampleid_from_description);
+    # the type-code number only when there is no usable description
+    res$biosample_id_barcode[i] <- ai_sampleid_from_description(
+      d$description[i], if (is.na(sfx)) "" else sfx)
     if (t != "X" && !nzchar(res$subject_id[i]))
       res$subject_id[i] <- if (nzchar(sfx %||% "")) sfx else "1"
 
@@ -1027,6 +1074,18 @@ ai_resolve_inventory <- function(inv, ruleset, reference = NULL) {
                             if (is.na(d$description[i])) "" else d$description[i]),
           stringsAsFactors = FALSE)
   }
+
+  # different descriptions that the 15-character sampleid can no longer tell
+  # apart: say so (a warning -- the wells still load, under one sampleid)
+  cl <- ai_sampleid_clashes(res$specimen_type, res$description, res$biosample_id_barcode)
+  for (k in seq_len(nrow(cl)))
+    rows[[length(rows) + 1L]] <- data.frame(
+      sheet = "description_rules", severity = "warning", column = "sampleid",
+      message = sprintf(paste0("Type %s: different descriptions share the sampleid '%s' ",
+                               "(sampleid keeps only letters and digits, at most %d): %s. ",
+                               "Shorten or edit the descriptions if they are different samples."),
+                        cl$specimen_type[k], cl$sampleid[k], AI_SAMPLEID_MAX, cl$descriptions[k]),
+      stringsAsFactors = FALSE)
 
   list(resolved = res,
        issues = if (length(rows)) do.call(rbind, rows) else empty_iss)
