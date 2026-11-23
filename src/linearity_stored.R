@@ -45,11 +45,16 @@ lin_control_label <- function(sampleid, well, source = NULL, stype = NULL, dilut
 
 # Stored control rows (calib_controls joined to curve_lookup) -> lin_fetch-shaped rows.
 # One control well appears once per curve (every standard source of its plate) and method.
+# control_source is the control well's own Source (e.g. "jackson_high"). On plates
+# loaded before sampleids came from descriptions the Source held the control's NAME;
+# there the label equals it and it is not a source (stored as "__none__").
 lin_stored_controls <- function(ctl) {
   if (is.null(ctl) || !is.data.frame(ctl) || !nrow(ctl)) return(NULL)
+  lab <- lin_control_label(ctl$sampleid, ctl$well, ctl$control_source, ctl$stype, ctl$dilution)
+  csrc <- trimws(as.character(ctl$control_source))
+  csrc[!is.na(csrc) & toupper(csrc) == toupper(trimws(lab))] <- NA_character_
   data.frame(curve_id = .lin_id(ctl$curve_id), method = as.character(ctl$method),
-             sampleid = .lin_none_chr(lin_control_label(ctl$sampleid, ctl$well, ctl$control_source,
-                                                        ctl$stype, ctl$dilution)),
+             sampleid = .lin_none_chr(lab), control_source = .lin_none_chr(csrc),
              patientid = "__none__", timeperiod = "__none__", dilution = .lin_dil_txt(ctl$dilution),
              final_concentration = .lin_num(ctl$final_concentration), pcov = .lin_num(ctl$pcov),
              pcov_pass = as.logical(ctl$pcov_pass), pcov_gate_class = as.character(ctl$pcov_gate_class),

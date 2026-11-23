@@ -5,9 +5,27 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
-## Unreleased — Plates without test samples; sample identifiers from descriptions
-
-### Added
+## Unreleased — Control sources in QC; plates without test samples; sample identifiers from descriptions
+
+### Added
+- **Controls by control source in QC > Plate dilution series > Sources.** Every
+  control of the antigen is drawn per plate as a dotted trace labelled
+  *name | control source* (e.g. `QC1Orange | jackson_high`), joined across its
+  dilutions. *Show with the standards* picks test samples and/or controls, and
+  a *Control source* list narrows the controls.
+- **Controls on the standard curve (QC > Standard Curve > Explore fits).** A
+  *Controls* legend entry, hidden until clicked, plots the control wells at
+  their back-calculated concentration and measured response. The hover gives
+  sampleid, control source, dilution and well and, for replicate wells on the
+  plate, their number and the CV% of response and concentration.
+- **Control source in QC > Replicate Linearity**: a *Control source* filter on
+  each axis and in the same/different rules, a *Control source vs control
+  source* comparison and a "More than one control source" set count.
+- **Replicate CV%** in Replicate Linearity: `pair_cv_pct`, and the replicate
+  count and CV% of each side (`x_rep_n`, `x_rep_cv_pct`, `y_rep_n`,
+  `y_rep_cv_pct`) in the pairs table; `cv_pct` and `rep_cv_pct_median` in the
+  consensus table. CV% is 100 × SD / mean of the observed estimates, not pcov.
+- Glossary: *Control source and curve source*.
 - **Description pattern in the plate editor.** "Apply to matching wells" with a
   pattern such as `QC1*, QC2*` retypes every well whose description matches,
   on every plate and at every dilution, without selecting wells; the number of
@@ -23,6 +41,11 @@ a `.N` suffix for a second release on the same day); those tags remain as histor
   samples are added.
 
 ### Changed
+- **Replicate Linearity keeps control sources apart.** Every comparison other
+  than *Control source vs control source* requires the same control source, so
+  a control from one supplier is no longer paired with another's as a plate or
+  dilution replicate. "Source" there is now labelled **Curve source**; the
+  download keeps the `x_source` / `y_source` column names.
 - **`sampleid` comes from the well's description**, for every specimen type:
   the dilution ratio removed, letters and digits only, at most 15 characters
   ("QC1 (Orange) 1:50" -> `QC1Orange`, "Inhouse Ref 1:2952450" -> `InhouseRef`).

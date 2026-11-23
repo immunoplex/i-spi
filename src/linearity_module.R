@@ -245,12 +245,18 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
           shiny::h5(if (side == "x") "X axis" else "Y axis"),
           shiny::fluidRow(
             shiny::column(4, sel(paste0(side, "_method"), "Method", sort(unique(p$method)), init$method)),
-            shiny::column(4, sel(paste0(side, "_source"), "Source", sort(unique(ifelse(is.na(p$source), "(none)", p$source))), init$source)),
+            shiny::column(4, sel(paste0(side, "_source"), shiny::tagList("Curve source", hi("glossary.control_source")),
+                                 sort(unique(ifelse(is.na(p$source), "(none)", p$source))), init$source)),
             shiny::column(4, sel(paste0(side, "_wavelength"), "Wavelength", sort(unique(ifelse(is.na(p$wavelength), "(none)", p$wavelength))), init$wavelength))),
           shiny::fluidRow(
             shiny::column(6, sel(paste0(side, "_plate"), "Plate", sort(unique(p$plate)), init$plate)),
-            shiny::column(6, sel(paste0(side, "_dilution"), "Dilution", .lin_sort_dil(p$dilution), init$dilution))))
+            shiny::column(6, sel(paste0(side, "_dilution"), "Dilution", .lin_sort_dil(p$dilution), init$dilution))),
+          # Only when controls carry their own Source: the curve source is a different thing.
+          if (has_cs) shiny::fluidRow(
+            shiny::column(12, sel(paste0(side, "_control_source"), shiny::tagList("Control source", hi("glossary.control_source")),
+                                  sort(unique(ifelse(is.na(p$control_source), "(none)", p$control_source))), init$control_source))))
       }
+      has_cs <- "control_source" %in% names(p) && any(!is.na(p$control_source))
       ag <- names(ag_n)
       shiny::tagList(
         shiny::h4("1. Replicate sets in this experiment", hi("qc.linearity.sets")),
@@ -522,7 +528,10 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
       d <- cons_out()
       if (is.null(d)) return(DT::datatable(data.frame(note = "Choose 'Both' carry error, with a positive slope."), rownames = FALSE, options = list(dom = "t")))
       num <- c("consensus", "z", "se_z", "lo", "hi", "q", "q_ratio")
-      DT::formatSignif(DT::datatable(d, rownames = FALSE, filter = "top", options = list(pageLength = 8, scrollX = TRUE, dom = "ltip")), num, 4)
+      cvs <- intersect(c("cv_pct", "rep_cv_pct_median"), names(d))
+      t <- DT::formatSignif(DT::datatable(d, rownames = FALSE, filter = "top", options = list(pageLength = 8, scrollX = TRUE, dom = "ltip")), num, 4)
+      if (length(cvs)) t <- DT::formatRound(t, cvs, 1)
+      t
     })
     output$dl_consensus <- shiny::downloadHandler(filename = function() sub("^replicate_linearity", "consensus", fname("csv")),
       content = function(file) utils::write.csv(cons_out() %||% data.frame(), file, row.names = FALSE, na = ""))
@@ -537,7 +546,12 @@ linearityServer <- function(id, pool, scope, reload_trigger = NULL, calib_dirty 
     })
     output$tbl_pairs <- DT::renderDataTable({
       d <- pairs_out(); req(nrow(d) > 0)
-      DT::datatable(d, rownames = FALSE, filter = "top", options = list(pageLength = 10, scrollX = TRUE, dom = "ltip"))
+      # `source` is the curve source: say so on screen (the download keeps the column names).
+      cn <- names(d); cn <- sub("^([xy])_source$", "\\1_curve_source", cn)
+      cvs <- intersect(c("pair_cv_pct", "x_rep_cv_pct", "y_rep_cv_pct"), names(d))
+      t <- DT::datatable(d, rownames = FALSE, colnames = cn, filter = "top", options = list(pageLength = 10, scrollX = TRUE, dom = "ltip"))
+      if (length(cvs)) t <- DT::formatRound(t, cvs, 1)
+      t
     })
     output$dl_pairs <- shiny::downloadHandler(filename = function() fname("csv"),
       content = function(file) utils::write.csv(pairs_out(), file, row.names = FALSE, na = ""))

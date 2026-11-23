@@ -3,7 +3,7 @@ id: qc.plate_dilution_series
 title: Plate dilution series view
 audience: user
 category: conceptual
-see_also: [compute.standard_curve.model_engine]
+see_also: [compute.standard_curve.model_engine, glossary.control_source]
 ---
 
 This view reproduces the standard-curve-by-plate comparison from the analysis
@@ -16,9 +16,19 @@ Two sub-tabs cover it differently. **Analytes** fixes one standard-curve
 source and facets by plate, with one trace per antigen/feature — this is
 where you can click a point to stage it for masking or unmasking, the same
 masking workflow the Explore-fits tab uses. **Sources** fixes one antigen
-instead, facets by plate, and shows one trace per source; it also overlays
-any test sample run at more than one dilution on a plate as its own dashed
-trace, which is particularly useful for reading optimization plates.
+instead, facets by plate, and shows one trace per curve source (solid). Next
+to the standards it can overlay:
+
+* **Test samples** run at more than one dilution on a plate, each as its own
+  dashed trace labelled *patient | timeperiod* — useful for reading
+  optimization plates.
+* **Controls**, every control of the antigen as a dotted trace labelled
+  *name | control source* (for example `QC1Orange | jackson_high`), joined
+  across its dilutions on each plate; a control run at one dilution shows as
+  points. The *Control source* list narrows them (empty = all) — handy for
+  comparing QC batches from different suppliers or reader settings.
+
+Tick *Test samples*, *Controls* or both under **Show with the standards**.
 
 ::: more
 Masking here still operates one curve (one plate + one antigen/feature) at a

@@ -45,6 +45,52 @@
   s
 }
 
+# Control wells for the Explore-fits "Controls" trace (fetch_calib_controls rows).
+# Keeps included wells with a finite position on the curve's axes
+# (x = predicted_log10_concentration, y = response_model). Replicates are the
+# wells of this curve (one plate) with the same name, control source and
+# dilution: rep_n counts them, cv_resp_pct / cv_conc_pct are 100 * sd / mean of
+# the raw response and of the final concentration (NA below 2 wells). This is
+# the observed spread of the wells, not pcov. Returns the rows with x, y, label,
+# control_source and hover; NULL when there is nothing to draw.
+.sc_control_points <- function(ctl) {
+  if (is.null(ctl) || !is.data.frame(ctl) || !nrow(ctl)) return(NULL)
+  n <- nrow(ctl)
+  col <- function(nm) if (nm %in% names(ctl)) suppressWarnings(as.numeric(ctl[[nm]])) else rep(NA_real_, n)
+  chr <- function(nm) if (nm %in% names(ctl)) as.character(ctl[[nm]]) else rep(NA_character_, n)
+  x <- col("predicted_log10_concentration")
+  if (all(!is.finite(x))) x <- col("predicted_concentration")
+  d <- data.frame(x = x, y = col("response_model"), well = chr("well"),
+                  dilution = col("dilution"), raw = col("assay_response_raw"),
+                  conc = col("final_concentration"), stringsAsFactors = FALSE)
+  inc <- if ("included" %in% names(ctl)) !(as.logical(ctl$included) %in% FALSE) else rep(TRUE, n)
+  lab <- lin_control_label(chr("sampleid"), d$well, chr("source"), NULL, d$dilution)
+  src <- trimws(chr("source"))
+  src[is.na(src) | src %in% c("", "__none__") | toupper(src) == toupper(trimws(lab))] <- NA_character_
+  d$label <- lab; d$control_source <- src
+  d <- d[inc & is.finite(d$x) & is.finite(d$y), , drop = FALSE]
+  if (!nrow(d)) return(NULL)
+  cv <- function(v) { v <- v[is.finite(v)]; if (length(v) < 2L || mean(v) <= 0) NA_real_ else 100 * stats::sd(v) / mean(v) }
+  key <- paste(d$label, ifelse(is.na(d$control_source), "", d$control_source), d$dilution, sep = "\r")
+  d$rep_n <- as.integer(ave(seq_len(nrow(d)), key, FUN = length))
+  d$cv_resp_pct <- as.numeric(tapply(d$raw, key, cv)[key])
+  d$cv_conc_pct <- as.numeric(tapply(d$conc, key, cv)[key])
+  dil <- ifelse(is.finite(d$dilution), paste0("1:", format(d$dilution, trim = TRUE, scientific = FALSE)), "–")
+  pct <- function(v) ifelse(is.finite(v), sprintf("%.1f%%", v), "–")
+  d$hover <- paste0(
+    "Control: ", d$label,
+    "<br>control source: ", ifelse(is.na(d$control_source), "–", d$control_source),
+    "<br>dilution: ", dil, " | well ", ifelse(is.na(d$well), "–", d$well),
+    "<br>response: ", .sc_fmt(d$raw),
+    "<br>concentration (x dilution): ", .sc_fmt(d$conc),
+    ifelse(d$rep_n >= 2L,
+           paste0("<br>replicates on this plate: ", d$rep_n,
+                  "<br>CV% response: ", pct(d$cv_resp_pct), " | CV% concentration: ", pct(d$cv_conc_pct)),
+           ""))
+  rownames(d) <- NULL
+  d
+}
+
 # The Back-calculated samples table: the curve's identity (experiment, plate,
 # antigen, feature, method), the plate well, the specimen id (replacing sampleid),
 # then the rest of the stored columns.
@@ -388,7 +434,8 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
               plotly::plotlyOutput(ns("curve_plot"), height = "460px"), type = 4, color = "#337ab7"),
             shiny::tags$div(style = "font-size:11px;color:#787878;margin:2px 0 4px;",
               "Test samples are coloured by censoring class; hover one for its 95% interval ",
-              "and threshold probabilities. Samples beyond the curve's asymptotes sit at the plot edges.",
+              "and threshold probabilities. Samples beyond the curve's asymptotes sit at the plot edges. ",
+              "Click \"Controls\" in the legend to show the control wells (hover: control source, dilution, replicate CV%).",
               help_icon("compute.standard_curve.out_of_range", ns)),
             shiny::uiOutput(ns("fda_ribbon_area")),
             shiny::uiOutput(ns("mask_selection")),
@@ -509,6 +556,20 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
                                opacity = if (nrow(st)) 0.7 else 1, symbol = "circle", size = 5),
                  text = smp_df$hover[sel], hoverinfo = "text")
         }
+      }
+
+      # Controls: hidden until clicked in the legend. Observed response (y) at the
+      # back-calculated concentration (x), so a control beyond an asymptote sits off
+      # the curve. Not maskable here (no customdata). Their x does not widen the
+      # axis range, so showing/hiding the trace never moves the axes.
+      ctl_pts <- tryCatch(.sc_control_points(fetch_calib_controls(pool, cid, meth)),
+                          error = function(e) NULL)
+      if (!is.null(ctl_pts) && nrow(ctl_pts)) {
+        p <- plotly::add_markers(p, x = ctl_pts$x, y = ctl_pts$y, name = "Controls",
+               visible = "legendonly",
+               marker = list(color = "#B15928", symbol = "square", size = 7, opacity = 0.85,
+                             line = list(color = "#ffffff", width = 0.5)),
+               text = ctl_pts$hover, hoverinfo = "text")
       }
 
       # Standards: COLOUR = FDA 2018 verdict (frequentist-pinned, identical on both
