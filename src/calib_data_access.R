@@ -534,6 +534,24 @@ fetch_calib_samples <- function(pool, curve_id, method) {
 }
 
 
+#' Control wells of one curve + method (calib_controls, i-spi-compute >= 1.1):
+#' identity (well, sampleid, control source, dilution, included) and the estimate
+#' on the curve's axes (predicted_log10_concentration, response_model), plus the
+#' raw response and final concentration for the replicate CV. `source` here is
+#' the CONTROL's own Source, not the curve source.
+fetch_calib_controls <- function(pool, curve_id, method) {
+  .calib_q(pool, sprintf(
+    "SELECT well, sampleid, source, dilution::float8 AS dilution, included,
+            predicted_log10_concentration::float8 AS predicted_log10_concentration,
+            response_model::float8 AS response_model,
+            assay_response_raw::float8 AS assay_response_raw,
+            final_concentration::float8 AS final_concentration,
+            pcov::float8 AS pcov, censor_class
+       FROM %s WHERE curve_id = $1 AND method = $2",
+    .tbl("calib_controls")), params = list(curve_id, method))
+}
+
+
 # 6. Diagnostics + LOQ/LOD/RDL bounds
 
 

@@ -108,17 +108,22 @@ test_that("the QC tab is named Quality Control and offers Beads, not Bead Count"
 }
 
 test_that("Plate Dilution Series > Sources: test-sample points show well, patientid and timeperiod; standards are unchanged", {
-  skip_if_not(exists("plateDilutionSeriesServer") || { .qi_src("mask_ui_helpers.R"); .qi_src("plate_dilution_series_module.R"); TRUE })
+  skip_if_not(exists("plateDilutionSeriesServer") || { .qi_src("mask_ui_helpers.R"); .qi_src("plate_dilution_series_helpers.R"); .qi_src("plate_dilution_series_module.R"); TRUE })
+  if (!exists("pds_feat_label")) .qi_src("plate_dilution_series_helpers.R")
+  if (!exists("lin_control_label")) .qi_src("linearity_stored.R")
   std <- data.frame(plate = rep(c("P1", "P2"), each = 4), plateid = "x", well = rep(c("A1", "B1", "C1", "D1"), 2),
                     dilution = rep(c(10, 20, 40, 80), 2), antibody_mfi = rep(c(900, 600, 300, 100), 2),
                     antigen = "AG", feature = "IgG", source = "V2", stype = "S", masked = FALSE, stringsAsFactors = FALSE)
   smp <- data.frame(plate = "P1", plateid = "x", well = c("E1", "E2", "F1", "F2"), dilution = c(100, 200, 100, 200),
                     antibody_mfi = c(500, 300, 450, 250), antigen = "AG", feature = "IgG", source = "V2", stype = "X",
                     patientid = c("pt-1", "pt-1", "pt-2", "pt-2"), timeperiod = c("D0", "D0", "D28", "D28"), sampleid = "S", stringsAsFactors = FALSE)
-  .qi_mock(environment(), fetch_raw_standard = function(...) std, fetch_raw_sample = function(...) smp)
+  ctl <- data.frame(plate = "P2", plateid = "x", well = c("G1", "G2"), dilution = c(50, 500), antibody_mfi = c(700, 200),
+                    antigen = "AG", feature = "IgG", source = "supplierA", stype = "C", sampleid = "QC1Orange", stringsAsFactors = FALSE)
+  .qi_mock(environment(), fetch_raw_standard = function(...) std, fetch_raw_sample = function(...) smp,
+           fetch_raw_control = function(...) ctl)
   scope <- shiny::reactive(list(project_id = 1, study = "S", experiment = "E"))
   shiny::testServer(plateDilutionSeriesServer, args = list(pool = NULL, scope = scope), {
-    session$setInputs(sources_antigen = "AG", sources_feature = "IgG")
+    session$setInputs(sources_antigen = "AG", sources_feature = "IgG", sources_show = c("samples", "controls"))
     p <- jsonlite::fromJSON(output$sources_plot, simplifyVector = FALSE)$x
     txt <- unlist(lapply(p$data, function(t) t$text))
     hit <- grep("^Test sample", txt, value = TRUE)
@@ -126,8 +131,15 @@ test_that("Plate Dilution Series > Sources: test-sample points show well, patien
     expect_true(all(grepl("well: [EF][12]", hit))); expect_true(all(grepl("patientid: pt-[12]", hit)))
     expect_true(all(grepl("timeperiod: D(0|28)", hit)))
     expect_match(hit[1], "plate: P1.*dilution: 100.*MFI: 500")            # what was there is kept
-    std_hov <- grep("^Source:", txt, value = TRUE)
+    std_hov <- grep("^Curve source:", txt, value = TRUE)
     expect_true(length(std_hov) > 0); expect_false(any(grepl("patientid", std_hov)))
+    ctl_hov <- grep("^Control:", txt, value = TRUE)
+    expect_equal(length(ctl_hov), 2L)
+    expect_true(all(grepl("Control: QC1Orange<br>control source: supplierA<br>plate: P2", ctl_hov)))
+    expect_true(any(vapply(p$data, function(t) identical(t$name, "QC1Orange | supplierA") && identical(t$line$dash, "dot"), logical(1))))
+    session$setInputs(sources_show = "controls")
+    txt2 <- unlist(lapply(jsonlite::fromJSON(output$sources_plot, simplifyVector = FALSE)$x$data, function(t) t$text))
+    expect_false(any(grepl("^Test sample", txt2))); expect_true(any(grepl("^Control:", txt2)))
   })
 })
 
@@ -210,4 +222,42 @@ test_that("specimen id is shown as (same as well) when the importer stored the w
   # a table without a well (older rows) still works
   expect_no_error(.sc_samples_view(smp[, setdiff(names(smp), "well")], data.frame(experiment = "E", plate = "p", antigen = "AG", feature = NA, method = "m")))
   expect_equal(.lin_spec("A1", "A1"), "(same as well)"); expect_equal(.lin_spec("S1", "A1"), "S1")
+})
+
+# ---- Explore fits: the Controls trace ---------------------------------------------
+if (!exists("lin_control_label")) .qi_src("linearity_stored.R")
+mk_cc <- function() data.frame(
+  well = c("A9", "B9", "C9", "D9", "E9", "H1", "G3"),
+  sampleid = c("QC1Orange", "QC1Orange", "QC1Orange", "QC1Orange", "QC1Orange", "QC2Green", "G3"),
+  source = c(rep("jackson_high", 6), "QC1 (Low)"),
+  dilution = c(50, 50, 500, 500, 500, 50, 2500), included = c(TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE),
+  predicted_log10_concentration = c(2.9, 2.91, 1.79, 1.80, 1.81, 2.5, 1.2),
+  response_model = c(4.48, 4.48, 4.25, 4.24, 4.26, 4.1, 3.0),
+  assay_response_raw = c(30000, 30200, 18000, 17500, 18200, 12000, 1000),
+  final_concentration = c(4e4, 4.1e4, 3.1e4, 3.0e4, 3.2e4, 1.6e4, 4e4),
+  pcov = 10, censor_class = "quantified", stringsAsFactors = FALSE)
+
+test_that("control points: replicate count and CV% per name, control source and dilution", {
+  d <- .sc_control_points(mk_cc())
+  expect_equal(nrow(d), 7L)
+  expect_equal(d$rep_n, c(2L, 2L, 3L, 3L, 3L, 1L, 1L))
+  expect_equal(d$cv_resp_pct[1], 100 * sd(c(30000, 30200)) / mean(c(30000, 30200)))
+  expect_equal(d$cv_conc_pct[3], 100 * sd(c(3.1e4, 3.0e4, 3.2e4)) / 3.1e4)
+  expect_true(is.na(d$cv_resp_pct[6]))
+  expect_match(d$hover[1], "Control: QC1Orange.*control source: jackson_high.*dilution: 1:50 [|] well A9")
+  expect_match(d$hover[3], "replicates on this plate: 3.*CV% response: [0-9.]+%.*CV% concentration: [0-9.]+%")
+  expect_false(grepl("replicates", d$hover[6]))
+  # old-style control: name from Source, no control source
+  expect_equal(d$label[7], "QC1 (Low)"); expect_true(is.na(d$control_source[7]))
+  expect_match(d$hover[7], "control source: –")
+})
+
+test_that("control points: masked or off-axis wells are left out", {
+  cc <- mk_cc(); cc$included[2] <- FALSE; cc$predicted_log10_concentration[6] <- NA
+  d <- .sc_control_points(cc)
+  expect_equal(nrow(d), 5L)
+  expect_equal(d$rep_n[d$well == "A9"], 1L)          # its replicate was masked
+  expect_null(.sc_control_points(NULL)); expect_null(.sc_control_points(cc[0, ]))
+  cc$predicted_log10_concentration <- NA
+  expect_null(.sc_control_points(cc))
 })
