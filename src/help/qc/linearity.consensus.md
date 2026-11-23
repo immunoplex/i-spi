@@ -28,6 +28,8 @@ of them and trusts the precise ones more.
 | consensus | The combined concentration (back on the concentration scale) |
 | lo, hi | Its 95% interval |
 | z, se_z | The same estimate on the fitting scale, and its standard error |
+| cv_pct | CV% of the sample's own estimates (before harmonizing): 100 × SD / mean |
+| rep_cv_pct_median | The median CV% of its replicate wells (see the pairs table) |
 | q, q_df, q_ratio | A heterogeneity check: Q is how much the estimates disagree beyond what their pcov predicts, and q_ratio is Q per degree of freedom |
 
 **Reading the heterogeneity check.** q_ratio near 1 means the estimates disagree

@@ -27,3 +27,12 @@ The interval and probabilities keep that difference — a low sample often
 answers "is it below the cutoff?" with near certainty. High samples are better
 re-assayed at a higher dilution than modelled.
 :::
+
+**Controls on the curve.** Click *Controls* in the legend (hidden at first) to
+plot the control wells: the measured response against the concentration read
+off this curve, so a control beyond an asymptote sits off the curve. Hover one
+for its sample id, [[glossary.control_source|control source]], dilution and
+well; when the plate holds two or more wells of the same control, source and
+dilution, the hover adds how many and the CV% of their response and of their
+concentration (100 × SD / mean — the observed spread, not pcov). Masked control
+wells are not shown.
