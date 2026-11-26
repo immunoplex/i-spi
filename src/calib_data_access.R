@@ -1192,6 +1192,15 @@ CALIB_CURVE_TABLES <- c("calib_fit", "calib_param", "calib_gate", "calib_grid",
 CALIB_RECALC_TABLE <- "calib_recalc_flag"
 
 .ensure_recalc_flag_table <- function(pool) {
+  # Look first, create only when missing. The app's database login has no
+  # CREATE on the schema, and PostgreSQL checks that privilege even for
+  # CREATE TABLE IF NOT EXISTS on a table that already exists ("permission
+  # denied for schema"), which broke every mask/unmask save. The curated DDL
+  # (i-spi-deployment db/10_ispi_core.sql) creates the table.
+  have <- isTRUE(DBI::dbGetQuery(pool,
+    "SELECT to_regclass($1) IS NOT NULL AS ok",
+    params = list(.tbl(CALIB_RECALC_TABLE)))$ok[1])
+  if (have) return(invisible(NULL))
   DBI::dbExecute(pool, sprintf(
     "CREATE TABLE IF NOT EXISTS %s (
        curve_id   BIGINT PRIMARY KEY,
