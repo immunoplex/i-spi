@@ -5,6 +5,13 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased
+
+### Fixed
+- **About page before a study is chosen** showed "Compute releases behind study
+  Click here" (the sidebar placeholder) with "none recorded". The study section
+  now appears only once a study is selected.
+
 ## v1.3.3 — Database settings from DB_* names; auth0 package removed
 
 ### Changed

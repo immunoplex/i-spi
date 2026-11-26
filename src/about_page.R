@@ -75,7 +75,9 @@ about_page_ui <- function(pool, project = NULL, study = NULL) {
   b <- about_build_stamp()
   sv <- tryCatch(about_schema_versions(pool), error = function(e) NULL)
   rel_all <- tryCatch(about_compute_releases(pool), error = function(e) NULL)
-  rel_study <- if (!is.null(study) && length(study) && !is.na(study) && nzchar(study))
+  # "Click here" is the sidebar's placeholder before a study is chosen: no study.
+  has_study <- length(study) == 1 && !is.na(study) && nzchar(study) && study != "Click here"
+  rel_study <- if (has_study)
     tryCatch(about_compute_releases(pool, project, study), error = function(e) NULL) else NULL
   tbl <- function(df) {
     if (is.null(df) || !nrow(df)) return(shiny::tags$p(shiny::tags$em("none recorded")))
