@@ -5,6 +5,18 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased
+
+### Fixed
+- **"View, Process, and Export" panel error after sign-in** ("argument is of
+  length zero", the most frequent error in the preprod log). The panel read
+  tab and study inputs before the browser had sent them.
+- **Beads info box error** ("missing value where TRUE/FALSE needed") when the
+  experiment's assay type is unknown, e.g. right after signing out.
+- **Low-bead-count table error** ("undefined columns selected") for
+  experiments without some optional columns; the table now shows the columns
+  the experiment has.
+
 ## v1.3.1 — Masking works under the restricted database login
 
 ### Fixed

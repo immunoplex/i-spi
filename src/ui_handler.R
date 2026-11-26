@@ -522,8 +522,14 @@ output$userProjectsTableNonOwner <- DT::renderDataTable({
 })
 
 output$view_stored_experiments_ui <- renderUI({
-  if (input$main_tabs != "home_page" & input$main_tabs != "manage_project_tab" & input$study_tabs == "view_files_tab") {
-    if (input$readxMap_study_accession != "Click here") {
+  # The inputs are NULL while the body re-renders after sign-in or tab changes;
+  # `if (NULL != ...)` then fails with "argument is of length zero".
+  if (length(input$main_tabs) == 1 &&
+      !input$main_tabs %in% c("home_page", "manage_project_tab") &&
+      identical(input$study_tabs, "view_files_tab")) {
+    if (length(input$readxMap_study_accession) == 1 &&
+        !is.na(input$readxMap_study_accession) &&
+        input$readxMap_study_accession != "Click here") {
 
  # tabRefreshCounter()$view_files_tab
 
@@ -765,8 +771,9 @@ output$bead_not_available_ui <- renderUI({
 
 output$bead_count_available_ui <- renderUI({
   info <- exp_assay_info()
-  # Show the box only for bead assays assays
-  if (info$assay_type != "bead_assay") return(NULL)
+  # Show the box only for bead assays. assay_type is NA when the experiment is
+  # not found (e.g. "Click here", or just after sign-out).
+  if (!identical(info$assay_type, "bead_assay")) return(NULL)
 
   txt <- sprintf(
     "Current Study: <strong>%s</strong><br>
