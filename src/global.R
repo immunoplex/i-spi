@@ -16,7 +16,7 @@ library(data.table); library(stringi); library(stringr);
 library(tidyverse); library(tidyr); library(plyr); library(modelr);
 library(broom); library(rhandsontable);
 library(gt); library(gtExtras); library(grid);
-library(gridExtra); library(gtable); library(httr2); library(auth0);
+library(gridExtra); library(gtable); library(httr2);
 library(moach); library(janitor);
 library(bslib)
 library(bsicons)   # info-circle icon for help drill-downs
@@ -117,7 +117,6 @@ message("Workers: ", future::nbrOfWorkers())
 
 # Set options
 options(shiny.maxRequestSize = 100 * 1024^2)
-options(auth0_disable = FALSE)
 
 # Define custom functions
 rounddf <- function(x, digits = rep(2, ncol(x)), func = round, pad = FALSE) {

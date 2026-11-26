@@ -26,7 +26,7 @@ RUN wget --no-verbose https://download3.rstudio.org/ubuntu-14.04/x86_64/VERSION 
 RUN R -e "install.packages(c('plotly', 'shiny', 'shinyjs', 'shinyalert', 'shinydashboard', 'shinyWidgets', 'shinybusy','shinyBS'))"
 RUN R -e "install.packages(c('readxl', 'openxlsx', 'RPostgres', 'glue', 'DBI', 'DT', 'pool', 'data.table', 'stringi', 'stringr', 'tidyverse'))"
 RUN R -e "install.packages(c('tidyr', 'plyr', 'modelr', 'broom', 'rhandsontable', 'gt', 'gtExtras'))"
-RUN R -e "install.packages(c('grid', 'gridExtra', 'gtable', 'httr2', 'auth0', 'janitor', 'bslib'))"
+RUN R -e "install.packages(c('grid', 'gridExtra', 'gtable', 'httr2', 'janitor', 'bslib'))"
 RUN R -e "install.packages(c('bsicons', 'yaml'))"
 
 RUN R -e "install.packages('remotes')"
