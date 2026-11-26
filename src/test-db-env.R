@@ -1,7 +1,8 @@
 # =============================================================================
 # test-db-env.R
-# The database login is read from DB_USER / DB_PASSWORD; the old names
-# db_userid_x / db_pwd_x are used only when the new ones are unset.
+# Database settings are read from DB_NAME, DB_HOST, DB_PORT, DB_USER and
+# DB_PASSWORD; the old names (db, db_host, db_port, db_userid_x, db_pwd_x)
+# are used only when the new ones are unset.
 # Run from src/: testthat::test_file("test-db-env.R")
 # =============================================================================
 library(testthat)
@@ -23,4 +24,11 @@ test_that("old name is used, with a log line, when the new one is unset", {
 test_that("neither set gives an empty string and no message", {
   withr::local_envvar(DB_USER = NA, db_userid_x = NA)
   expect_silent(expect_equal(.db_env("DB_USER", "db_userid_x"), ""))
+})
+
+test_that("DB_PORT falls back to 5432 when neither name is set", {
+  withr::local_envvar(DB_PORT = NA, db_port = NA)
+  expect_equal(.db_env("DB_PORT", "db_port", default = "5432"), "5432")
+  # (The fallback itself is tested above with names that differ beyond case:
+  # on Windows DB_PORT and db_port are the same variable.)
 })

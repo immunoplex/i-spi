@@ -24,13 +24,11 @@ ISPI_COMPUTE_API_KEY=REPLACE_ME
 ISPI_COMPUTE_URL__SIM=https://madi-preprod.dartmouth.edu/i-spi-compute-sim
 
 # ---- Database ----------------------------------------------------------------
-db=REPLACE_ME
-db_host=REPLACE_ME
-db_port=5432
+DB_NAME=REPLACE_ME
+DB_HOST=REPLACE_ME
+DB_PORT=5432
 DB_USER=REPLACE_ME
 DB_PASSWORD=REPLACE_ME
-# Optional: 'require' to force TLS for the read-only DB diagnostic connection.
-db_sslmode=
 
 # ---- Dev toggles -------------------------------------------------------------
 # LOCAL_DEV=1 disables Dex OIDC auth for local runs; the app then acts as

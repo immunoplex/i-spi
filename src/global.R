@@ -184,23 +184,24 @@ names(color_features) <- c(
 # For multi-statement writes (the coming masking slice) use
 # pool::poolWithTransaction(db_pool, function(c) { ... }) so they share one conn.
 #
-# Login: DB_USER / DB_PASSWORD (the names i-spi-compute uses; in madi-preprod
-# from ConfigMap app-config and secret madi). The old names db_userid_x /
-# db_pwd_x are still read when the new ones are unset, so a deployment that
-# has not switched yet keeps working; the log says which names were used.
-.db_env <- function(new, old) {
+# Connection settings: DB_NAME, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD (the names
+# i-spi-compute uses; in madi-preprod the login comes from ConfigMap app-config
+# and secret madi). The old names db, db_host, db_port, db_userid_x, db_pwd_x
+# are still read when the new ones are unset, so a deployment that has not
+# switched yet keeps working; the log says which names were used (never values).
+.db_env <- function(new, old, default = "") {
   v <- Sys.getenv(new)
   if (nzchar(v)) return(v)
   v <- Sys.getenv(old)
   if (nzchar(v)) message(sprintf("[db] %s is unset; using the old variable %s. Set %s instead.",
                                  new, old, new))
-  v
+  if (nzchar(v)) v else default
 }
 db_pool <- pool::dbPool(
   RPostgres::Postgres(),
-  dbname   = Sys.getenv("db"),
-  host     = Sys.getenv("db_host"),
-  port     = Sys.getenv("db_port", "5432"),
+  dbname   = .db_env("DB_NAME", "db"),
+  host     = .db_env("DB_HOST", "db_host"),
+  port     = .db_env("DB_PORT", "db_port", default = "5432"),
   user     = .db_env("DB_USER", "db_userid_x"),
   password = .db_env("DB_PASSWORD", "db_pwd_x"),
   sslmode  = "require",
