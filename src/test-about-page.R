@@ -52,3 +52,15 @@ test_that("the page lists the releases with a manifest and the schema version", 
   expect_match(html, "1.1.0-rc.1"); expect_match(html, "calib_schema")
   expect_match(html, "Compute releases behind study S1")
 })
+
+test_that("no study section before a study is chosen (sidebar placeholder 'Click here')", {
+  q <- function(pool, sql, params = list())
+    if (grepl("to_regclass", sql)) data.frame(ok = TRUE)
+    else if (grepl("schema_version", sql)) data.frame(component = "calib_schema", version = "0.7.1", applied_at = Sys.time())
+    else if (grepl("information_schema", sql)) data.frame(n = 1L) else rel
+  for (s in list("Click here", NULL, NA_character_, "")) {
+    html <- as.character(with_q(q, about_page_ui(NULL, 92L, s)))
+    expect_no_match(html, "Compute releases behind study")
+    expect_match(html, "Compute releases behind all stored results")
+  }
+})
