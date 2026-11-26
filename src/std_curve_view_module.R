@@ -465,6 +465,9 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     #    positions are log10 (decade spacing); tick LABELS are natural units.
     #    Every point carries customdata (type|well|dilution) so clicks can
     #    identify it for masking.
+    # TRUE once curve_plot has rendered and registered its click event; the click
+    # observer waits for it (mask_click_data) so plotly does not warn at sign-in.
+    click_ready <- shiny::reactiveVal(FALSE)
     output$curve_plot <- plotly::renderPlotly({
       prog <- shiny::Progress$new(session = session); on.exit(prog$close())
       prog$set(message = "Loading curve data\u2026", value = 0.2)
@@ -803,6 +806,7 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
       # stop plotly's default double-click axis-reset from firing with it.
       p <- plotly::config(p, doubleClick = FALSE)
       p <- plotly::event_register(p, "plotly_click")
+      click_ready(TRUE)   # the observer below may now read clicks (mask_click_data)
       # Double-click a MASKED point to stage it for UNMASKING. plotly emits no
       # per-point double-click event (plotly_doubleclick carries no point), so we
       # detect it ourselves: pair two plotly_click events on the SAME point within
@@ -876,13 +880,13 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     # Masked points are ignored here -- they are unmasked via double-click (the
     # onRender shim -> input$pt_dblclick) so the two gestures never fight over the
     # same point. Only real data points carry customdata; lines/legend give NULL.
-    shiny::observeEvent(mask_click_data(session$ns("curve_plot")), {
+    shiny::observeEvent(mask_click_data(session$ns("curve_plot"), click_ready), {
       # The click event is registered ONCE on the plot object in the render
       # (plotly::event_register(p, ...) above); it must NOT be re-registered here.
       # Just read the payload, and never let a malformed click be fatal: guard the
       # read, require a customdata identity, and take the first if several arrive.
       ev <- tryCatch(
-        mask_click_data(session$ns("curve_plot")),
+        mask_click_data(session$ns("curve_plot"), click_ready),
         error = function(e) { message("sc_view: plotly_click read failed: ", conditionMessage(e)); NULL })
       cd <- if (is.data.frame(ev) && "customdata" %in% names(ev)) ev$customdata else NULL
       cd <- as.character(cd); cd <- cd[!is.na(cd) & nzchar(cd)]

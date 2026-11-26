@@ -197,12 +197,16 @@ mask_dryrun_body_unmask <- function(pl, keep) {
                        ". Recompute on the Compute-fits tab to get a fit with the points restored.")))
 }
 
-# Read plotly_click data for `source`. The click observers are created when the
-# session starts, before their plot is drawn and registers the event, so the
-# first read made plotly warn "... is not registered" once per session (the
-# most frequent line in the server log). Only that warning is silenced; any
-# other warning still surfaces.
-mask_click_data <- function(source) {
+# Read plotly_click data for `source` once its plot has been drawn.
+# The click observers are created when the session starts, before their plot is
+# drawn and registers the click event. plotly checks the registration AFTER the
+# flush (session$onFlushed) and then warns "... is not registered" -- outside any
+# handler here, so muffling alone did not stop it (seen after 1.3.2). `ready` is
+# a reactive that turns TRUE when the plot renders; until then nothing is read,
+# no check is scheduled, and the observer re-runs when the plot appears.
+# The handler below still silences that one warning if it is ever raised inline.
+mask_click_data <- function(source, ready = function() TRUE) {
+  if (!isTRUE(ready())) return(NULL)
   withCallingHandlers(
     plotly::event_data("plotly_click", source = source),
     warning = function(w) {

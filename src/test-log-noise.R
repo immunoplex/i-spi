@@ -31,3 +31,22 @@ test_that("horizontal error bars build without the geom_errorbarh deprecation", 
   expect_equal(d$xmin, c(0, 1)); expect_equal(d$xmax, c(2, 3))
   expect_equal(as.numeric(d$ymax - d$ymin), c(0.25, 0.25))   # bar height on the y axis
 })
+
+test_that("click observers wait for their plot: no 'not registered' warning at sign-in, clicks still arrive", {
+  srv <- function(input, output, session) {
+    ready <- shiny::reactiveVal(FALSE)
+    got   <- shiny::reactiveVal(NULL)
+    shiny::observeEvent(mask_click_data("src", ready), got(mask_click_data("src", ready)))
+    session$userData$t <- list(ready = ready, got = got)
+  }
+  shiny::testServer(srv, {
+    # plotly warns from session$onFlushed when a read is not registered
+    expect_no_warning(session$flushReact())
+    # the plot renders: plotly records the registered event, then ready is set
+    session$userData$plotlyShinyEventIDs <- "plotly_click-src"
+    session$userData$t$ready(TRUE)
+    expect_no_warning(session$flushReact())
+    session$setInputs(`plotly_click-src` = '[{"customdata":"std|A1|100"}]')
+    expect_equal(session$userData$t$got()$customdata, "std|A1|100")
+  })
+})
