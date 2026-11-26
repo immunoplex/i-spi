@@ -247,10 +247,14 @@ bead_count_gc <- function(df_well, lower_threshold, upper_threshold, failed_well
 
   # Order by well number
   df_well <- df_well[order(df_well$well_number), ]
-  df_well <- df_well[, c("study_accession", "experiment_accession", "plateid", "visit_name", "patientid",
-                         "well", "stype", "sampleid", "arm_name", "dilution", "pctaggbeads", "samplingerrors",
-                         "antigen",	"value_reported",	"n", "nominal_sample_dilution", "plate", "plate_nom",
-                         "subject_accession"	,"bead_count_gc","is_low_bead_count")]
+  # Keep the display columns that this experiment has. Optional ones (e.g. no
+  # subject/arm mapping) are missing for some studies, and a hard column list
+  # failed with "undefined columns selected".
+  keep <- c("study_accession", "experiment_accession", "plateid", "visit_name", "patientid",
+            "well", "stype", "sampleid", "arm_name", "dilution", "pctaggbeads", "samplingerrors",
+            "antigen", "value_reported", "n", "nominal_sample_dilution", "plate", "plate_nom",
+            "subject_accession", "bead_count_gc", "is_low_bead_count")
+  df_well <- df_well[, intersect(keep, names(df_well)), drop = FALSE]
   return(df_well)
 }
 
