@@ -197,6 +197,20 @@ mask_dryrun_body_unmask <- function(pl, keep) {
                        ". Recompute on the Compute-fits tab to get a fit with the points restored.")))
 }
 
+# Read plotly_click data for `source`. The click observers are created when the
+# session starts, before their plot is drawn and registers the event, so the
+# first read made plotly warn "... is not registered" once per session (the
+# most frequent line in the server log). Only that warning is silenced; any
+# other warning still surfaces.
+mask_click_data <- function(source) {
+  withCallingHandlers(
+    plotly::event_data("plotly_click", source = source),
+    warning = function(w) {
+      if (grepl("is not registered", conditionMessage(w), fixed = TRUE))
+        invokeRestart("muffleWarning")
+    })
+}
+
 # Attach the shared click/double-click identification shim to a plotly object
 # whose traces were built with an explicit `customdata` per marker (see
 # std_curve_view_module.R's curve_plot for the canonical pattern this

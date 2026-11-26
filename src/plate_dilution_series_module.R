@@ -567,8 +567,8 @@ plateDilutionSeriesServer <- function(id, pool, scope,
     # A single click toggles an INCLUDED point in/out of the mask-staged set.
     # Masked points are ignored here -- unmasked via double-click instead, so
     # the two gestures never fight over the same point.
-    shiny::observeEvent(plotly::event_data("plotly_click", source = ns("analytes_plot")), {
-      ev <- tryCatch(plotly::event_data("plotly_click", source = ns("analytes_plot")),
+    shiny::observeEvent(mask_click_data(ns("analytes_plot")), {
+      ev <- tryCatch(mask_click_data(ns("analytes_plot")),
                      error = function(e) NULL)
       cd <- if (is.data.frame(ev) && "customdata" %in% names(ev)) ev$customdata else NULL
       cd <- as.character(cd); cd <- cd[!is.na(cd) & nzchar(cd)]

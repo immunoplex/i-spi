@@ -626,8 +626,8 @@ stdCurveCompareServer <- function(id, pool, scope = NULL,
                              labels = .CMP_PARAM_LABELS[.CMP_PARAM_LEVELS])
       df$item <- factor(df$item, levels = rev(unique(cs$label)))  # first fit on top
       ggplot2::ggplot(df, ggplot2::aes(x = est, y = item)) +
-        ggplot2::geom_errorbarh(ggplot2::aes(xmin = lo, xmax = hi),
-                                height = 0.25, na.rm = TRUE, colour = "grey40") +
+        ggplot2::geom_errorbar(ggplot2::aes(xmin = lo, xmax = hi), orientation = "y",
+                                width = 0.25, na.rm = TRUE, colour = "grey40") +
         ggplot2::geom_point(na.rm = TRUE, size = 2, colour = "#1a7a40") +
         ggplot2::facet_wrap(~ parameter, nrow = 2, scales = "free_x") +
         ggplot2::labs(x = NULL, y = NULL) +

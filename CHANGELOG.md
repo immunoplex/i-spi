@@ -5,6 +5,15 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased
+
+### Changed
+- **Quieter server log.** The plotly "plotly_click ... is not registered"
+  warnings (two per session start, the most frequent lines in the log) are
+  silenced; the Compare fits forest plot uses `geom_errorbar(orientation = "y")`
+  instead of the deprecated `geom_errorbarh()`. A warning raised while the Data
+  tab loads a table is now logged with the table name and calling frames.
+
 ## v1.3.1 — Masking works under the restricted database login
 
 ### Fixed

@@ -256,8 +256,25 @@ dataTabServer <- function(input, output, session, conn, scope, reload_trigger,
   # ---- one timed fetch, one console line per table (perf instrumentation) -
   .load_timed <- function(tb, s, p) {
     t0  <- Sys.time()
-    val <- tryCatch(make_steps(s, p)[[tb]](), error = function(e) {
-      message(sprintf("[data-tab] load %-18s FAILED: %s", tb, conditionMessage(e))); NULL })
+    # A warning during a load is logged with the table and the calling frames, so
+    # its source can be found from the server log. (The preprod log shows
+    # "NAs introduced by coercion to integer64 range" just before the first
+    # calib_run load, which could not be reproduced outside the app.)
+    val <- withCallingHandlers(
+      tryCatch(make_steps(s, p)[[tb]](), error = function(e) {
+        message(sprintf("[data-tab] load %-18s FAILED: %s", tb, conditionMessage(e))); NULL }),
+      warning = function(w) {
+        calls <- sys.calls()
+        sig <- which(vapply(calls, function(cl) identical(cl[[1]], as.name(".signalSimpleWarning")) ||
+                              identical(cl[[1]], as.name("warning")), logical(1)))
+        if (length(sig)) calls <- calls[seq_len(min(sig) - 1L)]   # drop R's signalling frames
+        frames <- vapply(utils::tail(calls, 8), function(cl)
+          substr(paste(deparse(cl[[1]]), collapse = ""), 1, 60), character(1))
+        message(sprintf("[data-tab] load %-18s WARNING in %s: %s | frames: %s", tb,
+                        paste(deparse(conditionCall(w)), collapse = ""),
+                        conditionMessage(w), paste(frames, collapse = " > ")))
+        invokeRestart("muffleWarning")
+      })
     message(sprintf("[data-tab] load %-18s %6.2fs  %12s rows", tb,
                     as.numeric(difftime(Sys.time(), t0, units = "secs")),
                     if (is.null(val)) "0" else format(nrow(val), big.mark = ",")))

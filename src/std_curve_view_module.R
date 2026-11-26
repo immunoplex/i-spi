@@ -876,13 +876,13 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
     # Masked points are ignored here -- they are unmasked via double-click (the
     # onRender shim -> input$pt_dblclick) so the two gestures never fight over the
     # same point. Only real data points carry customdata; lines/legend give NULL.
-    shiny::observeEvent(plotly::event_data("plotly_click", source = session$ns("curve_plot")), {
+    shiny::observeEvent(mask_click_data(session$ns("curve_plot")), {
       # The click event is registered ONCE on the plot object in the render
       # (plotly::event_register(p, ...) above); it must NOT be re-registered here.
       # Just read the payload, and never let a malformed click be fatal: guard the
       # read, require a customdata identity, and take the first if several arrive.
       ev <- tryCatch(
-        plotly::event_data("plotly_click", source = session$ns("curve_plot")),
+        mask_click_data(session$ns("curve_plot")),
         error = function(e) { message("sc_view: plotly_click read failed: ", conditionMessage(e)); NULL })
       cd <- if (is.data.frame(ev) && "customdata" %in% names(ev)) ev$customdata else NULL
       cd <- as.character(cd); cd <- cd[!is.na(cd) & nzchar(cd)]
