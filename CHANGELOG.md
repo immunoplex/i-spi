@@ -5,6 +5,16 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased
+
+### Fixed
+- **Masking and unmasking failed under a restricted database login** with
+  "permission denied for schema madi_results". Each save ran
+  `CREATE TABLE IF NOT EXISTS madi_results.calib_recalc_flag`, and PostgreSQL
+  checks the right to create in the schema even when the table exists. The
+  table is now looked up first and created only when missing. The same error
+  had silently hidden the "fit needs recalculating" flags.
+
 ## v1.3.0 — Control sources in QC; plates without test samples; sample identifiers from descriptions
 
 ### Added
