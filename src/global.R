@@ -183,13 +183,26 @@ names(color_features) <- c(
 # dbGetQuery(conn, ...) -- DBI dispatches on a Pool exactly as on a connection.
 # For multi-statement writes (the coming masking slice) use
 # pool::poolWithTransaction(db_pool, function(c) { ... }) so they share one conn.
+#
+# Login: DB_USER / DB_PASSWORD (the names i-spi-compute uses; in madi-preprod
+# from ConfigMap app-config and secret madi). The old names db_userid_x /
+# db_pwd_x are still read when the new ones are unset, so a deployment that
+# has not switched yet keeps working; the log says which names were used.
+.db_env <- function(new, old) {
+  v <- Sys.getenv(new)
+  if (nzchar(v)) return(v)
+  v <- Sys.getenv(old)
+  if (nzchar(v)) message(sprintf("[db] %s is unset; using the old variable %s. Set %s instead.",
+                                 new, old, new))
+  v
+}
 db_pool <- pool::dbPool(
   RPostgres::Postgres(),
   dbname   = Sys.getenv("db"),
   host     = Sys.getenv("db_host"),
   port     = Sys.getenv("db_port", "5432"),
-  user     = Sys.getenv("db_userid_x"),
-  password = Sys.getenv("db_pwd_x"),
+  user     = .db_env("DB_USER", "db_userid_x"),
+  password = .db_env("DB_PASSWORD", "db_pwd_x"),
   sslmode  = "require",
   sslcert = "/nonexistent/postgresql.crt",  # absent path -> stat() ENOENT -> libpq skips
   sslkey  = "/nonexistent/postgresql.key",  # (empty "" would NOT work: it defaults to ~/.postgresql)

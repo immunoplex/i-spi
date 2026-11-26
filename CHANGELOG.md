@@ -7,6 +7,12 @@ a `.N` suffix for a second release on the same day); those tags remain as histor
 
 ## Unreleased
 
+### Changed
+- **Database login from `DB_USER` / `DB_PASSWORD`**, the names i-spi-compute
+  uses (in madi-preprod: ConfigMap `app-config` and secret `madi`). The old
+  `db_userid_x` / `db_pwd_x` are still read when the new names are unset, and
+  the log then says so; they will be dropped in a later release.
+
 ### Removed
 - The unused `auth0` package (`library(auth0)`, `options(auth0_disable)`, and its
   install in the Dockerfile). Sign-in uses Dex, and the app reads no

@@ -23,12 +23,12 @@ ISPI_COMPUTE_API_KEY=REPLACE_ME
 # to route it here.
 ISPI_COMPUTE_URL__SIM=https://madi-preprod.dartmouth.edu/i-spi-compute-sim
 
-# ---- Database (unchanged) ----------------------------------------------------
+# ---- Database ----------------------------------------------------------------
 db=REPLACE_ME
 db_host=REPLACE_ME
 db_port=5432
-db_userid_x=REPLACE_ME
-db_pwd_x=REPLACE_ME
+DB_USER=REPLACE_ME
+DB_PASSWORD=REPLACE_ME
 # Optional: 'require' to force TLS for the read-only DB diagnostic connection.
 db_sslmode=
 
