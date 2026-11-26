@@ -5,6 +5,14 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased
+
+### Fixed
+- **plotly "plotly_click ... is not registered" warnings at sign-in** were still
+  logged after 1.3.2: plotly checks the registration after the page update,
+  outside the handler added then. The mask click observers on Explore fits and
+  Plate Dilution Series now read clicks only once their plot has been drawn.
+
 ## v1.3.4 — About page without a chosen study
 
 ### Fixed
