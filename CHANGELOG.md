@@ -5,9 +5,9 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
-## Unreleased — Noise model setting; response offset; fit diagnostics for absorbance
+## v1.4.0 — Noise model setting; response offset; fit diagnostics for absorbance
 
-Needs i-spi-compute with curveRbayes / curveRfreq 0.6.0 and its migration 013.
+Needs i-spi-compute 1.3.0 (curveRcore 0.8.0, curveRfreq and curveRbayes 0.6.0) and its migration 013.
 
 ### Added
 - **Noise model** (`noise_model`): *constant* (default, as before) or *additive
