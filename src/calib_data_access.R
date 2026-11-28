@@ -594,6 +594,25 @@ fetch_calib_run <- function(pool, job_id) {
     params = list(job_id))
 }
 
+#' Noise model and response adjustment of a curve's current best fit, from its
+#' run's params (i-spi-compute worker with curveR >= 0.6.0). Fits from before
+#' that have no such keys: noise_model "constant", offset and blank value 0.
+#' @return data.frame(noise_model, response_offset, blank_value, blank_option)
+#'   with one row, or zero rows when the curve has no fit.
+fetch_calib_response_settings <- function(pool, curve_id, method) {
+  df <- .calib_q(pool, sprintf(
+    "SELECT COALESCE(r.params::jsonb ->> 'noise_model', 'constant') AS noise_model,
+            COALESCE((r.params::jsonb -> 'response_adjustment' ->> 'offset')::float8,
+                     (r.params::jsonb ->> 'response_offset')::float8, 0) AS response_offset,
+            COALESCE((r.params::jsonb -> 'response_adjustment' ->> 'blank_value')::float8, 0) AS blank_value,
+            r.params::jsonb -> 'response_adjustment' ->> 'blank_option' AS blank_option
+       FROM %s f JOIN %s r ON r.job_id = f.job_id
+      WHERE f.curve_id = $1 AND f.method = $2 AND f.is_best
+      LIMIT 1", .tbl("calib_fit"), .tbl("calib_run")),
+    params = list(curve_id, method))
+  df
+}
+
 
 # 8. One-call bundle for the module
 
@@ -601,7 +620,7 @@ fetch_calib_run <- function(pool, job_id) {
 #' Everything the standard-curve view needs for one curve+method, in a single
 #' list. This is the function the module server should call; it keeps the read
 #' pattern in one place and one round of queries.
-#' @return list(fit_best, fits, params, gates, grid, samples, diagnostics, loo)
+#' @return list(fit_best, fits, params, gates, grid, samples, diagnostics, loo, response)
 fetch_calib_bundle <- function(pool, curve_id, method) {
   best <- fetch_calib_best_model(pool, curve_id, method)
   mdl  <- if (nrow(best)) best$model_name[1] else NULL
@@ -615,7 +634,10 @@ fetch_calib_bundle <- function(pool, curve_id, method) {
     grid        = fetch_calib_grid(pool, curve_id, method),
     samples     = fetch_calib_samples(pool, curve_id, method),
     diagnostics = fetch_calib_diagnostics(pool, curve_id, method),
-    loo         = fetch_calib_loo(pool, curve_id, method)
+    loo         = fetch_calib_loo(pool, curve_id, method),
+    # noise model + response offset/blank value (a missing key never blocks the view)
+    response    = tryCatch(fetch_calib_response_settings(pool, curve_id, method),
+                           error = function(e) NULL)
   )
 }
 
@@ -718,6 +740,22 @@ fetch_control_reference_scoped <- function(pool, project, study, experiment = NU
 # by the worker for the selected model. Feed the fit-diagnostics report.
 fetch_calib_fit_diag_scoped    <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_fit_diag")
 fetch_calib_hyperparam_scoped  <- function(pool, project, study, experiment) .fetch_calib_scoped(pool, project, study, experiment, "calib_hyperparam")
+
+# Blank wells per (curve, method) as stored with the fit: count, how many are
+# <= 0, mean and SD of the included raw blank responses. Feeds the
+# fit-diagnostics blank-spread rule. Aggregated in SQL like the standards summary.
+fetch_calib_blanks_summary_scoped <- function(pool, project, study, experiment) {
+  .calib_q(pool, sprintf(
+    "SELECT cb.curve_id, cb.method, count(*) AS n_blank,
+            count(*) FILTER (WHERE cb.included AND cb.assay_response_raw <= 0) AS n_blank_nonpos,
+            avg(cb.assay_response_raw::float8) FILTER (WHERE cb.included) AS blank_mean,
+            stddev_samp(cb.assay_response_raw::float8) FILTER (WHERE cb.included) AS blank_sd
+       FROM %s cb JOIN %s cl ON cl.curve_id = cb.curve_id
+      WHERE cl.project_id = $1 AND cl.study_accession = $2 AND cl.experiment_accession = $3
+      GROUP BY cb.curve_id, cb.method",
+    .tbl("calib_blanks"), .tbl("curve_lookup")),
+    params = list(project, study, experiment))
+}
 
 # Which response scale each stored fit was actually computed on, per (curve, method).
 # calib_standards keeps both the response the model saw (response_model) and the raw

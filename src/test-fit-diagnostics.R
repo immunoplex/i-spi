@@ -302,3 +302,81 @@ test_that("missing pieces degrade instead of failing", {
   expect_match(fit_diag_report_text(empty), "No fitted curves")
   expect_null(fit_diag_notice(empty))
 })
+
+# ---- noise model, response offset, blanks (ELISA project 118, 2026-11) ---------------
+elisa_frames <- function(params, raw_min = -0.004, blank_sd = 0.01, scale = "log10") {
+  d <- scale_frames(mk_data(), raw_ids = if (scale == "raw") 1:15 else integer(0),
+                    log_ids = if (scale == "log10") 1:15 else integer(0),
+                    is_log_setting = if (scale == "log10") "true" else "false", nu = 30)
+  d$std$raw_min <- raw_min
+  d$header <- data.frame(experiment_accession = "E1", assay_response_variable = "absorbance")
+  d$run <- data.frame(job_id = c("J3", "J1"), params = params)
+  d$blanks <- data.frame(curve_id = d$fit$curve_id, method = "bayesian", n_blank = 2L,
+                         n_blank_nonpos = 1L, blank_mean = 0.001, blank_sd = blank_sd)
+  d
+}
+LEGACY <- '{"use_heteroscedastic_noise": false}'
+NEWRUN <- '{"noise_model": "add_prop", "response_offset": 0.006, "response_adjustment": {"offset": 0.006, "n_nonpositive": 3, "blank_value": 0}}'
+codes <- function(rep, unit_plates = 10L) {
+  u <- Filter(function(i) i$n_plates == unit_plates, rep$units)[[1]]
+  u$findings$finding
+}
+
+test_that("legacy fit with standards <= 0 on log OD: floored values and blank likelihood are flagged", {
+  rep <- fit_diag_build(elisa_frames(c(LEGACY, LEGACY)))
+  f <- codes(rep)
+  expect_true("nonpositive-floored" %in% f)
+  expect_true("bayes-blank-likelihood" %in% f)            # J3 has the bad sampler and blanks
+  expect_true("noise-model-absorbance" %in% f)
+  expect_false("response-offset" %in% f)
+  expect_false("bayes-blank-likelihood" %in% codes(rep, 5L))   # J1 sampler is healthy
+})
+
+test_that("current fit: offset reported, no legacy warnings, no add_prop recommendation", {
+  rep <- fit_diag_build(elisa_frames(c(NEWRUN, NEWRUN)))
+  f <- codes(rep)
+  expect_true("response-offset" %in% f)
+  ev <- rep$findings$evidence[rep$findings$finding == "response-offset"][1]
+  expect_match(ev, "offset=0.006"); expect_match(ev, "n_nonpositive=3")
+  expect_false(any(c("nonpositive-floored", "bayes-blank-likelihood", "noise-model-absorbance") %in% f))
+  u <- Filter(function(i) i$n_plates == 10L, rep$units)[[1]]
+  expect_identical(u$noise_model, "add_prop")
+})
+
+test_that("blank spread near the lowest standard is reported; a tight blank is not", {
+  f <- codes(fit_diag_build(elisa_frames(c(NEWRUN, NEWRUN), raw_min = 0.02, blank_sd = 0.01)))
+  expect_true("blank-spread" %in% f)
+  f2 <- codes(fit_diag_build(elisa_frames(c(NEWRUN, NEWRUN), raw_min = 0.02, blank_sd = 0.002)))
+  expect_false("blank-spread" %in% f2)
+})
+
+test_that("raw-scale absorbance with add_prop is not called the wrong scale", {
+  f <- codes(fit_diag_build(elisa_frames(c(NEWRUN, NEWRUN), raw_min = 0.02, scale = "raw")))
+  expect_false("scale-vs-assay" %in% f)
+  f2 <- codes(fit_diag_build(elisa_frames(c(LEGACY, LEGACY), raw_min = 0.02, scale = "raw")))
+  expect_true("scale-vs-assay" %in% f2)
+})
+
+test_that("a curve that fails in Bayes but fits with the frequentist engine is flagged", {
+  d <- mk_data()
+  fr <- d$fit; fr$method <- "frequentist"; fr$job_id <- "F1"; fr$eligible <- TRUE
+  d$fit$is_fallback[d$fit$job_id == "J3"] <- TRUE
+  d$fit <- rbind(d$fit, fr)
+  rep <- fit_diag_build(d)
+  x <- rep$findings[rep$findings$finding == "bayes-fails-freq-passes", ]
+  expect_equal(nrow(x), 1L)
+  expect_match(x$message, "^10 curve")
+  # no Bayesian failure -> no finding
+  d2 <- mk_data(bad_sampler = FALSE); fr2 <- d2$fit; fr2$method <- "frequentist"; fr2$job_id <- "F1"
+  d2$fit <- rbind(d2$fit, fr2)
+  expect_false("bayes-fails-freq-passes" %in% fit_diag_build(d2)$findings$finding)
+})
+
+test_that("a sigma_add floor taken from the blanks is reported", {
+  fl <- '{"noise_model": "add_prop", "response_adjustment": {"offset": 0}, "noise_params": {"sigma_add": 0.004, "cv": 0.06, "sigma_add_floor": 0.004, "floor_applied": true, "sigma_add_unfloored": 0.0002}}'
+  rep <- fit_diag_build(elisa_frames(c(fl, fl), raw_min = 0.02, blank_sd = 0.002))
+  expect_true("noise-floor-applied" %in% codes(rep))
+  ev <- rep$findings$evidence[rep$findings$finding == "noise-floor-applied"][1]
+  expect_match(ev, "sigma_add_floor=0.004")
+  expect_false("noise-floor-applied" %in% codes(fit_diag_build(elisa_frames(c(NEWRUN, NEWRUN)))))
+})

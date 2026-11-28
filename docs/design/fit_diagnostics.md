@@ -88,6 +88,13 @@ Severity: `error` > `warn` > `info`. Thresholds live in `FD_THRESH` at the top o
 | `settings-stale` | warn | stored fit scale differs from current setting | recompute |
 | `loo-pareto-k` | info | high Pareto-k observations | LOO unreliable for them |
 | `pooled-size` | info | 8+ plates pooled | one plate affects all |
+| `noise-model-absorbance` | info | absorbance fitted with constant noise | set `noise_model = add_prop`, recompute |
+| `response-offset` | info | run added offset c because responses were <= 0 | none; check blank/wavelength correction if many |
+| `nonpositive-floored` | warn | log-scale fit from before curveR 0.6.0 with standards <= 0 (floored) | recompute |
+| `noise-floor-applied` | info | frequentist add_prop: sigma_add from the standards was below the blank floor (0.5 x within-plate blank SD) | none |
+| `blank-spread` | info | median blank SD > 25% of the lowest raw standard | expect a higher LLOQ |
+| `bayes-blank-likelihood` | warn | Bayesian fit from before curveR 0.6.0, blanks present, sampler problems | recompute (blanks no longer in the likelihood) |
+| `bayes-fails-freq-passes` | warn | same curves: Bayesian errors/fallback, frequentist clean | look at the Bayesian model, not the data |
 
 The strategy (`.fd_strategy`) orders actions: scale/override/stale first, then
 systematic gate failures, plate review, batching or `bayes_single_plate` for
@@ -134,6 +141,7 @@ Where the next rules will come from:
 |---|---|---|---|---|---|
 | 2026-11-11 | ELISA FHA_FcR2A_1-10 (project 92) | `nu` ≈ 2.1–2.2 at floor, E-BFMI ≈ 0.29, spread 0.515 in raw units; all raw-scale Bayesian ELISA fits looked alike | experiment-level `is_log_response=false` on absorbance data | set true, recompute | `noise-heavy-tails`, `scale-vs-assay`, `setting-overridden`, `settings-stale` |
 | 2026-11-11 | PTgen_FC3A_1-38 (frequentist) | 27 of 38 plates fail gates (`at_bound` d, `dynamic_range` 0) | standards lack an upper plateau | standards review (open) | systematic gate summary |
+| 2026-11-28 | ELISA project 118 (clone of 92), log and linear absorbance | Bayesian fits on log OD fail (chains disagree) while frequentist fits pass; linear fits lose the low responses; blanks and some wells <= 0 | blanks in the Bayesian likelihood; values <= 0 floored at 1e-6 on log; constant noise misweights OD on either scale | curveR 0.6.0: blanks out of the Bayesian likelihood, one offset c per fit group, opt-in `noise_model = add_prop`; refit (pending) | `bayes-blank-likelihood`, `nonpositive-floored`, `noise-model-absorbance`, `response-offset`, `blank-spread`, `bayes-fails-freq-passes` |
 
 Open cases: FHA_FcR2A_11-38 and FHA_FcR3A_1-38 (stored fits raw, now inherit
 true: recompute); PTgen_Fc2A_1-38 (experiment-level false override remains).

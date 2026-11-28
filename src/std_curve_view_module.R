@@ -106,6 +106,43 @@
   cbind(front, rest, row.names = NULL)
 }
 
+# Parameters tab: the stored terms plus a plain-language meaning for the noise
+# terms (curveR >= 0.6.0 stores sigma_add and cv instead of sigma_resid /
+# sigma_obs under the additive + proportional noise model).
+.SC_TERM_MEANING <- c(
+  sigma_resid = "Residual SD of the standards around the curve (fitting scale)",
+  sigma_obs   = "Observation noise SD (fitting scale)",
+  nu          = "Degrees of freedom of the Student-t observation noise",
+  sigma_add   = "Additive noise floor, raw response units (additive + proportional model)",
+  cv          = "Proportional noise: SD as a fraction of the response (additive + proportional model)")
+.sc_params_view <- function(p) {
+  if (is.null(p) || !nrow(p)) return(p)
+  meaning <- unname(.SC_TERM_MEANING[as.character(p$term)])
+  cbind(p, meaning = ifelse(is.na(meaning), "", meaning), stringsAsFactors = FALSE)
+}
+
+# One-line caption: the fit's noise model and the response adjustment
+# (offset c added because some responses were <= 0; blank value subtracted).
+# NULL/zero-row `resp` (older fits) gives the constant-noise caption.
+.sc_response_caption <- function(resp) {
+  nm  <- if (!is.null(resp) && nrow(resp)) as.character(resp$noise_model[1]) else "constant"
+  off <- if (!is.null(resp) && nrow(resp)) suppressWarnings(as.numeric(resp$response_offset[1])) else 0
+  bv  <- if (!is.null(resp) && nrow(resp)) suppressWarnings(as.numeric(resp$blank_value[1])) else 0
+  if (is.na(nm) || !nzchar(nm)) nm <- "constant"
+  lbl <- if (identical(nm, "add_prop")) "additive + proportional (sigma_add, cv)" else "constant"
+  parts <- sprintf("Noise model: %s", lbl)
+  if (is.finite(bv) && bv != 0)  parts <- c(parts, sprintf("blank value subtracted: %s", signif(bv, 4)))
+  if (is.finite(off) && off > 0) parts <- c(parts, sprintf("response offset c = %s added to every well (some responses were ≤ 0)", signif(off, 4)))
+  else                            parts <- c(parts, "no response offset")
+  paste(parts, collapse = " · ")
+}
+
+# Natural-unit label of a log10 fitting-scale response: undo the offset and add
+# back the blank value, so the axis reads in the assay's own units.
+.sc_y_natural <- function(v, offset = 0, blank_value = 0) {
+  10^v - (if (is.finite(offset)) offset else 0) + (if (is.finite(blank_value)) blank_value else 0)
+}
+
 # Hover text for back-calculated samples: class, point estimate, the asymmetric
 # 95% predictive interval, and the threshold probabilities. Every piece is
 # optional so older rows (no out-of-range columns) still get a sensible tooltip.
@@ -519,12 +556,20 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
 
       # y-scale: determine whether response_model is log10(raw) from the persisted
       # data (the actual fit output), so tick LABELS can show natural units.
+      # The raw response is first put through the fit's response adjustment
+      # (blank value subtracted, offset c added when some responses were <= 0).
+      rs <- b$response
+      y_off <- if (!is.null(rs) && nrow(rs)) num(rs$response_offset[1]) else 0
+      y_bv  <- if (!is.null(rs) && nrow(rs)) num(rs$blank_value[1]) else 0
+      if (!is.finite(y_off)) y_off <- 0
+      if (!is.finite(y_bv))  y_bv  <- 0
       y_is_log <- TRUE
       if (!is.null(sp) && nrow(sp)) {
         raw <- num(sp$assay_response_raw); mod <- sp$response_model
-        ok <- is.finite(raw) & raw > 0 & is.finite(mod)
+        adj <- raw - y_bv + y_off
+        ok <- is.finite(adj) & adj > 0 & is.finite(mod)
         if (sum(ok) >= 3)
-          y_is_log <- isTRUE(mean(abs(mod[ok] - log10(raw[ok])), na.rm = TRUE) < 0.05)
+          y_is_log <- isTRUE(mean(abs(mod[ok] - log10(adj[ok])), na.rm = TRUE) < 0.05)
       }
 
       prog$set(message = "Rendering plot\u2026", value = 0.75)
@@ -736,7 +781,8 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
           ytv <- sort(c(decs_y, mids_y))
           ytv <- ytv[ytv >= d0 & ytv <= d1]
           ynat <- function(v) {
-            n <- 10^v
+            n <- .sc_y_natural(v, y_off, y_bv)
+            if (y_off != 0 || y_bv != 0) return(formatC(signif(n, 2), format = "g", digits = 2))
             if (n >= 1e5 || n < 1e-2) formatC(n, format = "g", digits = 1)
             else formatC(signif(n, 1), format = "fg", big.mark = ",", drop0trailing = TRUE)
           }
@@ -1628,8 +1674,9 @@ stdCurveViewServer <- function(id, pool, scope = NULL,
                     options = list(dom = "t", pageLength = 10))
     })
     output$params_table <- DT::renderDT({
-      p <- bundle()$params; shiny::req(nrow(p) > 0)
-      DT::datatable(p, rownames = FALSE, options = list(dom = "t"))
+      b <- bundle(); p <- b$params; shiny::req(nrow(p) > 0)
+      DT::datatable(.sc_params_view(p), rownames = FALSE, options = list(dom = "t"),
+                    caption = .sc_response_caption(b$response))
     })
     # The selected curve's identity: experiment, plate (the short name, not the
     # long plateid), antigen, feature, source, method.

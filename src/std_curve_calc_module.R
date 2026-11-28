@@ -43,6 +43,18 @@ JOB_DIAG_FIT_SCHEMA  <- getOption("ispi.calib_schema", "madi_results")
 # options(ispi.calc_queue_poll_ms = <ms>).
 QUEUE_POLL_MS <- as.integer(getOption("ispi.calc_queue_poll_ms", 15000L))
 
+# Compute-fits "Noise model" choices. "settings" = use the settings cascade
+# (noise_model, default constant); the others override it for one job.
+NOISE_MODEL_CHOICES <- c("Use settings (per antigen)"   = "settings",
+                         "Constant"                     = "constant",
+                         "Additive + proportional"      = "add_prop")
+# Job parameter for a Compute-fits choice: NULL (send nothing) for "settings"
+# or anything unrecognised, else the worker's value.
+noise_model_param <- function(choice) {
+  choice <- if (is.null(choice) || !length(choice)) "" else as.character(choice[1])
+  if (choice %in% c("constant", "add_prop")) choice else NULL
+}
+
 stdCurveCalcUI <- function(id) {
   ns <- shiny::NS(id)
   shiny::fluidRow(
@@ -59,6 +71,15 @@ stdCurveCalcUI <- function(id) {
                             choices = c("Bayesian" = "bayesian",
                                         "Frequentist" = "frequentist"),
                             selected = "frequentist", inline = TRUE),
+        # Response noise model (both engines). "settings" sends nothing, so the
+        # settings cascade decides per antigen; an explicit choice overrides it
+        # for this job only.
+        shiny::tags$div(
+          shiny::selectInput(ns("noise_model"), "Noise model",
+            choices = NOISE_MODEL_CHOICES, selected = "settings"),
+          help_icon("settings.noise_model", ns),
+          shiny::tags$span(style = "font-size:11px;color:#787878;",
+            " additive + proportional is recommended for absorbance (ELISA OD).")),
         shiny::conditionalPanel(
           condition = sprintf("input['%s'] == 'bayesian'", ns("fit_engine")),
           shiny::tags$div(
@@ -440,6 +461,8 @@ stdCurveCalcServer <- function(id, pool, api = function() compute_api_client(), 
         params$include_measurement_error <-
           if (isFALSE(input$include_meas_err)) "false" else "true"
       }
+      nm <- noise_model_param(input$noise_model)
+      if (!is.null(nm)) params$noise_model <- nm
       thr <- tryCatch({
         s <- fit_settings()
         if (!is.null(s) && nrow(s) && !is.na(s$pcov_threshold)) s$pcov_threshold else NULL

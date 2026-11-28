@@ -5,6 +5,35 @@ A release tag builds the image `ghcr.io/immunoplex/i-spi:MAJOR.MINOR.PATCH` (and
 pushes to `main` keep building `:main`. Earlier releases were tagged by date (`vYYYY.MM.DD`, with
 a `.N` suffix for a second release on the same day); those tags remain as history.
 
+## Unreleased — Noise model setting; response offset; fit diagnostics for absorbance
+
+Needs i-spi-compute with curveRbayes / curveRfreq 0.6.0 and its migration 013.
+
+### Added
+- **Noise model** (`noise_model`): *constant* (default, as before) or *additive
+  + proportional* (SD = sqrt(sigma_add^2 + (cv x response)^2), estimated once per
+  fit group), recommended for absorbance. Set it in Change Study Settings (per
+  antigen) or choose it in Compute fits for one job; *Use settings* keeps the
+  cascade. Help note `settings.noise_model`, linked from both places; glossary
+  entries *Noise model* and *Response offset (c)*.
+- **Explore fits, Parameters tab**: a caption with the fit's noise model, the
+  response offset c and any blank value subtracted, and a plain-language meaning
+  for the noise terms (`sigma_add`, `cv`, `sigma_resid`, `sigma_obs`, `nu`).
+- **Fit diagnostics**: `noise-model-absorbance`, `response-offset`,
+  `nonpositive-floored`, `blank-spread`, `noise-floor-applied`,
+  `bayes-blank-likelihood` and the
+  experiment-level `bayes-fails-freq-passes`; `noise_model` is listed with the
+  fit settings. Case: ELISA project 118.
+
+### Changed
+- **Curve plot y-axis labels** are in the assay's own units when the fit added
+  an offset c or subtracted a blank value (c removed, blank value added back).
+- **Blank wells glossary entry** now says what I-SPI does with blanks: quality
+  checks and plotting; in the fit only with blank handling *included*;
+  subtracted only when chosen; never deciding the offset.
+- `scale-vs-assay` no longer flags raw-scale absorbance fitted with
+  `noise_model = add_prop`, and its advice names that option.
+
 ## v1.3.5 — No plotly click warnings at sign-in
 
 ### Fixed
