@@ -38,7 +38,11 @@ a model there overrides it for that job only.
 ::: more
 The additive term (sigma_add) is learned mainly from the lowest one or two
 standards of each plate, so it is less well determined than cv. Fitting all
-plates of a group together, as I-SPI does, helps. On a log response the model
+plates of a group together, as I-SPI does, helps. In frequentist fits it is
+also kept at or above half the spread of the blank wells (their within-plate
+SD); the floor only acts when the standards alone would put it lower, and the
+fit diagnostics report when it did. The blanks are not otherwise used in the
+fit. On a log response the model
 is applied through the delta method (SD on the log10 scale = raw SD /
 (response × ln 10)), so both engines and both response scales use the same
 noise description. When some responses are ≤ 0 a small

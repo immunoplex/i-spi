@@ -91,6 +91,7 @@ Severity: `error` > `warn` > `info`. Thresholds live in `FD_THRESH` at the top o
 | `noise-model-absorbance` | info | absorbance fitted with constant noise | set `noise_model = add_prop`, recompute |
 | `response-offset` | info | run added offset c because responses were <= 0 | none; check blank/wavelength correction if many |
 | `nonpositive-floored` | warn | log-scale fit from before curveR 0.6.0 with standards <= 0 (floored) | recompute |
+| `noise-floor-applied` | info | frequentist add_prop: sigma_add from the standards was below the blank floor (0.5 x within-plate blank SD) | none |
 | `blank-spread` | info | median blank SD > 25% of the lowest raw standard | expect a higher LLOQ |
 | `bayes-blank-likelihood` | warn | Bayesian fit from before curveR 0.6.0, blanks present, sampler problems | recompute (blanks no longer in the likelihood) |
 | `bayes-fails-freq-passes` | warn | same curves: Bayesian errors/fallback, frequentist clean | look at the Bayesian model, not the data |

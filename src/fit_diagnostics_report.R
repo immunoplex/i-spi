@@ -73,7 +73,9 @@ FD_SETTINGS <- c("is_log_response", "is_log_independent", "model_form_list", "ap
 # those fits used blanks in the Bayesian likelihood and floored values <= 0.
 .fd_run_meta <- function(json) {
   out <- list(recorded = FALSE, noise_model = NA_character_, offset = NA_real_,
-              n_nonpositive = NA_real_, blank_option = NA_character_)
+              n_nonpositive = NA_real_, blank_option = NA_character_,
+              floor_applied = FALSE, sigma_add = NA_real_, sigma_add_floor = NA_real_,
+              sigma_add_unfloored = NA_real_)
   if (is.null(json) || !length(json) || is.na(json[1]) || !nzchar(json[1])) return(out)
   m <- tryCatch(jsonlite::fromJSON(json[1], simplifyVector = TRUE), error = function(e) NULL)
   if (!is.list(m) || is.null(m$noise_model)) return(out)
@@ -83,6 +85,13 @@ FD_SETTINGS <- c("is_log_response", "is_log_independent", "model_form_list", "ap
   out$offset        <- .fd_n(.fd_or(ra$offset, .fd_or(m$response_offset, 0)))[1]
   out$n_nonpositive <- .fd_n(.fd_or(ra$n_nonpositive, NA))[1]
   out$blank_option  <- as.character(.fd_or(ra$blank_option, NA))[1]
+  np <- m$noise_params
+  if (is.list(np)) {
+    out$floor_applied       <- isTRUE(np$floor_applied)
+    out$sigma_add           <- .fd_n(.fd_or(np$sigma_add, NA))[1]
+    out$sigma_add_floor     <- .fd_n(.fd_or(np$sigma_add_floor, NA))[1]
+    out$sigma_add_unfloored <- .fd_n(.fd_or(np$sigma_add_unfloored, NA))[1]
+  }
   out
 }
 
@@ -510,6 +519,13 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
                 .fd_fmt(rmeta$offset, 3)),
         sprintf("offset=%s; n_nonpositive=%s", .fd_fmt(rmeta$offset, 3), .fd_fmt(rmeta$n_nonpositive)),
         "Nothing required. If many wells are <= 0, check the blank or wavelength correction of the plate reader export.")
+  if (rmeta$recorded && isTRUE(rmeta$floor_applied))
+    add("noise-floor-applied", "info",
+        sprintf("The standards alone put the additive noise term sigma_add at %s, below the floor from the blank wells, so the floor %s was used. The lowest standards say little about the noise near zero here.",
+                .fd_fmt(rmeta$sigma_add_unfloored, 3), .fd_fmt(rmeta$sigma_add_floor, 3)),
+        sprintf("sigma_add_unfloored=%s; sigma_add_floor=%s (0.5 x pooled within-plate blank SD)",
+                .fd_fmt(rmeta$sigma_add_unfloored, 3), .fd_fmt(rmeta$sigma_add_floor, 3)),
+        "Nothing required; the floor keeps the lowest standards from being over-weighted. Lower standards (above the blank spread) would let the data decide.")
   rr <- info$raw_range
   if (!rmeta$recorded && !is.null(info$job_params) && identical(info$scale, "log10") &&
       length(rr) == 2L && is.finite(rr[1]) && rr[1] <= 0)

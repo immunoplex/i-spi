@@ -371,3 +371,12 @@ test_that("a curve that fails in Bayes but fits with the frequentist engine is f
   d2$fit <- rbind(d2$fit, fr2)
   expect_false("bayes-fails-freq-passes" %in% fit_diag_build(d2)$findings$finding)
 })
+
+test_that("a sigma_add floor taken from the blanks is reported", {
+  fl <- '{"noise_model": "add_prop", "response_adjustment": {"offset": 0}, "noise_params": {"sigma_add": 0.004, "cv": 0.06, "sigma_add_floor": 0.004, "floor_applied": true, "sigma_add_unfloored": 0.0002}}'
+  rep <- fit_diag_build(elisa_frames(c(fl, fl), raw_min = 0.02, blank_sd = 0.002))
+  expect_true("noise-floor-applied" %in% codes(rep))
+  ev <- rep$findings$evidence[rep$findings$finding == "noise-floor-applied"][1]
+  expect_match(ev, "sigma_add_floor=0.004")
+  expect_false("noise-floor-applied" %in% codes(fit_diag_build(elisa_frames(c(NEWRUN, NEWRUN)))))
+})

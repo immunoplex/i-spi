@@ -20,7 +20,8 @@ Needs i-spi-compute with curveRbayes / curveRfreq 0.6.0 and its migration 013.
   response offset c and any blank value subtracted, and a plain-language meaning
   for the noise terms (`sigma_add`, `cv`, `sigma_resid`, `sigma_obs`, `nu`).
 - **Fit diagnostics**: `noise-model-absorbance`, `response-offset`,
-  `nonpositive-floored`, `blank-spread`, `bayes-blank-likelihood` and the
+  `nonpositive-floored`, `blank-spread`, `noise-floor-applied`,
+  `bayes-blank-likelihood` and the
   experiment-level `bayes-fails-freq-passes`; `noise_model` is listed with the
   fit settings. Case: ELISA project 118.
 
