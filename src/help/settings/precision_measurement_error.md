@@ -4,7 +4,7 @@ title: Precision profile & measurement error
 audience: both
 category: compute-decision
 params: [include_measurement_error, pcov_threshold]
-see_also: [glossary.measurement_error, glossary.se_concentration, glossary.pcov, glossary.precision_profile]
+see_also: [glossary.measurement_error, settings.noise_model, glossary.se_concentration, glossary.pcov, glossary.precision_profile]
 references:
   - text: "O'Connell MA, Belanger BA, Haaland PD (1993). Calibration and assay development using the four-parameter logistic model. Chemometrics and Intelligent Laboratory Systems 20(2):97-114."
     doi: "10.1016/0169-7439(93)80008-6"

@@ -38,7 +38,8 @@ FD_THRESH <- list(
   rel_se_warn = 0.5,                     # SE/|estimate| of a plate parameter
   hyper_cv_warn = 0.5,                   # sigma_d / |mu_d|
   nu_warn = 3, nu_info = 6,              # Student-t df (bounded below at 2): ~2 = likelihood absorbing misfit
-  hess_cond_warn = 1e8                   # frequentist vcov condition number
+  hess_cond_warn = 1e8,                  # frequentist vcov condition number
+  blank_sd_frac = 0.25                   # blank SD / lowest raw standard: low end near background
 )
 
 .fd_n  <- function(x) suppressWarnings(as.numeric(x))
@@ -55,7 +56,8 @@ FD_THRESH <- list(
 # Settings that change what a fit means (and so whether two fits are comparable).
 FD_SETTINGS <- c("is_log_response", "is_log_independent", "model_form_list", "apply_prozone",
                  "blank_option", "adapt_delta", "bayes_chains", "bayes_warmup", "bayes_sampling",
-                 "bayes_single_plate", "pcov_threshold", "include_measurement_error")
+                 "bayes_single_plate", "pcov_threshold", "include_measurement_error",
+                 "noise_model")
 
 # Assay type of the experiment, from the header's own record of what the response
 # value MEANS ('absorbance' = ELISA, 'mfi' = bead arrays). Same rule as
@@ -64,6 +66,24 @@ FD_SETTINGS <- c("is_log_response", "is_log_independent", "model_form_list", "ap
   if (!.fd_has(header, "assay_response_variable")) return(NA_character_)
   v <- unique(tolower(stats::na.omit(header$assay_response_variable)))
   if (length(v) == 1L) v else if (!length(v)) NA_character_ else paste(v, collapse = "|")
+}
+
+# Noise model and response adjustment recorded in a run's params (worker with
+# curveR >= 0.6.0). `recorded` is FALSE for older runs (no noise_model key):
+# those fits used blanks in the Bayesian likelihood and floored values <= 0.
+.fd_run_meta <- function(json) {
+  out <- list(recorded = FALSE, noise_model = NA_character_, offset = NA_real_,
+              n_nonpositive = NA_real_, blank_option = NA_character_)
+  if (is.null(json) || !length(json) || is.na(json[1]) || !nzchar(json[1])) return(out)
+  m <- tryCatch(jsonlite::fromJSON(json[1], simplifyVector = TRUE), error = function(e) NULL)
+  if (!is.list(m) || is.null(m$noise_model)) return(out)
+  ra <- m$response_adjustment
+  out$recorded      <- TRUE
+  out$noise_model   <- as.character(m$noise_model)[1]
+  out$offset        <- .fd_n(.fd_or(ra$offset, .fd_or(m$response_offset, 0)))[1]
+  out$n_nonpositive <- .fd_n(.fd_or(ra$n_nonpositive, NA))[1]
+  out$blank_option  <- as.character(.fd_or(ra$blank_option, NA))[1]
+  out
 }
 
 # Which cascade tier supplies each setting for one (feature, antigen), who set it and
@@ -178,6 +198,7 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
     lookup = lookup, settings = settings, overrides = overrides, study_settings = study_settings,
     header = try1(function() fetch_raw_header(pool, project, study, experiment)),
     std    = try1(function() fetch_calib_standards_summary_scoped(pool, project, study, experiment)),
+    blanks = try1(function() fetch_calib_blanks_summary_scoped(pool, project, study, experiment)),
     groups = groups,
     fit    = try1(function() fetch_calib_fit_scoped(pool, project, study, experiment)),
     diag   = try1(function() fetch_calib_fit_diag_scoped(pool, project, study, experiment)),
@@ -445,8 +466,8 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
           "Student-t degrees of freedom sit at their lower bound (2): the noise model cannot describe the scatter, so the fit is absorbing misfit as 'outliers'.",
           sprintf("nu=%s (bounded below at 2)", .fd_fmt(nu, 3)),
           if (identical(info$scale, "raw"))
-            "The response was fitted on the raw scale, where noise grows with the signal (typical for OD). Fit on the log scale (is_log_response = true) or use heteroscedastic noise."
-          else "Check masked/saturated or mislabeled standard wells, and whether noise grows with the signal (heteroscedastic noise).")
+            "The response was fitted on the raw scale, where noise grows with the signal (typical for OD). Fit on the log scale (is_log_response = true) or use the additive + proportional noise model (noise_model = add_prop)."
+          else "Check masked/saturated or mislabeled standard wells, and whether noise grows with the signal (noise_model = add_prop).")
     else if (is.finite(nu) && nu < TH$nu_info)
       add("noise-heavy-tails", "info", "Student-t degrees of freedom are low: some outlying wells.",
           sprintf("nu=%s", .fd_fmt(nu, 3)))
@@ -455,16 +476,71 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
   # -- assay-aware: absorbance (ELISA) on the raw scale ---------------------------------
   # Absorbance noise grows with the signal just like MFI, and the log scale is the
   # system default. Raw is allowed, but with the noise model pinned it is the likely cause.
-  if (identical(info$assay, "absorbance") && identical(info$scale, "raw")) {
+  # Not with the additive + proportional noise model: it describes OD noise on
+  # either scale, so raw is then a legitimate choice.
+  rmeta <- .fd_run_meta(info$job_params)
+  info$noise_model <- if (rmeta$recorded) rmeta$noise_model else NA_character_
+  info$response_offset <- rmeta$offset
+  if (identical(info$assay, "absorbance") && identical(info$scale, "raw") &&
+      !identical(info$noise_model, "add_prop")) {
     if (is.finite(nu_val) && nu_val < TH$nu_warn)
       add("scale-vs-assay", "warn",
           "This is an absorbance (ELISA) experiment fitted on the raw scale, and the noise model is pinned at its limit: this setting is probably wrong for OD data.",
           sprintf("assay_response_variable=absorbance; scale=raw; nu=%s", .fd_fmt(nu_val, 3)),
-          "Use the log scale (is_log_response = true) for this experiment and recompute.")
+          "Use the log scale (is_log_response = true), or keep raw with noise_model = add_prop, and recompute.")
     else
       add("scale-vs-assay", "info",
           "Absorbance (ELISA) data fitted on the raw scale; the system default is the log scale. Confirm that raw is intended.",
           "assay_response_variable=absorbance; scale=raw")
+  }
+
+  # -- noise model, response offset, blanks (curveR >= 0.6.0; ELISA project 118) -------
+  # Absorbance noise is a near-constant floor near the blank plus a few percent of
+  # the reading. A constant noise model over-trusts the low standards on log OD and
+  # loses them on linear OD; the additive + proportional model fits both.
+  if (identical(info$assay, "absorbance") && !identical(info$noise_model, "add_prop"))
+    add("noise-model-absorbance", "info",
+        "Absorbance (ELISA) data fitted with constant noise. OD noise is a near-constant floor plus a part proportional to the reading; a constant model misweights the low or the high standards and so moves the LLOQ/ULOQ.",
+        sprintf("assay_response_variable=absorbance; noise_model=%s; scale=%s",
+                .fd_or(info$noise_model, "constant (run predates the setting)"), .fd_or(info$scale, "?")),
+        "Set noise_model = add_prop (Change Study Settings, or Compute fits for one job) and recompute.")
+  if (rmeta$recorded && is.finite(rmeta$offset) && rmeta$offset > 0)
+    add("response-offset", "info",
+        sprintf("Some included responses were <= 0, so c = %s was added to every well of the fit group before the log transform (all wells kept and estimated).",
+                .fd_fmt(rmeta$offset, 3)),
+        sprintf("offset=%s; n_nonpositive=%s", .fd_fmt(rmeta$offset, 3), .fd_fmt(rmeta$n_nonpositive)),
+        "Nothing required. If many wells are <= 0, check the blank or wavelength correction of the plate reader export.")
+  rr <- info$raw_range
+  if (!rmeta$recorded && !is.null(info$job_params) && identical(info$scale, "log10") &&
+      length(rr) == 2L && is.finite(rr[1]) && rr[1] <= 0)
+    add("nonpositive-floored", "warn",
+        "Some standards are <= 0 and this fit predates the response-offset rule: they were floored at a tiny value before the log transform, which drags the lower asymptote down and distorts the low end.",
+        sprintf("lowest raw standard=%s; run has no response_adjustment", .fd_fmt(rr[1], 3)),
+        "Recompute: the current worker adds one small offset to every well instead of flooring.")
+  bk <- d$blanks
+  bk <- if (.fd_has(bk, c("curve_id", "method"))) bk[as.character(bk$curve_id) %in% cids & bk$method == method, , drop = FALSE] else NULL
+  if (.fd_has(bk)) {
+    info$n_blank <- sum(.fd_n(bk$n_blank), na.rm = TRUE)
+    nbp <- sum(.fd_n(bk$n_blank_nonpos), na.rm = TRUE)
+    bsd <- suppressWarnings(stats::median(.fd_n(bk$blank_sd), na.rm = TRUE))
+    lo_std <- if (length(rr) == 2L) rr[1] else NA_real_
+    if (is.finite(bsd) && is.finite(lo_std) && lo_std > 0 && bsd > TH$blank_sd_frac * lo_std)
+      add("blank-spread", "info",
+          "The blank wells scatter by a sizeable fraction of the lowest standard: the lowest standards are close to the background noise, so the low end of the curve is weakly determined.",
+          sprintf("median blank SD=%s; lowest raw standard=%s; blanks <= 0: %d of %d",
+                  .fd_fmt(bsd, 3), .fd_fmt(lo_std, 3), as.integer(nbp), as.integer(info$n_blank)),
+          "Expect a higher LLOQ; add a lower standard only if it is clearly above the blank spread.")
+    if (identical(method, "bayesian") && !rmeta$recorded && !is.null(info$job_params) && info$n_blank > 0) {
+      s <- info$sampler
+      bad <- !is.null(s) && (isFALSE(s$converged) || (!is.na(s$rhat_max) && s$rhat_max > TH$rhat_warn) ||
+                             (!is.na(s$n_divergent) && s$n_divergent > 0))
+      if (bad)
+        add("bayes-blank-likelihood", "warn",
+            "This Bayesian fit predates the removal of blanks from the Bayesian likelihood. With blanks in the fit (especially blanks <= 0 on the log scale) the lower asymptote is pulled between the blanks and the standards, and the chains can disagree.",
+            sprintf("n_blank=%d; rhat_max=%s; n_divergent=%s", as.integer(info$n_blank),
+                    .fd_fmt(s$rhat_max), .fd_fmt(s$n_divergent)),
+            "Recompute with the current worker: blanks are now used for QA and plotting only, as in the frequentist engine.")
+    }
   }
 
   # -- LOO ----------------------------------------------------------------------------
@@ -482,6 +558,7 @@ fit_diag_fetch <- function(pool, project, study, experiment) {
       any(vapply(F, function(r) r$severity %in% c("warn", "error"), logical(1))))
     add("pooled-size", "info", sprintf("%d plates are pooled in one fit: one discordant plate affects all of them.", n))
 
+  info$curve_ids <- cids
   info$findings <- if (length(F)) do.call(rbind, F) else NULL
   info$tables <- tabs
   info
@@ -578,6 +655,21 @@ fit_diag_build <- function(d, scope = list()) {
     out$strategy <- data.frame(unit = "(experiment)", priority = 0,
       action = "Recompute all fits under one is_log_response setting.",
       why = "Mixed response scales within one experiment.", stringsAsFactors = FALSE)
+  }
+  # Experiment-level: a curve whose Bayesian fit fails while its frequentist fit
+  # of the same curve is fine points at the Bayesian model (likelihood terms,
+  # noise model, pooling), not at the standards.
+  bad_unit <- function(i) isTRUE(i$fallback) || any(.fd_or(i$findings$severity, character(0)) == "error")
+  by_m <- function(m) Filter(function(i) identical(i$method, m), out$units)
+  bc <- unlist(lapply(Filter(bad_unit, by_m("bayesian")), `[[`, "curve_ids"))
+  fc <- unlist(lapply(Filter(Negate(bad_unit), by_m("frequentist")), `[[`, "curve_ids"))
+  both <- intersect(bc, fc)
+  if (length(both)) {
+    extra <- rbind(extra, data.frame(unit = "(experiment)", finding = "bayes-fails-freq-passes", severity = "warn",
+      message = sprintf("%d curve(s) fail in the Bayesian fit (errors or fallback model) but fit cleanly with the frequentist engine: the standards can be fitted, so look at the Bayesian model rather than the data.", length(both)),
+      evidence = sprintf("curve_id: %s", paste(utils::head(both, 10), collapse = ", ")),
+      action = "Check the Bayesian unit's findings. Fits from before curveR 0.6.0 used blanks in the Bayesian likelihood: recompute. For absorbance use noise_model = add_prop.",
+      stringsAsFactors = FALSE))
   }
   out$findings <- rbind(extra, do.call(rbind, lapply(out$units, `[[`, "findings")))
   out$strategy <- rbind(out$strategy, do.call(rbind, lapply(out$units, `[[`, "strategy")))
